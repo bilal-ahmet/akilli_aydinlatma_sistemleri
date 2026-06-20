@@ -1,26 +1,162 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* Manuel koyu tema: <html class="dark"> ile yönetilir (sistem değil) */
+@custom-variant dark (&:where(.dark, .dark *));
 
+/* ---- Tasarım tokenları (Tailwind utility'lerine açılır) ---- */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-glow: var(--glow);
+  --color-glow-soft: var(--glow-soft);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-space-grotesk);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ---- Gündüz (varsayılan) ---- */
+:root {
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel-2: #f4f6fa;
+  --border: #dce2ec;
+  --text: #141a28;
+  --muted: #5b6680;
+
+  --glow: #ffb23e;
+  --glow-soft: #ffd18a;
+  --accent: #d9810a; /* gündüzde kontrastlı amber (metin/çizgi) */
+  --danger: #e0533d;
+
+  --sky: radial-gradient(
+    1200px 600px at 50% -10%,
+    #f6e6c4 0%,
+    #eef1f6 45%,
+    #eef1f6 100%
+  );
+}
+
+/* ---- Gece ---- */
+.dark {
+  --bg: #0b1020;
+  --panel: #121a2e;
+  --panel-2: #0f1626;
+  --border: #1f2b45;
+  --text: #e6eaf2;
+  --muted: #8590a8;
+
+  --glow: #ffb23e;
+  --glow-soft: #ffd18a;
+  --accent: #ffc164;
+  --danger: #ff6b52;
+
+  --sky: radial-gradient(
+    1100px 700px at 80% -15%,
+    #16213c 0%,
+    #0b1020 55%,
+    #070b16 100%
+  );
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--sky);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-inter), system-ui, sans-serif;
+  /* Gündüz <-> gece yumuşak geçiş */
+  transition: background-color 0.5s ease, color 0.4s ease;
+}
+
+/* İmza "ışık dökülmesi": parlaklıkla orantılı amber radyal ışıma.
+   --lvl (0–1) ve --spread bileşenler tarafından inline atanır. */
+.glow-spill {
+  position: relative;
+  isolation: isolate;
+}
+.glow-spill::before {
+  content: "";
+  position: absolute;
+  inset: calc(var(--spread, 24px) * -1);
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklab, var(--glow) 100%, white calc((1 - var(--lvl, 0)) * 35%))
+      calc(var(--lvl, 0) * 55%),
+    transparent 100%
+  );
+  opacity: calc(0.1 + var(--lvl, 0) * 0.6);
+  filter: blur(calc(8px + var(--lvl, 0) * 22px));
+  transition: opacity 0.4s ease, filter 0.4s ease, background 0.4s ease;
+  pointer-events: none;
+}
+
+/* ---- Şiddet slider'ı (input[type=range]) ---- */
+.brightness-range {
+  --track-h: 100%;
+  background: linear-gradient(
+      to right,
+      var(--glow) 0%,
+      var(--glow-soft) var(--pct, 0%),
+      var(--border) var(--pct, 0%),
+      var(--border) 100%
+    )
+    no-repeat;
+  border-radius: 9999px;
+}
+.brightness-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: var(--glow);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 10px var(--glow), 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.1s ease;
+}
+.brightness-range:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+.brightness-range::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: var(--glow);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 10px var(--glow), 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.brightness-range:disabled::-webkit-slider-thumb {
+  background: var(--muted);
+  box-shadow: none;
+}
+.brightness-range:disabled::-moz-range-thumb {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
