@@ -13,6 +13,15 @@ export interface Zone {
   status: ZoneStatus;
 }
 
+export interface DeviceView {
+  id: string;
+  deviceId: string;
+  zoneSlug: string | null;
+  zoneName: string | null;
+  name: string | null;
+  lastSeen: string | null;
+}
+
 export interface SystemSummary {
   totalPoles: number;
   polesOn: number;

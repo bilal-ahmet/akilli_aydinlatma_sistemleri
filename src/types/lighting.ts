@@ -71,6 +71,19 @@ export const zoneUpdateSchema = z
   });
 export type ZoneUpdate = z.infer<typeof zoneUpdateSchema>;
 
+// ── Device CRUD (dashboard → backend) ────────────────────────
+export const deviceCreateSchema = z.object({
+  deviceId: z
+    .string()
+    .trim()
+    .min(1, "Cihaz kimliği zorunlu")
+    .max(100)
+    .regex(/^[a-zA-Z0-9._-]+$/, "Sadece harf, rakam, . _ - kullanılabilir"),
+  zoneSlug: z.string().trim().min(1, "Zone seçilmeli"),
+  name: z.string().trim().max(100).optional(),
+});
+export type DeviceCreate = z.infer<typeof deviceCreateSchema>;
+
 /**
  * SSE üzerinden dashboard'a iletilen canlı olay. MQTT status mesajından veya
  * komut publish anından (optimistic) türetilir.
