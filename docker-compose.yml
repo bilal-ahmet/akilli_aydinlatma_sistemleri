@@ -1,0 +1,18 @@
+# Sadece lokal PostgreSQL. MQTT broker = HiveMQ Cloud (harici, kurulmaz).
+# Neon kullanıyorsan bu dosyaya gerek yok; sadece DATABASE_URL'i set et.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fener-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fener
+      POSTGRES_PASSWORD: fener
+      POSTGRES_DB: fener
+    ports:
+      - "5432:5432"
+    volumes:
+      - fener-pgdata:/var/lib/postgresql/data
+
+volumes:
+  fener-pgdata:
