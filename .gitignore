@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# ESP32 firmware secrets (WiFi + MQTT credentials)
+firmware/**/secrets.h
+
 # vercel
 .vercel
 

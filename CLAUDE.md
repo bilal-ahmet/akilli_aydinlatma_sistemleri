@@ -9,22 +9,23 @@
 ## Mimari
 
 ```
-Dashboard (Next.js)
-    │
+Dashboard (Next.js, SSE ile canlı)
+    │   ▲
+    │   │ SSE (status push: /api/events)
     │  REST API (komut gönder, durum oku)
     ▼
-Backend (Next.js API Routes / Node.js)
+Backend (Next.js API Routes — Railway'de kalıcı Node process)
     │                        ▲
-    │  MQTT publish           │  MQTT subscribe (status)
+    │  MQTT publish (TLS)     │  MQTT subscribe (status, TLS)
     ▼                        │
-MQTT Broker (Mosquitto)
+MQTT Broker (HiveMQ Cloud, 8883/TLS)
     │                        ▲
     │  subscribe (command)    │  publish (status)
     ▼                        │
-ESP32 (PubSubClient)
+ESP32 (PubSubClient + WiFiClientSecure)
 ```
 
-**Şu an:** ESP32 WiFi üzerinden MQTT broker'a bağlanıyor.
+**Şu an:** ESP32 WiFi → HiveMQ Cloud (TLS/8883) → Backend (Railway) → Neon Postgres. Dashboard, MQTT status'larını SSE ile canlı alır.
 **İleride:** LoRaWAN mimarisine geçilecek → `ESP32+LoRa → Gateway → Chirpstack → MQTT → Backend`
 
 ---
@@ -33,12 +34,15 @@ ESP32 (PubSubClient)
 
 | Katman | Teknoloji |
 |---|---|
-| Frontend | Next.js 14, TypeScript, Tailwind CSS |
-| Backend | Next.js API Routes (veya Node.js/Express) |
-| Veritabanı | PostgreSQL (Neon veya DigitalOcean Managed) |
-| MQTT Broker | Mosquitto |
-| ESP32 Kütüphanesi | PubSubClient + ArduinoJson |
-| Deploy | DigitalOcean App Platform + ayrı Droplet (Mosquitto) |
+| Frontend | Next.js 16, TypeScript, Tailwind CSS v4 |
+| Backend | Next.js API Routes (runtime = nodejs) |
+| Veritabanı | PostgreSQL (Neon) + **Drizzle ORM** |
+| MQTT Broker | **HiveMQ Cloud** (TLS, port 8883) |
+| Real-time | **SSE** (`/api/events`) — in-memory event bus |
+| ESP32 Kütüphanesi | PubSubClient + ArduinoJson + WiFiClientSecure |
+| Deploy | **Railway** (kalıcı Node sunucu, tek instance) |
+
+> **Gerçekleşen mimari notu:** İlk taslaktan 3 bilinçli sapma var: (1) real-time için WebSocket yerine **SSE**, (2) self-host Mosquitto yerine **HiveMQ Cloud TLS**, (3) `zones` tablosuna `slug` + dashboard snapshot alanları eklendi. Kontrat (topic/payload/action semantiği) korundu. Detay aşağıda.
 
 ---
 
@@ -47,10 +51,13 @@ ESP32 (PubSubClient)
 ### Broker
 
 ```
-Host: mqtt.{domain}.com
-Port: 1883 (plain) / 8883 (TLS)
+Sağlayıcı: HiveMQ Cloud
+Host: {cluster-id}.s1.eu.hivemq.cloud
+Port: 8883 (yalnızca TLS — plain 1883 desteklenmez)
 Auth: username + password
 ```
+
+Backend `mqtts://` ile bağlanır (`src/lib/mqtt.ts`). ESP32 `WiFiClientSecure` kullanır.
 
 ### Topic Hiyerarşisi
 
@@ -132,13 +139,15 @@ GET /api/zones                       → Tüm zone listesi
 GET /api/devices                     → Tüm cihaz listesi
 ```
 
-### Dashboard Real-time
+### Dashboard Real-time (SSE)
 
-Dashboard cihaz durumlarını real-time takip etmek için **WebSocket** veya **SSE** kullanır:
+Dashboard cihaz durumlarını real-time takip etmek için **SSE** (Server-Sent Events) kullanır — Next.js App Router'da native çalışır, custom server gerekmez:
 
 ```
-WS /api/ws           → Backend'in MQTT'den aldığı status mesajlarını push eder
+GET /api/events      → Backend'in MQTT'den aldığı status mesajlarını push eder (text/event-stream)
 ```
+
+Frontend tarafı: `src/app/_lib/useLiveStatus.ts` (`EventSource`). Backend köprüsü: `src/lib/events.ts` (in-memory EventEmitter). **Bu yüzden backend tek instance çalışmalı** (bkz. Kurallar #8).
 
 ---
 
@@ -149,11 +158,20 @@ WS /api/ws           → Backend'in MQTT'den aldığı status mesajlarını push
 ```sql
 CREATE TABLE zones (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug        VARCHAR(100) UNIQUE NOT NULL,  -- MQTT topic / API public id (örn. "ataturk-bulvari")
   name        VARCHAR(100) NOT NULL,
   description TEXT,
+  -- dashboard snapshot alanları (Kural #6'yı zone seviyesinde sağlar):
+  district    VARCHAR(100),
+  pole_count  INTEGER NOT NULL DEFAULT 0,
+  is_on       BOOLEAN NOT NULL DEFAULT FALSE,
+  brightness  INTEGER NOT NULL DEFAULT 0,
+  status      VARCHAR(20) NOT NULL DEFAULT 'ok',  -- ok | warning | fault
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+> Gerçek tanımlar Drizzle ile `src/lib/db/schema.ts`'te; migration `drizzle/`. API ve MQTT topic'lerinde zone için `slug` kullanılır (UUID değil).
 
 ### `devices`
 
@@ -206,10 +224,13 @@ CREATE TABLE commands (
 ## MQTT — Backend Entegrasyon Örneği
 
 ```typescript
-// lib/mqtt.ts
+// src/lib/mqtt.ts (özet — gerçek dosyada globalThis singleton + Drizzle yazımı var)
 import mqtt from 'mqtt';
 
-const client = mqtt.connect('mqtt://mqtt.domain.com', {
+const client = mqtt.connect({
+  protocol: 'mqtts',            // HiveMQ Cloud TLS
+  host: process.env.MQTT_HOST,
+  port: Number(process.env.MQTT_PORT), // 8883
   username: process.env.MQTT_USER,
   password: process.env.MQTT_PASS,
 });
@@ -246,18 +267,20 @@ export async function publishCommand(
 ## Ortam Değişkenleri (.env)
 
 ```env
-# Veritabanı
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
+# Veritabanı (Neon — pooled, sslmode=require)
+DATABASE_URL=postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/db?sslmode=require
 
-# MQTT
-MQTT_HOST=mqtt.domain.com
-MQTT_PORT=1883
+# MQTT (HiveMQ Cloud — TLS)
+MQTT_HOST={cluster-id}.s1.eu.hivemq.cloud
+MQTT_PORT=8883
 MQTT_USER=backend-service
 MQTT_PASS=****
 
-# Uygulama
-NEXT_PUBLIC_WS_URL=wss://api.domain.com/api/ws
+# Uygulama (SSE; aynı origin olduğu için varsayılan /api/events)
+NEXT_PUBLIC_SSE_URL=/api/events
 ```
+
+> Lokal geliştirme şablonu için `.env.example`. Gerçek değerler `.env.local`'a (gitignored) yazılır; canlıda Railway **Service Variables**'ta tutulur.
 
 ---
 
@@ -268,8 +291,10 @@ NEXT_PUBLIC_WS_URL=wss://api.domain.com/api/ws
 3. **Zone komutu = tek MQTT publish** → o zone'daki tüm cihazlar alır. Her cihaza ayrı istek gönderilmez.
 4. **Payload minimal tutulur.** LoRa geçişinde binary encode edilecek, semantik değişmeyecek.
 5. **Command tablosunda requestId ile idempotency** sağlanır; aynı komut iki kez uygulanmaz.
-6. **Cihaz durumu DB'de son snapshot olarak tutulur.** Dashboard her zaman DB'den okur, MQTT'den değil.
+6. **Cihaz durumu DB'de son snapshot olarak tutulur.** Dashboard her zaman DB'den okur, MQTT'den değil. Zone snapshot'ı `zones` tablosunda; komut publish'inde optimistic güncellenir, cihaz status'u gelince rafine edilir.
 7. **LoRa geçişinde** transport katmanı değişir (Chirpstack → MQTT → Backend), API kontratı aynı kalır.
+8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
+9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.
 
 ---
 
@@ -277,38 +302,49 @@ NEXT_PUBLIC_WS_URL=wss://api.domain.com/api/ws
 
 ```
 /
-├── app/
-│   ├── api/
-│   │   ├── zones/
-│   │   │   ├── route.ts                  # GET /api/zones
-│   │   │   └── [zoneId]/
-│   │   │       ├── command/route.ts      # POST /api/zones/:id/command
-│   │   │       └── status/route.ts       # GET /api/zones/:id/status
-│   │   ├── devices/
-│   │   │   └── [deviceId]/
-│   │   │       ├── command/route.ts
-│   │   │       └── status/route.ts
-│   │   └── ws/route.ts                   # WebSocket
-│   └── dashboard/
-│       └── page.tsx
-├── lib/
-│   ├── mqtt.ts                           # MQTT client singleton
-│   ├── db.ts                             # PostgreSQL bağlantısı
-│   └── websocket.ts                      # WS broadcast
-├── types/
-│   └── lighting.ts                       # Shared type definitions
+├── src/
+│   ├── instrumentation.ts                # açılışta MQTT başlatma (try/catch)
+│   ├── app/
+│   │   ├── page.tsx                      # dashboard (DB'den zone okur)
+│   │   ├── _components/                  # UI (DashboardClient, ZoneCard, ...)
+│   │   ├── _lib/
+│   │   │   ├── useLiveStatus.ts          # SSE (EventSource) hook
+│   │   │   ├── mockData.ts / types.ts / format.ts
+│   │   └── api/
+│   │       ├── zones/route.ts            # GET /api/zones
+│   │       ├── zones/[zoneId]/command|status/route.ts
+│   │       ├── devices/route.ts
+│   │       ├── devices/[deviceId]/command|status/route.ts
+│   │       └── events/route.ts           # SSE (/api/events)
+│   ├── lib/
+│   │   ├── mqtt.ts                       # MQTT singleton (TLS) + publishCommand
+│   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
+│   │   ├── db/{schema,index,seed}.ts     # Drizzle
+│   │   ├── env.ts  adapters.ts  api/respond.ts
+│   └── types/lighting.ts                 # payload tipleri + zod kontrat
+├── drizzle/                              # migration'lar
+├── firmware/esp32-fener/                 # ESP32 Arduino sketch
+├── scripts/mock-esp32.md                 # mosquitto_pub/sub test notları
+├── docker-compose.yml                    # lokal postgres (opsiyonel)
 └── CLAUDE.md
 ```
 
 ---
 
-## Geliştirme Sırası
+## Durum (2026-06)
 
-1. PostgreSQL şemasını kur (migration)
-2. MQTT broker'ı ayağa kaldır (Mosquitto — ayrı Droplet)
-3. `lib/mqtt.ts` singleton'ı yaz
-4. Zone ve device API route'larını yaz
-5. WebSocket endpoint'ini ekle
-6. Frontend'i gerçek API'ye bağla
-7. ESP32 arkadaşına broker credentials + topic yapısını ver
-8. Entegrasyon testi (mock ESP32 ile mosquitto_pub/sub)
+Backend, DB, MQTT, SSE ve frontend entegrasyonu **tamamlandı ve Railway'de canlıda.**
+
+- [x] PostgreSQL şeması (Drizzle migration, Neon)
+- [x] MQTT broker (HiveMQ Cloud, TLS) — `src/lib/mqtt.ts` singleton
+- [x] Zone/device API route'ları + SSE (`/api/events`)
+- [x] Frontend gerçek API'ye bağlandı (komut + canlı durum)
+- [x] Mock ESP32 entegrasyon testi (`scripts/mock-esp32.md`)
+- [x] Deploy: Railway + Neon (Service Variables ile env)
+- [ ] Gerçek ESP32 sahada test (`firmware/esp32-fener/`)
+- [ ] (İleride) LoRaWAN geçişi
+
+### Deploy notları (Railway)
+- `master`'a push → otomatik deploy (`npm run build` → `npm start`).
+- Env değişkenleri Railway **Service Variables**'ta. `.env.local` deploy edilmez.
+- **Replica = 1** (Kural #8). DB değişikliğinde lokalden `npm run db:migrate` (DATABASE_URL = Neon).
