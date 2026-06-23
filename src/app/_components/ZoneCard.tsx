@@ -10,6 +10,8 @@ interface ZoneCardProps {
   zone: Zone;
   onToggle: (on: boolean) => void;
   onBrightness: (value: number) => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }
 
 const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
@@ -18,7 +20,7 @@ const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
   fault: { label: "Arıza", cls: "text-danger" },
 };
 
-export function ZoneCard({ zone, onToggle, onBrightness }: ZoneCardProps) {
+export function ZoneCard({ zone, onToggle, onBrightness, onEdit, onDelete }: ZoneCardProps) {
   const lvl = zone.isOn ? zone.brightness / 100 : 0;
   const status = STATUS[zone.status];
 
@@ -73,9 +75,33 @@ export function ZoneCard({ zone, onToggle, onBrightness }: ZoneCardProps) {
           />
           {status.label}
         </span>
-        <span className="font-mono tabular-nums text-muted">
-          {zone.isOn ? formatKw(zonePowerKw(zone)) : "0,0 kW"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono tabular-nums text-muted">
+            {zone.isOn ? formatKw(zonePowerKw(zone)) : "0,0 kW"}
+          </span>
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={`${zone.name} düzenle`}
+            title="Düzenle"
+            className="rounded-md p-1 text-muted transition-colors hover:bg-panel-2 hover:text-text"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label={`${zone.name} sil`}
+            title="Sil"
+            className="rounded-md p-1 text-muted transition-colors hover:bg-danger/15 hover:text-danger"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            </svg>
+          </button>
+        </div>
       </div>
     </article>
   );

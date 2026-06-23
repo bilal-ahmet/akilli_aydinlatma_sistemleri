@@ -44,6 +44,33 @@ export const commandRequestSchema = z
   });
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
 
+// ── Zone CRUD (dashboard → backend) ──────────────────────────
+export const ZONE_STATUSES = ["ok", "warning", "fault"] as const;
+export type ZoneStatusValue = (typeof ZONE_STATUSES)[number];
+
+export const zoneCreateSchema = z.object({
+  name: z.string().trim().min(1, "İsim zorunlu").max(100),
+  slug: z.string().trim().max(100).optional(),
+  district: z.string().trim().max(100).optional(),
+  poleCount: z.number().int().min(0).max(100000).optional(),
+  status: z.enum(ZONE_STATUSES).optional(),
+});
+export type ZoneCreate = z.infer<typeof zoneCreateSchema>;
+
+export const zoneUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    district: z.string().trim().max(100).optional(),
+    poleCount: z.number().int().min(0).max(100000).optional(),
+    status: z.enum(ZONE_STATUSES).optional(),
+    isOn: z.boolean().optional(),
+    brightness: z.number().int().min(0).max(100).optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, {
+    message: "En az bir alan güncellenmeli",
+  });
+export type ZoneUpdate = z.infer<typeof zoneUpdateSchema>;
+
 /**
  * SSE üzerinden dashboard'a iletilen canlı olay. MQTT status mesajından veya
  * komut publish anından (optimistic) türetilir.
