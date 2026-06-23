@@ -38,7 +38,7 @@ export function MasterControl({
             {anyOn ? "Aydınlatma açık" : "Aydınlatma kapalı"}
           </h2>
           <p className="mt-1 text-sm text-muted">
-            Tek dokunuşla tüm zonları aç/kapat veya genel şiddeti ayarla.
+            Tek dokunuşla tüm bölgeleri aç/kapat veya genel şiddeti ayarla.
           </p>
         </div>
 

@@ -49,7 +49,7 @@ export function ZoneForm({ initial, submitting, onSubmit, onCancel }: ZoneFormPr
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div>
-        <label className={labelCls} htmlFor="zf-name">Zon adı *</label>
+        <label className={labelCls} htmlFor="zf-name">Bölge adı *</label>
         <input
           id="zf-name"
           className={inputCls}

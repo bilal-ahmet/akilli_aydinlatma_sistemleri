@@ -121,7 +121,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
           <p className="p-5 text-sm text-muted">Yükleniyor…</p>
         ) : devices.length === 0 ? (
           <p className="p-5 text-sm text-muted">
-            Henüz cihaz yok. Gerçek ESP32&apos;yi bağlamadan önce buradan kimliğini (deviceId) ve zone&apos;unu tanımla.
+            Henüz cihaz yok. Gerçek ESP32&apos;yi bağlamadan önce buradan kimliğini (deviceId) ve bölgesini tanımla.
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -130,7 +130,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                 <div className="min-w-0">
                   <p className="truncate font-mono text-sm text-text">{d.deviceId}</p>
                   <p className="mt-0.5 text-xs text-muted">
-                    {d.zoneName ?? "zone yok"}
+                    {d.zoneName ?? "bölge yok"}
                     {d.name ? ` · ${d.name}` : ""} · son görülme: {formatSeen(d.lastSeen)}
                   </p>
                 </div>
@@ -158,7 +158,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
         ) : null}
         <form onSubmit={submitAdd} className="flex flex-col gap-4">
           <div>
-            <label className={labelCls} htmlFor="dv-zone">Zone *</label>
+            <label className={labelCls} htmlFor="dv-zone">Bölge *</label>
             <select id="dv-zone" className={inputCls} value={zoneSlug} onChange={(e) => onZoneChange(e.target.value)}>
               {zones.map((z) => (
                 <option key={z.id} value={z.id}>{z.name}</option>

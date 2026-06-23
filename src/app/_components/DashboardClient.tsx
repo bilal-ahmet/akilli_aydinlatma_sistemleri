@@ -180,7 +180,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       <Modal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        title={editing ? "Zone Düzenle" : "Yeni Zone"}
+        title={editing ? "Bölge Düzenle" : "Yeni Bölge"}
       >
         {formError ? (
           <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
@@ -199,10 +199,10 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       <Modal
         open={deleting !== null}
         onClose={() => setDeleting(null)}
-        title="Zone sil"
+        title="Bölge sil"
       >
         <p className="text-sm text-muted">
-          <span className="font-medium text-text">{deleting?.name}</span> zonunu
+          <span className="font-medium text-text">{deleting?.name}</span> bölgesini
           ve bağlı cihazlarını kalıcı olarak silmek istediğine emin misin?
         </p>
         <div className="mt-5 flex justify-end gap-2">

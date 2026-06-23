@@ -21,10 +21,10 @@ export function ZoneGrid({
   onDelete,
 }: ZoneGridProps) {
   return (
-    <section aria-label="Aydınlatma zonları">
+    <section aria-label="Aydınlatma bölgeleri">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h2 className="font-display text-lg font-bold text-text">Zonlar</h2>
+          <h2 className="font-display text-lg font-bold text-text">Bölgeler</h2>
           <p className="text-xs text-muted">{zones.length} cadde / sokak</p>
         </div>
         <button
@@ -35,13 +35,13 @@ export function ZoneGrid({
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
             <path d="M12 5v14M5 12h14" />
           </svg>
-          Yeni Zone
+          Yeni Bölge
         </button>
       </div>
 
       {zones.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-panel/50 p-8 text-center text-sm text-muted">
-          Henüz zone yok. “Yeni Zone” ile ekleyebilirsin.
+          Henüz bölge yok. “Yeni Bölge” ile ekleyebilirsin.
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
