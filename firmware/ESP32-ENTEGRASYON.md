@@ -22,11 +22,11 @@ Bu değer hem topic'lerde hem data payload'ındaki `deviceId` alanında kullanı
 ## 3) Topic yapısı
 | Topic | Yön | Açıklama |
 |---|---|---|
-| `Meven:<MAC>/cmd` | **subscribe** | Bu cihaza özel komut |
-| `Meven:all/cmd`   | **subscribe** | Tüm cihazlara toplu komut |
-| `Meven:<MAC>/data`| **publish**   | Bu cihazın durum/veri raporu |
+| `MEVEN:<MAC>/cmd` | **subscribe** | Bu cihaza özel komut |
+| `MEVEN:all/cmd`   | **subscribe** | Tüm cihazlara toplu komut |
+| `MEVEN:<MAC>/data`| **publish**   | Bu cihazın durum/veri raporu |
 
-Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:all/cmd`.
+Cihaz açılışta **iki** topic'e subscribe olur: `MEVEN:<MAC>/cmd` ve `MEVEN:all/cmd`.
 **QoS:** komutlara subscribe → 1 · data publish → 0.
 
 ## 4) Komut payload (gelen, cmd)
@@ -54,13 +54,13 @@ Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:a
 ```
 - `relayStatus`: `"on"` | `"off"` (röle durumu → dashboard'da bölge açık/kapalı)
 - `brightness`: 0-100 · `temperature`: °C · `rssi`: dBm · `status`: `"ok"` | `"error"`
-- **MAC topic'te olduğundan payload'a `deviceId` koymana gerek yok** (backend MAC'i `Meven:<MAC>/data` topic'inden okur; göndersen de yoksayar).
+- **MAC topic'te olduğundan payload'a `deviceId` koymana gerek yok** (backend MAC'i `MEVEN:<MAC>/data` topic'inden okur; göndersen de yoksayar).
 - Her komut sonrası ve periyodik (~30 sn) bir kez yayınla (last-seen güncel kalsın).
 
 ## 6) Akış özeti
-- Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
-- Dashboard "Tüm Sistem" → `Meven:all/cmd`'e tek publish (her cihaz alır).
-- Cihaz durum bildirir → `Meven:<MAC>/data`'ya publish → backend `deviceId`(MAC) ile
+- Dashboard tek cihaza komut → `MEVEN:<MAC>/cmd`'e publish.
+- Dashboard "Tüm Sistem" → `MEVEN:all/cmd`'e tek publish (her cihaz alır).
+- Cihaz durum bildirir → `MEVEN:<MAC>/data`'ya publish → backend `deviceId`(MAC) ile
   cihazı bulup dashboard'ı günceller. (Cihazın MAC'i önceden dashboard'dan `devices`
   tablosuna kayıtlı olmalı; aksi halde veri loglanır ama bölgeyle eşleşmez.)
 

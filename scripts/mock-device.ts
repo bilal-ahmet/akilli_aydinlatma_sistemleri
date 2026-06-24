@@ -18,9 +18,9 @@ const MAC = (process.argv[2] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
   .toUpperCase();
 
-const T_CMD = `Meven:${MAC}/cmd`;
-const T_ALL = "Meven:all/cmd";
-const T_DATA = `Meven:${MAC}/data`;
+const T_CMD = `MEVEN:${MAC}/cmd`;
+const T_ALL = "MEVEN:all/cmd";
+const T_DATA = `MEVEN:${MAC}/data`;
 
 let relayStatus: "on" | "off" = "off";
 let brightness = 0;
