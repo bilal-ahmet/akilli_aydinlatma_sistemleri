@@ -65,14 +65,14 @@ Cihaz kimliği = **MAC adresi, iki noktasız** (örn. `A842E3123456`). Topic'ler
 MAC'e göre üretilir (`src/lib/topics.ts`).
 
 ```
-MEVEN:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
-MEVEN:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
-MEVEN:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
+Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
+Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
+Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ```
 
 - **Bölge komutu** MQTT'de tek topic değildir: backend o bölgedeki her cihazın
-  `MEVEN:<MAC>/cmd`'sine publish eder. "Tüm Sistem" → `MEVEN:all/cmd`.
-- Backend veri aboneliği `+/data` (MQTT `+` joker'i `MEVEN:` ile aynı seviyeye
+  `Meven:<MAC>/cmd`'sine publish eder. "Tüm Sistem" → `Meven:all/cmd`.
+- Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
   gömülemez); MAC payload'daki `deviceId`'den okunur.
 
 ### QoS Seviyeleri
@@ -84,7 +84,7 @@ MEVEN:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 
 ## Payload Formatları
 
-### Command Payload (Backend → ESP32, `MEVEN:<MAC>/cmd` veya `MEVEN:all/cmd`)
+### Command Payload (Backend → ESP32, `Meven:<MAC>/cmd` veya `Meven:all/cmd`)
 
 ```json
 { "action": "dim", "value": 75 }
@@ -93,10 +93,11 @@ MEVEN:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 `action` değerleri: `"on"` | `"off"` | `"dim"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
 
-### Data Payload (ESP32 → Backend, `MEVEN:<MAC>/data`)
+### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
 
 ```json
 {
+  "deviceId": "A842E3123456",
   "brightness": 75,
   "relayStatus": "on",
   "temperature": 42,
@@ -106,8 +107,6 @@ MEVEN:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ```
 
 `relayStatus`: `"on"` | `"off"` (bölge açık/kapalı snapshot'ını sürer) · `status`: `"ok"` | `"error"`
-
-> MAC, `MEVEN:<MAC>/data` topic'inden okunur; payload'da `deviceId` opsiyoneldir (gönderilmese de olur). Backend `src/lib/topics.ts → macFromDataTopic` ile çözer.
 
 > **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/MAC semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
 

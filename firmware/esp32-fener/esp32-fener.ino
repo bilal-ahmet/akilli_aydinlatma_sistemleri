@@ -28,9 +28,9 @@ WiFiClientSecure net;
 PubSubClient mqtt(net);
 
 String DEVICE_MAC;     // "A842E3123456"
-String T_CMD;          // MEVEN:<MAC>/cmd
-String T_ALL = "MEVEN:all/cmd";
-String T_DATA;         // MEVEN:<MAC>/data
+String T_CMD;          // Meven:<MAC>/cmd
+String T_ALL = "Meven:all/cmd";
+String T_DATA;         // Meven:<MAC>/data
 
 bool    isOn       = false;
 uint8_t brightness = 0;
@@ -57,8 +57,8 @@ void applyOutput() {
 }
 
 void publishData(const char* status) {
-  // MAC topic'te (Meven:<MAC>/data) olduğundan deviceId payload'a konmaz.
   JsonDocument doc;
+  doc["deviceId"]    = DEVICE_MAC;
   doc["brightness"]  = isOn ? brightness : 0;
   doc["relayStatus"] = isOn ? "on" : "off";
   doc["temperature"] = readTemperature();
@@ -137,8 +137,8 @@ void setup() {
   connectWiFi();
 
   DEVICE_MAC = readMac();
-  T_CMD  = "MEVEN:" + DEVICE_MAC + "/cmd";
-  T_DATA = "MEVEN:" + DEVICE_MAC + "/data";
+  T_CMD  = "Meven:" + DEVICE_MAC + "/cmd";
+  T_DATA = "Meven:" + DEVICE_MAC + "/data";
   Serial.printf("[id] MAC: %s\n", DEVICE_MAC.c_str());
 
   // TLS: hızlı test için doğrulama atla. Üretimde net.setCACert(...) kullan.

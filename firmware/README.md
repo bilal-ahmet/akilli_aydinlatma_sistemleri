@@ -19,7 +19,7 @@ kontrol etmek için Arduino sketch'i.
    `secrets.h` gitignore'lu olduğu için credential'ların repoya gitmez.
 3. Cihaz kimliği **otomatik**: sketch açılışta `WiFi.macAddress()` ile kendi MAC'ini okur ve iki noktasız kullanır (örn. `A842E3123456`). Elle id ayarlamana gerek yok.
 4. Kartı USB ile bağla, doğru **Port**'u seç, **Upload**.
-5. **Serial Monitor**'ü 115200 baud'da aç → `[wifi] OK`, `[id] MAC: ...`, `[mqtt] OK`, `subscribe MEVEN:<MAC>/cmd , MEVEN:all/cmd` satırlarını görmelisin.
+5. **Serial Monitor**'ü 115200 baud'da aç → `[wifi] OK`, `[id] MAC: ...`, `[mqtt] OK`, `subscribe Meven:<MAC>/cmd , Meven:all/cmd` satırlarını görmelisin.
 6. Serial'deki MAC'i dashboard'da **Cihazlar → Yeni Cihaz**'dan ekle (ilgili bölgeyi seç) — böylece gelen veri o bölgeyle eşleşir.
 
 ## Donanım
@@ -32,9 +32,9 @@ kontrol etmek için Arduino sketch'i.
 2. Canlı dashboard'u aç (Railway URL'in).
 3. Cihazın bölgesini aç/kapat/dim yap (veya "Tüm Sistem").
 4. Beklenen:
-   - Serial Monitor'de `[mqtt] msg <- MEVEN:<MAC>/cmd` (veya `MEVEN:all/cmd`) + `[cmd] action=...`
+   - Serial Monitor'de `[mqtt] msg <- Meven:<MAC>/cmd` (veya `Meven:all/cmd`) + `[cmd] action=...`
    - LED yanar/söner/parlaklığı değişir.
-   - ESP32 `MEVEN:<MAC>/data`'ya publish eder → backend `device_status`'a yazar, `commands` satırı `delivered` olur, dashboard SSE ile teyit alır; cihaz listesinde sıcaklık/RSSI görünür.
+   - ESP32 `Meven:<MAC>/data`'ya publish eder → backend `device_status`'a yazar, `commands` satırı `delivered` olur, dashboard SSE ile teyit alır; cihaz listesinde sıcaklık/RSSI görünür.
 5. Cihaz 30 sn'de bir heartbeat data'sı yollar → dashboard'da cihaz "canlı" kalır.
 
 ## Güvenlik notu (TLS)

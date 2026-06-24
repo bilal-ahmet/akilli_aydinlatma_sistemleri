@@ -18,9 +18,9 @@ const MAC = (process.argv[2] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
   .toUpperCase();
 
-const T_CMD = `MEVEN:${MAC}/cmd`;
-const T_ALL = "MEVEN:all/cmd";
-const T_DATA = `MEVEN:${MAC}/data`;
+const T_CMD = `Meven:${MAC}/cmd`;
+const T_ALL = "Meven:all/cmd";
+const T_DATA = `Meven:${MAC}/data`;
 
 let relayStatus: "on" | "off" = "off";
 let brightness = 0;
@@ -36,8 +36,8 @@ const client = mqtt.connect({
 });
 
 function publishData(status: "ok" | "error" = "ok") {
-  // MAC topic'te (Meven:<MAC>/data) olduğundan payload'a deviceId koymuyoruz.
   const payload = {
+    deviceId: MAC,
     brightness: relayStatus === "on" ? brightness : 0,
     relayStatus,
     temperature: 38 + Math.floor(Math.random() * 8), // 38-45°C

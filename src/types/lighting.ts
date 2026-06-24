@@ -17,9 +17,8 @@ export const commandPayloadSchema = z.object({
 export type CommandPayload = z.infer<typeof commandPayloadSchema>;
 
 // ── Data (ESP32 → Backend, Meven:<MAC>/data) ─────────────────
-// MAC topic'ten okunur; payload'da deviceId GÖNDERMEK ZORUNLU DEĞİL (opsiyonel).
 export const dataPayloadSchema = z.object({
-  deviceId: z.string().optional(),
+  deviceId: z.string(), // MAC (iki noktasız)
   brightness: z.number().int().min(0).max(100).optional(),
   relayStatus: z.enum(["on", "off"]).optional(),
   temperature: z.number().optional(),
