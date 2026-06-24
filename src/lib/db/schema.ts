@@ -31,6 +31,7 @@ export const zones = pgTable("zones", {
   isOn: boolean("is_on").notNull().default(false),
   brightness: integer("brightness").notNull().default(0),
   status: varchar("status", { length: 20 }).notNull().default("ok"), // ok | warning | fault
+  activeFx: integer("active_fx"), // aktif efekt numarası (1-14, null = yok)
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

@@ -3,6 +3,7 @@
 import type { Zone } from "@/app/_lib/types";
 import { formatInt, formatKw } from "@/app/_lib/format";
 import { zonePowerKw } from "@/app/_lib/mockData";
+import { effectByNumber } from "@/lib/effects";
 import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
 
@@ -10,6 +11,7 @@ interface ZoneCardProps {
   zone: Zone;
   onToggle: (on: boolean) => void;
   onBrightness: (value: number) => void;
+  onEffect: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }
@@ -20,9 +22,10 @@ const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
   fault: { label: "Arıza", cls: "text-danger" },
 };
 
-export function ZoneCard({ zone, onToggle, onBrightness, onEdit, onDelete }: ZoneCardProps) {
+export function ZoneCard({ zone, onToggle, onBrightness, onEffect, onEdit, onDelete }: ZoneCardProps) {
   const lvl = zone.isOn ? zone.brightness / 100 : 0;
   const status = STATUS[zone.status];
+  const activeEffect = effectByNumber(zone.activeFx);
 
   return (
     <article
@@ -62,23 +65,47 @@ export function ZoneCard({ zone, onToggle, onBrightness, onEdit, onDelete }: Zon
       </div>
 
       <div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-xs">
-        <span className={`flex items-center gap-1.5 font-medium ${status.cls}`}>
-          <span
-            aria-hidden
-            className={`h-1.5 w-1.5 rounded-full ${
-              zone.status === "ok"
-                ? "bg-muted"
-                : zone.status === "warning"
-                  ? "bg-glow"
-                  : "bg-danger"
-            }`}
-          />
-          {status.label}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`flex items-center gap-1.5 font-medium ${status.cls}`}>
+            <span
+              aria-hidden
+              className={`h-1.5 w-1.5 rounded-full ${
+                zone.status === "ok"
+                  ? "bg-muted"
+                  : zone.status === "warning"
+                    ? "bg-glow"
+                    : "bg-danger"
+              }`}
+            />
+            {status.label}
+          </span>
+          {activeEffect ? (
+            <span
+              title={activeEffect.desc}
+              className="inline-flex items-center gap-1 rounded-full border border-glow/40 bg-glow/15 px-2 py-0.5 font-medium text-accent"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
+              </svg>
+              {activeEffect.label}
+            </span>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2">
           <span className="font-mono tabular-nums text-muted">
             {zone.isOn ? formatKw(zonePowerKw(zone)) : "0,0 kW"}
           </span>
+          <button
+            type="button"
+            onClick={onEffect}
+            aria-label={`${zone.name} efektleri`}
+            title="Efektler"
+            className="rounded-md p-1 text-muted transition-colors hover:bg-panel-2 hover:text-accent"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
+            </svg>
+          </button>
           <button
             type="button"
             onClick={onEdit}

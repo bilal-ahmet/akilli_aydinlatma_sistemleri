@@ -27,8 +27,8 @@ export async function POST(
   if (!zone) return fail("Zone bulunamadı", 404);
 
   try {
-    const { action, value } = parsed.data;
-    const { requestId } = await publishCommand("zone", zoneId, action, value);
+    const { action, value, number } = parsed.data;
+    const { requestId } = await publishCommand("zone", zoneId, action, value, number);
     return ok({ requestId, status: "pending" }, { status: 202 });
   } catch (err) {
     return fail("Komut yayınlanamadı", 502, String(err));

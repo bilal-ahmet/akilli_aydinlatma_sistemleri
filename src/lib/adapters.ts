@@ -14,6 +14,7 @@ export function toZone(row: ZoneRow): Zone {
     isOn: row.isOn,
     brightness: row.brightness,
     status: (row.status as ZoneStatus) ?? "ok",
+    activeFx: row.activeFx ?? null,
   };
 }
 

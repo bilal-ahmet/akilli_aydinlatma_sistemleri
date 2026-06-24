@@ -15,6 +15,13 @@
       "when": 1782297516608,
       "tag": "0001_many_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782303728520,
+      "tag": "0002_wonderful_darkstar",
+      "breakpoints": true
     }
   ]
 }

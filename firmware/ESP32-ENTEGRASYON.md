@@ -39,8 +39,34 @@ Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:a
 ```json
 { "action": "off" }
 ```
-- `action`: `"on"` | `"off"` | `"dim"`
-- `value`: 0-100 (yalnız `dim`'de). Cihaz sadece bu iki alana bakar.
+- `action`: `"on"` | `"off"` | `"dim"` | `"efekt"`
+- `value`: 0-100 (yalnız `dim`'de).
+
+### Efekt komutu
+```json
+{ "action": "efekt", "number": 10 }
+```
+- `number`: **1-tabanlı** efekt sıra numarası (1-14). Firmware bunu fonksiyon
+  dizisine indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
+- `on`/`off`/`dim` komutu gelince efekt durdurulur.
+- **Numara tablosu (DONMUŞ KONTRAT — sıra değişmez):**
+
+| # | Fonksiyon | Açıklama |
+|---|-----------|----------|
+| 1 | dali_fx_fade | Breathe / Fade — yavaş açılıp kapanma |
+| 2 | dali_fx_blink | Tam aç/kapa ~0.5 sn |
+| 3 | dali_fx_strobe | Kısa parlak flaşlar |
+| 4 | dali_fx_random | Rastgele parlaklık (titreme) |
+| 5 | dali_fx_steps | Çeyrek seviyelerde duraklama |
+| 6 | dali_fx_pulse | Sinüs eğrili nefes |
+| 7 | dali_fx_heartbeat | İki hızlı vuruş + dinlenme |
+| 8 | dali_fx_candle | Mum gibi düzensiz titreşim |
+| 9 | dali_fx_sos | Mors SOS (... --- ...) |
+| 10 | dali_fx_police | Üçlü hızlı flaş |
+| 11 | dali_fx_twinkle | Loş zemin + parıltılar |
+| 12 | dali_fx_lightning | Karanlık + ani şimşek |
+| 13 | dali_fx_disco | Rastgele efekt zinciri |
+| 14 | dali_fx_chase | Lambaları sırayla yakma (0..count-1) |
 
 ## 5) Veri payload (giden, data)
 ```json

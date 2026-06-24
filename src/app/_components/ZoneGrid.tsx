@@ -8,6 +8,7 @@ interface ZoneGridProps {
   onToggle: (id: string, on: boolean) => void;
   onBrightness: (id: string, value: number) => void;
   onCreate: () => void;
+  onEffect: (zone: Zone) => void;
   onEdit: (zone: Zone) => void;
   onDelete: (zone: Zone) => void;
 }
@@ -17,6 +18,7 @@ export function ZoneGrid({
   onToggle,
   onBrightness,
   onCreate,
+  onEffect,
   onEdit,
   onDelete,
 }: ZoneGridProps) {
@@ -51,6 +53,7 @@ export function ZoneGrid({
               zone={zone}
               onToggle={(on) => onToggle(zone.id, on)}
               onBrightness={(value) => onBrightness(zone.id, value)}
+              onEffect={() => onEffect(zone)}
               onEdit={() => onEdit(zone)}
               onDelete={() => onDelete(zone)}
             />

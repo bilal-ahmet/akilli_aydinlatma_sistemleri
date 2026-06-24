@@ -11,6 +11,8 @@ export interface Zone {
   /** 0–100 ışık şiddeti */
   brightness: number;
   status: ZoneStatus;
+  /** Aktif efekt numarası (1-14) veya null/undefined */
+  activeFx?: number | null;
 }
 
 export interface DeviceView {

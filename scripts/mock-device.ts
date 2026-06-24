@@ -13,6 +13,7 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
+import { effectByNumber } from "@/lib/effects";
 
 const MAC = (process.argv[2] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
@@ -59,7 +60,7 @@ client.on("connect", () => {
 });
 
 client.on("message", (topic, raw) => {
-  let cmd: { action?: string; value?: number };
+  let cmd: { action?: string; value?: number; number?: number };
   try {
     cmd = JSON.parse(raw.toString());
   } catch {
@@ -67,6 +68,7 @@ client.on("message", (topic, raw) => {
     return publishData("error");
   }
 
+  const via = topic === T_ALL ? "all" : "MAC";
   const action = cmd.action ?? "";
   if (action === "on") {
     relayStatus = "on";
@@ -78,12 +80,16 @@ client.on("message", (topic, raw) => {
       brightness = cmd.value;
       relayStatus = "on";
     }
+  } else if (action === "efekt") {
+    relayStatus = "on";
+    const fx = effectByNumber(cmd.number);
+    console.log(`◀ efekt (${via}): #${cmd.number} ${fx?.label ?? "?"} (${fx?.id ?? "?"})`);
+    return publishData();
   } else {
     console.warn(`bilinmeyen action: ${action}`);
     return publishData("error");
   }
 
-  const via = topic === T_ALL ? "all" : "MAC";
   console.log(`◀ komut (${via}): ${action}${cmd.value != null ? ` ${cmd.value}` : ""}  →  röle=${relayStatus} brightness=${brightness}`);
   publishData();
 });

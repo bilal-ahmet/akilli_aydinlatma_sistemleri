@@ -26,8 +26,8 @@ export async function POST(
   if (!device) return fail("Cihaz bulunamadı", 404);
 
   try {
-    const { action, value } = parsed.data;
-    const { requestId } = await publishCommand("device", deviceId, action, value);
+    const { action, value, number } = parsed.data;
+    const { requestId } = await publishCommand("device", deviceId, action, value, number);
     return ok({ requestId, status: "pending" }, { status: 202 });
   } catch (err) {
     return fail("Komut yayınlanamadı", 502, String(err));

@@ -11,8 +11,8 @@ export async function POST(req: Request) {
     return fail("Geçersiz komut gövdesi", 422, parsed.error.flatten());
   }
   try {
-    const { action, value } = parsed.data;
-    const { requestId } = await publishCommand("all", "all", action, value);
+    const { action, value, number } = parsed.data;
+    const { requestId } = await publishCommand("all", "all", action, value, number);
     return ok({ requestId, status: "pending" }, { status: 202 });
   } catch (err) {
     return fail("Toplu komut yayınlanamadı", 502, String(err));

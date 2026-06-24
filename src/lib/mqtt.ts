@@ -131,13 +131,21 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
 }
 
 /** Komut payload'ından bölge snapshot patch'i üretir. */
-function patchFor(action: Action, value?: number) {
+function patchFor(action: Action, value?: number, number?: number) {
   const patch: Partial<typeof schema.zones.$inferInsert> = {};
-  if (action === "on") patch.isOn = true;
-  else if (action === "off") patch.isOn = false;
-  else if (action === "dim") {
+  if (action === "on") {
+    patch.isOn = true;
+    patch.activeFx = null; // efekt durur
+  } else if (action === "off") {
+    patch.isOn = false;
+    patch.activeFx = null;
+  } else if (action === "dim") {
     patch.isOn = true;
     if (typeof value === "number") patch.brightness = value;
+    patch.activeFx = null;
+  } else if (action === "efekt") {
+    patch.isOn = true;
+    if (typeof number === "number") patch.activeFx = number;
   }
   return patch;
 }
@@ -154,6 +162,7 @@ export async function publishCommand(
   id: string,
   action: Action,
   value?: number,
+  number?: number,
 ): Promise<{ requestId: string }> {
   const requestId = randomUUID();
   const at = new Date().toISOString();
@@ -163,11 +172,15 @@ export async function publishCommand(
     targetType: target,
     targetId: id,
     action,
-    value,
+    value: action === "efekt" ? number : value, // commands log
     status: "pending",
   });
 
-  const payload: CommandPayload = { action, ...(value != null ? { value } : {}) };
+  const payload: CommandPayload = {
+    action,
+    ...(value != null ? { value } : {}),
+    ...(number != null ? { number } : {}),
+  };
   const payloadStr = JSON.stringify(payload);
   const client = getMqttClient();
 
@@ -176,7 +189,7 @@ export async function publishCommand(
   } else if (target === "zone") {
     const [zone] = await db
       .update(schema.zones)
-      .set(patchFor(action, value))
+      .set(patchFor(action, value, number))
       .where(eq(schema.zones.slug, id))
       .returning();
     if (zone) {
@@ -184,6 +197,7 @@ export async function publishCommand(
         zoneSlug: zone.slug,
         isOn: zone.isOn,
         brightness: zone.brightness,
+        activeFx: zone.activeFx,
         status: "ok",
         at,
       });
@@ -199,13 +213,14 @@ export async function publishCommand(
     // all
     const updated = await db
       .update(schema.zones)
-      .set(patchFor(action, value))
+      .set(patchFor(action, value, number))
       .returning();
     for (const z of updated) {
       emitLiveEvent({
         zoneSlug: z.slug,
         isOn: z.isOn,
         brightness: z.brightness,
+        activeFx: z.activeFx,
         status: "ok",
         at,
       });

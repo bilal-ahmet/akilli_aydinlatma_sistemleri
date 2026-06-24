@@ -1,18 +1,20 @@
 import { z } from "zod";
+import { EFFECT_COUNT } from "@/lib/effects";
 
 /**
  * MQTT payload kontratı — CLAUDE.md "Payload Formatları" bölümünün tek
  * kaynağı. LoRa geçişinde transport binary olur ama bu semantik korunur.
  */
 
-export const ACTIONS = ["on", "off", "dim"] as const;
+export const ACTIONS = ["on", "off", "dim", "efekt"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 // ── Command (Backend → ESP32) ────────────────────────────────
-// Yayınlanan komut payload'ı yalın: { action, value? }. ESP yalnız bunları okur.
+// Yayınlanan komut payload'ı yalın: { action, value? } veya { action:"efekt", number }.
 export const commandPayloadSchema = z.object({
   action: z.enum(ACTIONS),
   value: z.number().int().min(0).max(100).optional(),
+  number: z.number().int().min(1).max(EFFECT_COUNT).optional(), // efekt sıra no
 });
 export type CommandPayload = z.infer<typeof commandPayloadSchema>;
 
@@ -28,15 +30,20 @@ export const dataPayloadSchema = z.object({
 export type DataPayload = z.infer<typeof dataPayloadSchema>;
 
 // ── API request body (dashboard → backend) ───────────────────
-// { action, value? } — value yalnızca "dim" için zorunlu.
+// { action, value?, number? } — value "dim" için, number "efekt" için zorunlu.
 export const commandRequestSchema = z
   .object({
     action: z.enum(ACTIONS),
     value: z.number().int().min(0).max(100).optional(),
+    number: z.number().int().min(1).max(EFFECT_COUNT).optional(),
   })
   .refine((d) => d.action !== "dim" || typeof d.value === "number", {
     message: '"dim" aksiyonu için value (0-100) zorunludur',
     path: ["value"],
+  })
+  .refine((d) => d.action !== "efekt" || typeof d.number === "number", {
+    message: '"efekt" aksiyonu için number (1-14) zorunludur',
+    path: ["number"],
   });
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
 
@@ -88,5 +95,6 @@ export type LiveEvent = {
   isOn?: boolean;
   status: "ok" | "error";
   brightness?: number;
+  activeFx?: number | null; // aktif efekt numarası (null = efekt yok)
   at: string;
 };

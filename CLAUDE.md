@@ -90,8 +90,12 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 { "action": "dim", "value": 75 }
 ```
 
-`action` değerleri: `"on"` | `"off"` | `"dim"`
+`action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
+
+**Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number` 1-tabanlı efekt
+sıra no (1-14, donmuş katalog `src/lib/effects.ts`). on/off/dim efekti durdurur.
+Bölge snapshot'ında `zones.active_fx` olarak optimistic tutulur.
 
 ### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
 

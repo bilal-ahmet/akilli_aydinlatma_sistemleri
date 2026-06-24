@@ -9,24 +9,25 @@ import { StatusOverview } from "./StatusOverview";
 import { MasterControl } from "./MasterControl";
 import { ZoneGrid } from "./ZoneGrid";
 import { DeviceManager } from "./DeviceManager";
+import { EffectPicker } from "./EffectPicker";
 import { Modal } from "./Modal";
 import { ZoneForm, type ZoneFormValues } from "./ZoneForm";
 
-async function sendCommand(zoneId: string, action: Action, value?: number) {
+async function sendCommand(zoneId: string, action: Action, value?: number, number?: number) {
   const res = await fetch(`/api/zones/${zoneId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, value }),
+    body: JSON.stringify({ action, value, number }),
   });
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
 }
 
 /** Toplu komut → Meven:all/cmd (tek publish). */
-async function sendAll(action: Action, value?: number) {
+async function sendAll(action: Action, value?: number, number?: number) {
   const res = await fetch(`/api/command/all`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, value }),
+    body: JSON.stringify({ action, value, number }),
   });
   if (!res.ok) throw new Error(`Toplu komut başarısız (${res.status})`);
 }
@@ -51,6 +52,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Efekt picker hedefi: bir bölge, "all" (tüm sistem) veya kapalı
+  const [effectTarget, setEffectTarget] = useState<Zone | "all" | null>(null);
+
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const summary = useMemo(() => summarize(zones), [zones]);
@@ -65,6 +69,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         const next: Zone = { ...z };
         if (typeof e.isOn === "boolean") next.isOn = e.isOn;
         if (typeof e.brightness === "number") next.brightness = e.brightness;
+        if (typeof e.activeFx !== "undefined") next.activeFx = e.activeFx;
         if (e.deviceId) next.status = (e.status === "error" ? "fault" : "ok") as ZoneStatus;
         return next;
       }),
@@ -74,14 +79,15 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   useLiveStatus(onLive);
 
   // ── Aç/kapa & parlaklık (optimistic + API) ─────────────────
+  // on/off/dim efekti durdurur → activeFx optimistic olarak null'lanır.
   function toggleZone(id: string, on: boolean) {
     const prev = zones;
-    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on } : z)));
+    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on, activeFx: null } : z)));
     sendCommand(id, on ? "on" : "off").catch(() => setZones(prev));
   }
 
   function setZoneBrightness(id: string, value: number) {
-    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value } : z)));
+    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value, activeFx: null } : z)));
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
@@ -91,19 +97,46 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   function setAll(on: boolean) {
-    setZones((zs) => zs.map((z) => ({ ...z, isOn: on })));
+    setZones((zs) => zs.map((z) => ({ ...z, isOn: on, activeFx: null })));
     sendAll(on ? "on" : "off").catch(() => {}); // Meven:all/cmd
   }
 
   function setAllBrightness(value: number) {
     setMasterBrightness(value);
-    setZones((zs) => zs.map((z) => ({ ...z, brightness: value })));
+    setZones((zs) => zs.map((z) => ({ ...z, brightness: value, activeFx: null })));
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
     timers.set("__all__", setTimeout(() => {
       sendAll("dim", value).catch(() => {});
       timers.delete("__all__");
     }, 300));
+  }
+
+  // ── Efektler ───────────────────────────────────────────────
+  function pickEffect(number: number) {
+    const t = effectTarget;
+    if (!t) return;
+    if (t === "all") {
+      setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
+      sendAll("efekt", undefined, number).catch(() => {});
+    } else {
+      setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, isOn: true, activeFx: number } : z)));
+      sendCommand(t.id, "efekt", undefined, number).catch(() => {});
+    }
+    setEffectTarget(null);
+  }
+
+  function stopEffect() {
+    const t = effectTarget;
+    if (!t) return;
+    if (t === "all") {
+      setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
+      sendAll("dim", masterBrightness).catch(() => {});
+    } else {
+      setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, activeFx: null } : z)));
+      sendCommand(t.id, "dim", t.brightness).catch(() => {});
+    }
+    setEffectTarget(null);
   }
 
   // ── CRUD ───────────────────────────────────────────────────
@@ -175,16 +208,34 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         masterBrightness={masterBrightness}
         onSetAll={setAll}
         onSetAllBrightness={setAllBrightness}
+        onEffectAll={() => setEffectTarget("all")}
       />
       <ZoneGrid
         zones={zones}
         onToggle={toggleZone}
         onBrightness={setZoneBrightness}
         onCreate={openCreate}
+        onEffect={(z) => setEffectTarget(z)}
         onEdit={openEdit}
         onDelete={(z) => setDeleting(z)}
       />
       <DeviceManager zones={zones} />
+
+      {/* Efekt seçici */}
+      <EffectPicker
+        open={effectTarget !== null}
+        title={
+          effectTarget === "all"
+            ? "Tüm Sistem — Efektler"
+            : effectTarget
+              ? `${effectTarget.name} — Efektler`
+              : "Efektler"
+        }
+        activeFx={effectTarget && effectTarget !== "all" ? effectTarget.activeFx : null}
+        onClose={() => setEffectTarget(null)}
+        onPick={pickEffect}
+        onStop={stopEffect}
+      />
 
       {/* Ekle / Düzenle */}
       <Modal

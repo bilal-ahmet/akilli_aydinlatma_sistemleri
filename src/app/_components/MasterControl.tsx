@@ -8,6 +8,7 @@ interface MasterControlProps {
   masterBrightness: number;
   onSetAll: (on: boolean) => void;
   onSetAllBrightness: (value: number) => void;
+  onEffectAll: () => void;
 }
 
 export function MasterControl({
@@ -15,6 +16,7 @@ export function MasterControl({
   masterBrightness,
   onSetAll,
   onSetAllBrightness,
+  onEffectAll,
 }: MasterControlProps) {
   const lvl = anyOn ? masterBrightness / 100 : 0;
 
@@ -43,6 +45,16 @@ export function MasterControl({
         </div>
 
         <div className="flex items-center gap-3 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={onEffectAll}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:border-glow/40 hover:text-accent"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
+            </svg>
+            Efektler
+          </button>
           <span className="text-sm font-medium text-muted">
             {anyOn ? "Açık" : "Kapalı"}
           </span>
