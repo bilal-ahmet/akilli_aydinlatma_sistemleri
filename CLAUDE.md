@@ -97,7 +97,6 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 
 ```json
 {
-  "deviceId": "A842E3123456",
   "brightness": 75,
   "relayStatus": "on",
   "temperature": 42,
@@ -107,6 +106,8 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ```
 
 `relayStatus`: `"on"` | `"off"` (bölge açık/kapalı snapshot'ını sürer) · `status`: `"ok"` | `"error"`
+
+> MAC, `Meven:<MAC>/data` topic'inden okunur; payload'da `deviceId` opsiyoneldir (gönderilmese de olur). Backend `src/lib/topics.ts → macFromDataTopic` ile çözer.
 
 > **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/MAC semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
 

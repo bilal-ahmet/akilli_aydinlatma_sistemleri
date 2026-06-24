@@ -4,7 +4,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
-import { cmdTopic, ALL_CMD, DATA_WILDCARD } from "@/lib/topics";
+import { cmdTopic, ALL_CMD, DATA_WILDCARD, macFromDataTopic } from "@/lib/topics";
+import { normalizeMac } from "@/lib/mac";
 import {
   dataPayloadSchema,
   type Action,
@@ -67,7 +68,12 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
     return;
   }
   const d = parsed.data;
-  const mac = d.deviceId;
+  // MAC topic'ten okunur (payload'da deviceId opsiyonel). Fallback: payload.
+  const mac = normalizeMac(macFromDataTopic(topic) ?? d.deviceId ?? "");
+  if (!mac) {
+    console.warn(`[mqtt] MAC çözülemedi (${topic})`);
+    return;
+  }
   const now = new Date();
 
   // 1) Ham telemetriyi logla

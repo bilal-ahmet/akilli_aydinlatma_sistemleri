@@ -57,8 +57,8 @@ void applyOutput() {
 }
 
 void publishData(const char* status) {
+  // MAC topic'te (Meven:<MAC>/data) olduğundan deviceId payload'a konmaz.
   JsonDocument doc;
-  doc["deviceId"]    = DEVICE_MAC;
   doc["brightness"]  = isOn ? brightness : 0;
   doc["relayStatus"] = isOn ? "on" : "off";
   doc["temperature"] = readTemperature();

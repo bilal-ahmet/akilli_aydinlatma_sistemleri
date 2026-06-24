@@ -36,8 +36,8 @@ const client = mqtt.connect({
 });
 
 function publishData(status: "ok" | "error" = "ok") {
+  // MAC topic'te (Meven:<MAC>/data) olduğundan payload'a deviceId koymuyoruz.
   const payload = {
-    deviceId: MAC,
     brightness: relayStatus === "on" ? brightness : 0,
     relayStatus,
     temperature: 38 + Math.floor(Math.random() * 8), // 38-45°C

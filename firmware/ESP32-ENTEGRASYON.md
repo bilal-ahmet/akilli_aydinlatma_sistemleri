@@ -45,7 +45,6 @@ Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:a
 ## 5) Veri payload (giden, data)
 ```json
 {
-  "deviceId": "A842E3123456",
   "brightness": 75,
   "relayStatus": "on",
   "temperature": 42,
@@ -55,6 +54,7 @@ Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:a
 ```
 - `relayStatus`: `"on"` | `"off"` (röle durumu → dashboard'da bölge açık/kapalı)
 - `brightness`: 0-100 · `temperature`: °C · `rssi`: dBm · `status`: `"ok"` | `"error"`
+- **MAC topic'te olduğundan payload'a `deviceId` koymana gerek yok** (backend MAC'i `Meven:<MAC>/data` topic'inden okur; göndersen de yoksayar).
 - Her komut sonrası ve periyodik (~30 sn) bir kez yayınla (last-seen güncel kalsın).
 
 ## 6) Akış özeti

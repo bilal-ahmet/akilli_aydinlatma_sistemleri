@@ -14,3 +14,10 @@ export const cmdTopic = (mac: string) => `${PREFIX}:${mac}/cmd`;
 export const dataTopic = (mac: string) => `${PREFIX}:${mac}/data`;
 export const ALL_CMD = `${PREFIX}:all/cmd`;
 export const DATA_WILDCARD = "+/data";
+
+/** "Meven:A842E3123456/data" → "A842E3123456" (yoksa null). MAC topic'ten okunur. */
+export function macFromDataTopic(topic: string): string | null {
+  if (!topic.startsWith(`${PREFIX}:`) || !topic.endsWith("/data")) return null;
+  const mid = topic.slice(PREFIX.length + 1, -"/data".length);
+  return mid || null;
+}
