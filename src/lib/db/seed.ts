@@ -36,12 +36,12 @@ async function main() {
       })
       .returning();
 
-    // Her zone için 3 örnek cihaz (gerçekte poleCount kadar olur).
+    // Her zone için 3 örnek cihaz. Cihaz kimliği = MAC (iki noktasız);
+    // demo için rastgele üretilir (gerçek cihazlar sahada kendi MAC'iyle gelir).
     const deviceCount = Math.min(3, z.poleCount);
     for (let i = 1; i <= deviceCount; i++) {
-      const deviceId = `${z.id}-${String(i).padStart(3, "0")}`;
       await db.insert(schema.devices).values({
-        deviceId,
+        deviceId: fakeMac(),
         zoneId: zoneRow.id,
         name: `${z.name} #${i}`,
       });
@@ -52,6 +52,15 @@ async function main() {
 
   await pool.end();
   console.log(`\nSeed tamam: ${initialZones.length} zone.`);
+}
+
+/** Demo için rastgele 12 hane hex MAC üretir (büyük harf, iki noktasız). */
+function fakeMac(): string {
+  return Array.from({ length: 6 }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, "0"),
+  )
+    .join("")
+    .toUpperCase();
 }
 
 main().catch((err) => {

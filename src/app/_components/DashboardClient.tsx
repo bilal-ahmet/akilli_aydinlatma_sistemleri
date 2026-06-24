@@ -21,6 +21,16 @@ async function sendCommand(zoneId: string, action: Action, value?: number) {
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
 }
 
+/** Toplu komut → Meven:all/cmd (tek publish). */
+async function sendAll(action: Action, value?: number) {
+  const res = await fetch(`/api/command/all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, value }),
+  });
+  if (!res.ok) throw new Error(`Toplu komut başarısız (${res.status})`);
+}
+
 /** Master slider başlangıcı: zone'ların ortalama parlaklığından türetilir. */
 function deriveMaster(zones: Zone[]): number {
   if (zones.length === 0) return 50;
@@ -82,7 +92,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   function setAll(on: boolean) {
     setZones((zs) => zs.map((z) => ({ ...z, isOn: on })));
-    for (const z of zones) sendCommand(z.id, on ? "on" : "off").catch(() => {});
+    sendAll(on ? "on" : "off").catch(() => {}); // Meven:all/cmd
   }
 
   function setAllBrightness(value: number) {
@@ -91,7 +101,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
     timers.set("__all__", setTimeout(() => {
-      for (const z of zones) sendCommand(z.id, "dim", value).catch(() => {});
+      sendAll("dim", value).catch(() => {});
       timers.delete("__all__");
     }, 300));
   }

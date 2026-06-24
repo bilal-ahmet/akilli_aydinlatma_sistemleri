@@ -4,8 +4,9 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
+import { cmdTopic, ALL_CMD, DATA_WILDCARD } from "@/lib/topics";
 import {
-  statusPayloadSchema,
+  dataPayloadSchema,
   type Action,
   type CommandPayload,
 } from "@/types/lighting";
@@ -14,16 +15,11 @@ import {
  * MQTT client singleton (HiveMQ Cloud, TLS). Tek uzun ömürlü Node process'te
  * yaşar; globalThis ile cache'lenir (HMR'da çift bağlantı olmasın).
  *
- * Akış:
- *  - subscribe city/lighting/device/+/status  → device_status'a yaz, event bus'a yayınla
- *  - publishCommand → commands'a pending yaz, ilgili topic'e QoS 1 publish
+ * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
+ *  - subscribe "+/data"        → Meven:<MAC>/data mesajlarını işle
+ *  - publish   Meven:<MAC>/cmd → tekil/bölge komutu
+ *  - publish   Meven:all/cmd   → toplu komut
  */
-
-const TOPIC = {
-  zoneCommand: (slug: string) => `city/lighting/zone/${slug}/command`,
-  deviceCommand: (id: string) => `city/lighting/device/${id}/command`,
-  deviceStatusWildcard: "city/lighting/device/+/status",
-};
 
 const globalForMqtt = globalThis as unknown as {
   __fenerMqtt?: MqttClient;
@@ -45,7 +41,7 @@ export function getMqttClient(): MqttClient {
 
   client.on("connect", () => {
     console.log("[mqtt] connected (HiveMQ Cloud, TLS)");
-    client.subscribe(TOPIC.deviceStatusWildcard, { qos: 0 }, (err) => {
+    client.subscribe(DATA_WILDCARD, { qos: 0 }, (err) => {
       if (err) console.error("[mqtt] subscribe error:", err.message);
     });
   });
@@ -54,7 +50,7 @@ export function getMqttClient(): MqttClient {
   client.on("reconnect", () => console.log("[mqtt] reconnecting…"));
 
   client.on("message", (topic, payload) => {
-    void handleStatusMessage(topic, payload).catch((err) =>
+    void handleData(topic, payload).catch((err) =>
       console.error("[mqtt] message handler error:", err),
     );
   });
@@ -63,30 +59,32 @@ export function getMqttClient(): MqttClient {
   return client;
 }
 
-/** Status mesajını işle: DB'ye yaz + zone snapshot'ı güncelle + event yayınla. */
-async function handleStatusMessage(topic: string, raw: Buffer): Promise<void> {
-  const parsed = statusPayloadSchema.safeParse(JSON.parse(raw.toString()));
+/** Meven:<MAC>/data mesajını işle: DB'ye yaz + bölge snapshot'ı + canlı event. */
+async function handleData(topic: string, raw: Buffer): Promise<void> {
+  const parsed = dataPayloadSchema.safeParse(JSON.parse(raw.toString()));
   if (!parsed.success) {
-    console.warn(`[mqtt] geçersiz status payload (${topic})`);
+    console.warn(`[mqtt] geçersiz data payload (${topic})`);
     return;
   }
-  const s = parsed.data;
+  const d = parsed.data;
+  const mac = d.deviceId;
   const now = new Date();
 
   // 1) Ham telemetriyi logla
   await db.insert(schema.deviceStatus).values({
-    deviceId: s.deviceId,
-    action: s.action,
-    value: s.value,
-    status: s.status,
-    rssi: s.rssi,
+    deviceId: mac,
+    brightness: d.brightness,
+    relayStatus: d.relayStatus,
+    temperature: d.temperature,
+    rssi: d.rssi,
+    status: d.status,
   });
 
-  // 2) Cihazı bul, last_seen güncelle, zone slug'ını çöz
+  // 2) Cihazı bul, last_seen güncelle, bölgeyi çöz
   const [device] = await db
     .update(schema.devices)
     .set({ lastSeen: now })
-    .where(eq(schema.devices.deviceId, s.deviceId))
+    .where(eq(schema.devices.deviceId, mac))
     .returning();
 
   let zoneSlug: string | undefined;
@@ -98,17 +96,19 @@ async function handleStatusMessage(topic: string, raw: Buffer): Promise<void> {
       .limit(1);
     zoneSlug = zone?.slug;
 
-    // 3) Zone durumunu cihaz raporuna göre rafine et
+    // 3) Bölge snapshot'ını cihaz raporuna göre rafine et
     if (zone) {
-      await db
-        .update(schema.zones)
-        .set({ status: s.status === "error" ? "fault" : "ok" })
-        .where(eq(schema.zones.id, zone.id));
+      const patch: Partial<typeof schema.zones.$inferInsert> = {
+        status: d.status === "error" ? "fault" : "ok",
+      };
+      if (d.relayStatus) patch.isOn = d.relayStatus === "on";
+      if (typeof d.brightness === "number") patch.brightness = d.brightness;
+      await db.update(schema.zones).set(patch).where(eq(schema.zones.id, zone.id));
     }
   }
 
-  // 4) Bekleyen komutları teslim edildi olarak işaretle (device + zone hedefi)
-  const targets = [s.deviceId, ...(zoneSlug ? [zoneSlug] : [])];
+  // 4) Bekleyen komutları teslim edildi yap (device + bölge hedefi + all)
+  const targets = [mac, "all", ...(zoneSlug ? [zoneSlug] : [])];
   await db
     .update(schema.commands)
     .set({ status: "delivered", deliveredAt: now })
@@ -122,80 +122,96 @@ async function handleStatusMessage(topic: string, raw: Buffer): Promise<void> {
   // 5) Dashboard'a canlı yayınla
   emitLiveEvent({
     zoneSlug,
-    deviceId: s.deviceId,
-    action: s.action,
-    value: s.value,
-    isOn: s.action ? s.action !== "off" : undefined,
-    brightness: s.action === "dim" ? s.value : undefined,
-    status: s.status,
+    deviceId: mac,
+    isOn: d.relayStatus ? d.relayStatus === "on" : undefined,
+    brightness: d.brightness,
+    status: d.status,
     at: now.toISOString(),
   });
 }
 
+/** Komut payload'ından bölge snapshot patch'i üretir. */
+function patchFor(action: Action, value?: number) {
+  const patch: Partial<typeof schema.zones.$inferInsert> = {};
+  if (action === "on") patch.isOn = true;
+  else if (action === "off") patch.isOn = false;
+  else if (action === "dim") {
+    patch.isOn = true;
+    if (typeof value === "number") patch.brightness = value;
+  }
+  return patch;
+}
+
 /**
- * Komut yayınla: commands'a pending kaydet, optimistic zone snapshot güncelle,
- * ilgili MQTT topic'ine QoS 1 publish et. requestId ile idempotency.
+ * Komut yayınla. target:
+ *  - "device" → Meven:<MAC>/cmd (id = MAC)
+ *  - "zone"   → bölgedeki her cihazın Meven:<MAC>/cmd'si (id = slug)
+ *  - "all"    → Meven:all/cmd (id = "all")
+ * commands tablosuna pending kaydeder; bölge/all'da snapshot'ı optimistic günceller.
  */
 export async function publishCommand(
-  targetType: "zone" | "device",
-  targetId: string,
+  target: "device" | "zone" | "all",
+  id: string,
   action: Action,
   value?: number,
 ): Promise<{ requestId: string }> {
   const requestId = randomUUID();
-  const timestamp = new Date().toISOString();
+  const at = new Date().toISOString();
 
   await db.insert(schema.commands).values({
     requestId,
-    targetType,
-    targetId,
+    targetType: target,
+    targetId: id,
     action,
     value,
     status: "pending",
   });
 
-  // Optimistic: zone snapshot'ı hemen güncelle (ESP32 olmadan da dashboard yansısın)
-  if (targetType === "zone") {
-    const patch: Partial<typeof schema.zones.$inferInsert> = {};
-    if (action === "on") patch.isOn = true;
-    else if (action === "off") patch.isOn = false;
-    else if (action === "dim") {
-      patch.isOn = true;
-      if (typeof value === "number") patch.brightness = value;
-    }
+  const payload: CommandPayload = { action, ...(value != null ? { value } : {}) };
+  const payloadStr = JSON.stringify(payload);
+  const client = getMqttClient();
+
+  if (target === "device") {
+    client.publish(cmdTopic(id), payloadStr, { qos: 1 });
+  } else if (target === "zone") {
     const [zone] = await db
       .update(schema.zones)
-      .set(patch)
-      .where(eq(schema.zones.slug, targetId))
+      .set(patchFor(action, value))
+      .where(eq(schema.zones.slug, id))
       .returning();
-
     if (zone) {
       emitLiveEvent({
         zoneSlug: zone.slug,
-        action,
-        value,
         isOn: zone.isOn,
         brightness: zone.brightness,
         status: "ok",
-        at: timestamp,
+        at,
+      });
+      const devs = await db
+        .select({ deviceId: schema.devices.deviceId })
+        .from(schema.devices)
+        .where(eq(schema.devices.zoneId, zone.id));
+      for (const dev of devs) {
+        client.publish(cmdTopic(dev.deviceId), payloadStr, { qos: 1 });
+      }
+    }
+  } else {
+    // all
+    const updated = await db
+      .update(schema.zones)
+      .set(patchFor(action, value))
+      .returning();
+    for (const z of updated) {
+      emitLiveEvent({
+        zoneSlug: z.slug,
+        isOn: z.isOn,
+        brightness: z.brightness,
+        status: "ok",
+        at,
       });
     }
+    client.publish(ALL_CMD, payloadStr, { qos: 1 });
   }
-
-  const topic =
-    targetType === "zone"
-      ? TOPIC.zoneCommand(targetId)
-      : TOPIC.deviceCommand(targetId);
-
-  const commandPayload: CommandPayload = {
-    action,
-    value,
-    [targetType === "zone" ? "zoneId" : "deviceId"]: targetId,
-    requestId,
-    timestamp,
-  };
-
-  getMqttClient().publish(topic, JSON.stringify(commandPayload), { qos: 1 });
 
   return { requestId };
 }

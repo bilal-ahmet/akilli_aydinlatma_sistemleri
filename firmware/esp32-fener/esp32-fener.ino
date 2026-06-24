@@ -1,17 +1,16 @@
 /*
- * Fener — Akıllı Sokak Aydınlatma · ESP32 firmware
+ * Fener — Akıllı Sokak Aydınlatma · ESP32 firmware (MAC tabanlı, Meven şeması)
  * ------------------------------------------------------------------
- * HiveMQ Cloud'a TLS (8883) ile bağlanır, zone + device komut
- * topic'lerine subscribe olur, gelen on/off/dim komutunu bir LED'e
- * (PWM ile dim) uygular ve durumunu status topic'ine publish eder.
+ * Cihaz açılışta kendi MAC'ini okur (iki noktasız), HiveMQ Cloud'a TLS (8883)
+ * ile bağlanır ve şu topic'leri kullanır:
+ *   subscribe: Meven:<MAC>/cmd , Meven:all/cmd
+ *   publish  : Meven:<MAC>/data
  *
- * Kütüphaneler (Arduino IDE → Library Manager):
- *   - PubSubClient  (Nick O'Leary)
- *   - ArduinoJson   (Benoit Blanchon, v7)
- *   WiFiClientSecure ESP32 core ile gelir.
+ * Komut payload : { "action": "on|off|dim", "value": 0-100 }
+ * Veri payload  : { deviceId, brightness, relayStatus, temperature, rssi, status }
  *
- * Kart: herhangi bir ESP32 (esp32 by Espressif, core 3.x önerilir).
- * WiFi + MQTT bilgileri için secrets.h dosyasını oluştur (secrets.example.h'tan kopyala).
+ * Kütüphaneler: PubSubClient, ArduinoJson (v7). WiFiClientSecure ESP32 core'da.
+ * WiFi + MQTT bilgileri için secrets.h (secrets.example.h'tan kopyala).
  */
 
 #include <WiFi.h>
@@ -20,88 +19,82 @@
 #include <ArduinoJson.h>
 #include "secrets.h"
 
-// ── Cihaz kimliği (backend'deki devices tablosuyla eşleşmeli) ──────
-// Seed'deki örnek: zone "ataturk-bulvari", cihaz "ataturk-bulvari-001"
-#define DEVICE_ID "ataturk-bulvari-001"
-#define ZONE_ID   "ataturk-bulvari"
-
 // ── Donanım ───────────────────────────────────────────────────────
-#define LED_PIN        2     // çoğu ESP32 kartında dahili LED GPIO2
-#define PWM_FREQ       5000  // Hz
-#define PWM_RES_BITS   8     // 8-bit → duty 0..255
-
-// ── MQTT topic'leri ───────────────────────────────────────────────
-static const char* TOPIC_ZONE_CMD   = "city/lighting/zone/" ZONE_ID "/command";
-static const char* TOPIC_DEVICE_CMD  = "city/lighting/device/" DEVICE_ID "/command";
-static const char* TOPIC_STATUS      = "city/lighting/device/" DEVICE_ID "/status";
+#define LED_PIN        2     // dahili LED
+#define PWM_FREQ       5000
+#define PWM_RES_BITS   8     // duty 0..255
 
 WiFiClientSecure net;
 PubSubClient mqtt(net);
 
-// Cihazın güncel durumu
+String DEVICE_MAC;     // "A842E3123456"
+String T_CMD;          // Meven:<MAC>/cmd
+String T_ALL = "Meven:all/cmd";
+String T_DATA;         // Meven:<MAC>/data
+
 bool    isOn       = false;
-uint8_t brightness = 0;   // 0..100
+uint8_t brightness = 0;
 
 unsigned long lastHeartbeat = 0;
-const unsigned long HEARTBEAT_MS = 30000; // 30 sn'de bir "hayattayım" status'u
+const unsigned long HEARTBEAT_MS = 30000;
 
 // ──────────────────────────────────────────────────────────────────
-void applyOutput() {
-  // Kapalıysa 0, açıksa brightness'a göre PWM duty.
-  int duty = 0;
-  if (isOn) {
-    duty = map(brightness, 0, 100, 0, (1 << PWM_RES_BITS) - 1);
-  }
-  ledcWrite(LED_PIN, duty); // ESP32 core 3.x: pin üzerinden yazılır
+String readMac() {
+  String m = WiFi.macAddress(); // "A8:42:E3:12:34:56"
+  m.replace(":", "");
+  m.toUpperCase();
+  return m;
 }
 
-void publishStatus(const char* action, const char* status) {
+int readTemperature() {
+  // Gerçek sensör yoksa örnek değer. Buraya DS18B20/NTC okuması eklenebilir.
+  return 40;
+}
+
+void applyOutput() {
+  int duty = isOn ? map(brightness, 0, 100, 0, (1 << PWM_RES_BITS) - 1) : 0;
+  ledcWrite(LED_PIN, duty);
+}
+
+void publishData(const char* status) {
   JsonDocument doc;
-  doc["deviceId"] = DEVICE_ID;
-  doc["zoneId"]   = ZONE_ID;
-  doc["action"]   = action;
-  doc["value"]    = isOn ? brightness : 0;
-  doc["status"]   = status;       // "ok" | "error"
-  doc["rssi"]     = WiFi.RSSI();
+  doc["deviceId"]    = DEVICE_MAC;
+  doc["brightness"]  = isOn ? brightness : 0;
+  doc["relayStatus"] = isOn ? "on" : "off";
+  doc["temperature"] = readTemperature();
+  doc["rssi"]        = WiFi.RSSI();
+  doc["status"]      = status; // "ok" | "error"
 
   char buf[256];
   size_t n = serializeJson(doc, buf, sizeof(buf));
-  mqtt.publish(TOPIC_STATUS, (const uint8_t*)buf, n, false); // QoS 0
-  Serial.printf("[status] %s\n", buf);
+  mqtt.publish(T_DATA.c_str(), (const uint8_t*)buf, n, false); // QoS 0
+  Serial.printf("[data] %s\n", buf);
 }
 
 void handleCommand(byte* payload, unsigned int length) {
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, payload, length);
-  if (err) {
-    Serial.printf("[cmd] JSON hatasi: %s\n", err.c_str());
-    publishStatus("dim", "error");
+  if (deserializeJson(doc, payload, length)) {
+    publishData("error");
     return;
   }
-
   const char* action = doc["action"] | "";
-  int value = doc["value"] | -1; // dim için 0..100, yoksa -1
+  int value = doc["value"] | -1;
 
   if (strcmp(action, "on") == 0) {
     isOn = true;
-    if (brightness == 0) brightness = 100; // kapalıyken açılırsa tam güç
+    if (brightness == 0) brightness = 100;
   } else if (strcmp(action, "off") == 0) {
-    isOn = false;                          // brightness korunur
+    isOn = false;
   } else if (strcmp(action, "dim") == 0) {
-    if (value >= 0 && value <= 100) {
-      brightness = value;
-      isOn = true;
-    }
+    if (value >= 0 && value <= 100) { brightness = value; isOn = true; }
   } else {
-    Serial.printf("[cmd] bilinmeyen action: %s\n", action);
-    publishStatus("dim", "error");
+    publishData("error");
     return;
   }
 
   applyOutput();
-  Serial.printf("[cmd] action=%s value=%d → isOn=%d brightness=%d\n",
-                action, value, isOn, brightness);
-  publishStatus(action, "ok"); // backend bunu alınca komutu "delivered" yapar
+  Serial.printf("[cmd] action=%s value=%d -> isOn=%d brightness=%d\n", action, value, isOn, brightness);
+  publishData("ok");
 }
 
 void onMessage(char* topic, byte* payload, unsigned int length) {
@@ -114,23 +107,19 @@ void connectWiFi() {
   Serial.printf("[wifi] %s baglaniliyor", WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(400);
-    Serial.print(".");
-  }
+  while (WiFi.status() != WL_CONNECTED) { delay(400); Serial.print("."); }
   Serial.printf("\n[wifi] OK, IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
 void connectMQTT() {
   while (!mqtt.connected()) {
     Serial.print("[mqtt] HiveMQ baglaniliyor... ");
-    // clientId benzersiz olmali (HiveMQ Cloud şartı) → DEVICE_ID
-    if (mqtt.connect(DEVICE_ID, MQTT_USER, MQTT_PASS)) {
+    if (mqtt.connect(DEVICE_MAC.c_str(), MQTT_USER, MQTT_PASS)) {
       Serial.println("OK");
-      mqtt.subscribe(TOPIC_ZONE_CMD, 1);   // QoS 1
-      mqtt.subscribe(TOPIC_DEVICE_CMD, 1);
-      Serial.printf("[mqtt] subscribe: %s , %s\n", TOPIC_ZONE_CMD, TOPIC_DEVICE_CMD);
-      publishStatus("on", "ok"); // bağlanınca ilk durum
+      mqtt.subscribe(T_CMD.c_str(), 1);
+      mqtt.subscribe(T_ALL.c_str(), 1);
+      Serial.printf("[mqtt] subscribe: %s , %s\n", T_CMD.c_str(), T_ALL.c_str());
+      publishData("ok");
     } else {
       Serial.printf("hata rc=%d, 3sn sonra tekrar\n", mqtt.state());
       delay(3000);
@@ -142,18 +131,21 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // PWM çıkışı (ESP32 core 3.x API)
   ledcAttach(LED_PIN, PWM_FREQ, PWM_RES_BITS);
   applyOutput();
 
   connectWiFi();
 
-  // TLS: hızlı saha testi için sertifika doğrulamasını atla.
-  // ÜRETİM İÇİN: net.setCACert(HIVEMQ_ROOT_CA) kullan (bkz. README).
+  DEVICE_MAC = readMac();
+  T_CMD  = "Meven:" + DEVICE_MAC + "/cmd";
+  T_DATA = "Meven:" + DEVICE_MAC + "/data";
+  Serial.printf("[id] MAC: %s\n", DEVICE_MAC.c_str());
+
+  // TLS: hızlı test için doğrulama atla. Üretimde net.setCACert(...) kullan.
   net.setInsecure();
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT); // 8883
-  mqtt.setBufferSize(512);              // komut payload'ı 256'yı aşabilir
+  mqtt.setBufferSize(512);
   mqtt.setCallback(onMessage);
 }
 
@@ -162,9 +154,8 @@ void loop() {
   if (!mqtt.connected()) connectMQTT();
   mqtt.loop();
 
-  // Periyodik heartbeat → dashboard'da last_seen güncel kalsın
   if (millis() - lastHeartbeat > HEARTBEAT_MS) {
     lastHeartbeat = millis();
-    publishStatus(isOn ? "dim" : "off", "ok");
+    publishData("ok");
   }
 }

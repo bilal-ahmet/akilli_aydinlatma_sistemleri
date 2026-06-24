@@ -1,30 +1,28 @@
 /*
- * Sanal ESP32 (mock device) — donanımsız test.
- * HiveMQ Cloud'a bağlanır, gerçek ESP32 gibi davranır:
- *   - zone + device komut topic'lerine subscribe olur
- *   - gelen on/off/dim komutunu uygular (sadece loglar)
- *   - durumunu device status topic'ine publish eder
- *   - 30 sn'de bir heartbeat yollar
+ * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin Meven/MAC
+ * kontratını birebir taklit eder:
+ *   - subscribe Meven:<MAC>/cmd  ve  Meven:all/cmd
+ *   - gelen { action, value } komutunu uygular
+ *   - Meven:<MAC>/data'ya { deviceId, brightness, relayStatus, temperature, rssi, status } yayınlar
+ *   - 30 sn'de bir heartbeat
  *
  * Çalıştır:
- *   npm run mock:device                         # varsayılan ataturk-bulvari-001
- *   npm run mock:device esp-002 sahil-yolu      # özel deviceId + zoneId
- *
- * Dashboard'dan o zone'u aç/kapat → burada komut görünür, status geri gider,
- * dashboard SSE ile anında güncellenir.
+ *   npm run mock:device                       # varsayılan MAC A842E3123456
+ *   npm run mock:device A8:42:E3:12:34:56      # iki noktalı da olur (normalize edilir)
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
 
-const DEVICE_ID = process.argv[2] ?? "ataturk-bulvari-001";
-const ZONE_ID = process.argv[3] ?? "ataturk-bulvari";
+const MAC = (process.argv[2] ?? "A842E3123456")
+  .replace(/[^0-9a-fA-F]/g, "")
+  .toUpperCase();
 
-const T_ZONE_CMD = `city/lighting/zone/${ZONE_ID}/command`;
-const T_DEVICE_CMD = `city/lighting/device/${DEVICE_ID}/command`;
-const T_STATUS = `city/lighting/device/${DEVICE_ID}/status`;
+const T_CMD = `Meven:${MAC}/cmd`;
+const T_ALL = "Meven:all/cmd";
+const T_DATA = `Meven:${MAC}/data`;
 
-let isOn = false;
+let relayStatus: "on" | "off" = "off";
 let brightness = 0;
 
 const client = mqtt.connect({
@@ -34,30 +32,29 @@ const client = mqtt.connect({
   username: process.env.MQTT_USER,
   password: process.env.MQTT_PASS,
   rejectUnauthorized: true,
-  clientId: `${DEVICE_ID}-mock-${Math.random().toString(16).slice(2, 8)}`,
+  clientId: `mock-${MAC}-${Math.random().toString(16).slice(2, 8)}`,
 });
 
-function publishStatus(action: string, status: "ok" | "error" = "ok") {
+function publishData(status: "ok" | "error" = "ok") {
   const payload = {
-    deviceId: DEVICE_ID,
-    zoneId: ZONE_ID,
-    action,
-    value: isOn ? brightness : 0,
-    status,
+    deviceId: MAC,
+    brightness: relayStatus === "on" ? brightness : 0,
+    relayStatus,
+    temperature: 38 + Math.floor(Math.random() * 8), // 38-45°C
     rssi: -50 - Math.floor(Math.random() * 30),
-    timestamp: new Date().toISOString(),
+    status,
   };
-  client.publish(T_STATUS, JSON.stringify(payload), { qos: 0 });
-  console.log(`  → status: ${action} value=${payload.value} (${status})`);
+  client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
+  console.log(`  → data: röle=${relayStatus} %${payload.brightness} ${payload.temperature}°C (${status})`);
 }
 
 client.on("connect", () => {
-  console.log(`✓ HiveMQ bağlandı — sanal cihaz: ${DEVICE_ID} (zone: ${ZONE_ID})`);
-  client.subscribe([T_ZONE_CMD, T_DEVICE_CMD], { qos: 1 }, (err) => {
+  console.log(`✓ HiveMQ bağlandı — sanal cihaz MAC: ${MAC}`);
+  client.subscribe([T_CMD, T_ALL], { qos: 1 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
-    console.log(`  dinleniyor:\n    ${T_ZONE_CMD}\n    ${T_DEVICE_CMD}`);
-    console.log("\nDashboard'dan bu zone'u aç/kapat/dim yap → komutlar burada görünecek.\n");
-    publishStatus(isOn ? "on" : "off"); // ilk durum
+    console.log(`  dinleniyor:\n    ${T_CMD}\n    ${T_ALL}`);
+    console.log("\nDashboard'dan bu cihazın bölgesini ya da 'Tüm Sistem'i kullan → komutlar burada görünecek.\n");
+    publishData();
   });
 });
 
@@ -67,33 +64,33 @@ client.on("message", (topic, raw) => {
     cmd = JSON.parse(raw.toString());
   } catch {
     console.warn("geçersiz komut payload");
-    return publishStatus("dim", "error");
+    return publishData("error");
   }
 
   const action = cmd.action ?? "";
   if (action === "on") {
-    isOn = true;
+    relayStatus = "on";
     if (brightness === 0) brightness = 100;
   } else if (action === "off") {
-    isOn = false;
+    relayStatus = "off";
   } else if (action === "dim") {
     if (typeof cmd.value === "number") {
       brightness = cmd.value;
-      isOn = true;
+      relayStatus = "on";
     }
   } else {
     console.warn(`bilinmeyen action: ${action}`);
-    return publishStatus("dim", "error");
+    return publishData("error");
   }
 
-  console.log(`◀ komut: ${action}${cmd.value != null ? ` ${cmd.value}` : ""}  →  isOn=${isOn} brightness=${brightness}`);
-  publishStatus(action);
+  const via = topic === T_ALL ? "all" : "MAC";
+  console.log(`◀ komut (${via}): ${action}${cmd.value != null ? ` ${cmd.value}` : ""}  →  röle=${relayStatus} brightness=${brightness}`);
+  publishData();
 });
 
 client.on("error", (e) => console.error("MQTT hata:", e.message));
 
-// Heartbeat
-setInterval(() => publishStatus(isOn ? "dim" : "off"), 30000);
+setInterval(() => publishData(), 30000);
 
 process.on("SIGINT", () => {
   console.log("\nkapatılıyor…");

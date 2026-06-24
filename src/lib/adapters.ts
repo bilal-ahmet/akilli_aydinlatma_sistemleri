@@ -17,7 +17,7 @@ export function toZone(row: ZoneRow): Zone {
   };
 }
 
-/** Devices + zone join satırını frontend cihaz görünümüne çevirir. */
+/** Devices + zone join satırını (+ son telemetri) frontend görünümüne çevirir. */
 export function toDeviceView(row: {
   id: string;
   deviceId: string;
@@ -25,6 +25,10 @@ export function toDeviceView(row: {
   lastSeen: Date | null;
   zoneSlug: string | null;
   zoneName: string | null;
+  brightness?: number | null;
+  relayStatus?: string | null;
+  temperature?: number | null;
+  rssi?: number | null;
 }): DeviceView {
   return {
     id: row.id,
@@ -33,5 +37,9 @@ export function toDeviceView(row: {
     zoneName: row.zoneName,
     name: row.name,
     lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,
+    brightness: row.brightness ?? null,
+    relayStatus: row.relayStatus ?? null,
+    temperature: row.temperature ?? null,
+    rssi: row.rssi ?? null,
   };
 }

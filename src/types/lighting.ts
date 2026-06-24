@@ -9,27 +9,23 @@ export const ACTIONS = ["on", "off", "dim"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 // ── Command (Backend → ESP32) ────────────────────────────────
+// Yayınlanan komut payload'ı yalın: { action, value? }. ESP yalnız bunları okur.
 export const commandPayloadSchema = z.object({
   action: z.enum(ACTIONS),
   value: z.number().int().min(0).max(100).optional(),
-  zoneId: z.string().optional(),
-  deviceId: z.string().optional(),
-  requestId: z.string(),
-  timestamp: z.string(),
 });
 export type CommandPayload = z.infer<typeof commandPayloadSchema>;
 
-// ── Status (ESP32 → Backend) ─────────────────────────────────
-export const statusPayloadSchema = z.object({
-  deviceId: z.string(),
-  zoneId: z.string().optional(),
-  action: z.enum(ACTIONS).optional(),
-  value: z.number().int().min(0).max(100).optional(),
-  status: z.enum(["ok", "error"]),
+// ── Data (ESP32 → Backend, Meven:<MAC>/data) ─────────────────
+export const dataPayloadSchema = z.object({
+  deviceId: z.string(), // MAC (iki noktasız)
+  brightness: z.number().int().min(0).max(100).optional(),
+  relayStatus: z.enum(["on", "off"]).optional(),
+  temperature: z.number().optional(),
   rssi: z.number().int().optional(),
-  timestamp: z.string().optional(),
+  status: z.enum(["ok", "error"]),
 });
-export type StatusPayload = z.infer<typeof statusPayloadSchema>;
+export type DataPayload = z.infer<typeof dataPayloadSchema>;
 
 // ── API request body (dashboard → backend) ───────────────────
 // { action, value? } — value yalnızca "dim" için zorunlu.
@@ -72,14 +68,10 @@ export const zoneUpdateSchema = z
 export type ZoneUpdate = z.infer<typeof zoneUpdateSchema>;
 
 // ── Device CRUD (dashboard → backend) ────────────────────────
+// Cihaz kimliği = MAC. Girdi iki noktalı/noktasız olabilir; backend normalize eder.
 export const deviceCreateSchema = z.object({
-  deviceId: z
-    .string()
-    .trim()
-    .min(1, "Cihaz kimliği zorunlu")
-    .max(100)
-    .regex(/^[a-zA-Z0-9._-]+$/, "Sadece harf, rakam, . _ - kullanılabilir"),
-  zoneSlug: z.string().trim().min(1, "Zone seçilmeli"),
+  mac: z.string().trim().min(1, "MAC adresi zorunlu"),
+  zoneSlug: z.string().trim().min(1, "Bölge seçilmeli"),
   name: z.string().trim().max(100).optional(),
 });
 export type DeviceCreate = z.infer<typeof deviceCreateSchema>;

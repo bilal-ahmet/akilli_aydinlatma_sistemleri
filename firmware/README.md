@@ -17,14 +17,10 @@ kontrol etmek için Arduino sketch'i.
 2. `secrets.example.h`'ı **`secrets.h`** olarak kopyala, WiFi ve HiveMQ bilgilerini gir.
    HiveMQ değerleri Railway'deki `MQTT_HOST/USER/PASS` ile aynı (kendi cluster'ın).
    `secrets.h` gitignore'lu olduğu için credential'ların repoya gitmez.
-3. `esp32-fener.ino` içinde cihaz kimliğini ayarla — **backend'deki `devices` tablosuyla eşleşmeli**:
-   ```cpp
-   #define DEVICE_ID "ataturk-bulvari-001"
-   #define ZONE_ID   "ataturk-bulvari"
-   ```
-   > Seed'de her zone için `{slug}-001..003` cihazları var. Farklı bir cihaz/zone denemek istersen Neon'daki `devices`/`zones` tablolarına bak.
+3. Cihaz kimliği **otomatik**: sketch açılışta `WiFi.macAddress()` ile kendi MAC'ini okur ve iki noktasız kullanır (örn. `A842E3123456`). Elle id ayarlamana gerek yok.
 4. Kartı USB ile bağla, doğru **Port**'u seç, **Upload**.
-5. **Serial Monitor**'ü 115200 baud'da aç → `[wifi] OK`, `[mqtt] OK`, `subscribe ...` satırlarını görmelisin.
+5. **Serial Monitor**'ü 115200 baud'da aç → `[wifi] OK`, `[id] MAC: ...`, `[mqtt] OK`, `subscribe Meven:<MAC>/cmd , Meven:all/cmd` satırlarını görmelisin.
+6. Serial'deki MAC'i dashboard'da **Cihazlar → Yeni Cihaz**'dan ekle (ilgili bölgeyi seç) — böylece gelen veri o bölgeyle eşleşir.
 
 ## Donanım
 - Test için **dahili LED** (GPIO2) yeterli — ekstra bağlantı gerekmez.
@@ -32,14 +28,14 @@ kontrol etmek için Arduino sketch'i.
 - Dim, PWM (8-bit) ile yapılır; `brightness` %0–100 → duty 0–255.
 
 ## Test akışı (uçtan uca)
-1. ESP32 açık ve Serial Monitor'de bağlı.
+1. ESP32 açık, Serial Monitor'de bağlı; MAC'i dashboard'da kayıtlı.
 2. Canlı dashboard'u aç (Railway URL'in).
-3. **"Atatürk Bulvarı"** zone'unu aç/kapat veya parlaklığı değiştir.
+3. Cihazın bölgesini aç/kapat/dim yap (veya "Tüm Sistem").
 4. Beklenen:
-   - Serial Monitor'de `[mqtt] msg <- city/lighting/zone/ataturk-bulvari/command` + `[cmd] action=... → isOn=...`
+   - Serial Monitor'de `[mqtt] msg <- Meven:<MAC>/cmd` (veya `Meven:all/cmd`) + `[cmd] action=...`
    - LED yanar/söner/parlaklığı değişir.
-   - ESP32 status publish eder → backend `device_status`'a yazar, `commands` satırı `delivered` olur, dashboard SSE ile teyit alır.
-5. Cihaz 30 sn'de bir heartbeat status'u yollar → dashboard'da cihaz "canlı" kalır.
+   - ESP32 `Meven:<MAC>/data`'ya publish eder → backend `device_status`'a yazar, `commands` satırı `delivered` olur, dashboard SSE ile teyit alır; cihaz listesinde sıcaklık/RSSI görünür.
+5. Cihaz 30 sn'de bir heartbeat data'sı yollar → dashboard'da cihaz "canlı" kalır.
 
 ## Güvenlik notu (TLS)
 Sketch hızlı test için `net.setInsecure()` kullanır (sertifika doğrulaması yok —

@@ -47,11 +47,16 @@ export const deviceStatus = pgTable(
   "device_status",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    deviceId: varchar("device_id", { length: 100 }).notNull(),
+    deviceId: varchar("device_id", { length: 100 }).notNull(), // MAC
+    // Yeni veri payload alanları (Meven:<MAC>/data)
+    brightness: integer("brightness"),
+    relayStatus: varchar("relay_status", { length: 8 }), // on | off
+    temperature: integer("temperature"),
+    rssi: integer("rssi"),
+    status: varchar("status", { length: 20 }), // ok | error
+    // Eski alanlar (geri uyum; veri payload'ında artık yok)
     action: varchar("action", { length: 20 }),
     value: integer("value"),
-    status: varchar("status", { length: 20 }),
-    rssi: integer("rssi"),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow(),
   },
   (t) => [

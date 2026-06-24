@@ -15,11 +15,16 @@ export interface Zone {
 
 export interface DeviceView {
   id: string;
-  deviceId: string;
+  deviceId: string; // MAC (iki noktasız)
   zoneSlug: string | null;
   zoneName: string | null;
   name: string | null;
   lastSeen: string | null;
+  // En güncel device_status'tan (varsa)
+  brightness: number | null;
+  relayStatus: string | null; // on | off
+  temperature: number | null;
+  rssi: number | null;
 }
 
 export interface SystemSummary {

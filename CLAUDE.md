@@ -59,57 +59,56 @@ Auth: username + password
 
 Backend `mqtts://` ile bağlanır (`src/lib/mqtt.ts`). ESP32 `WiFiClientSecure` kullanır.
 
-### Topic Hiyerarşisi
+### Topic Hiyerarşisi (MAC tabanlı — ESP ekibi kontratı)
+
+Cihaz kimliği = **MAC adresi, iki noktasız** (örn. `A842E3123456`). Topic'ler bu
+MAC'e göre üretilir (`src/lib/topics.ts`).
 
 ```
-city/lighting/zone/{zoneId}/command       ← Backend publish, ESP32 subscribe
-city/lighting/device/{deviceId}/command   ← Cihaz bazlı komut
-city/lighting/device/{deviceId}/status    ← ESP32 publish, Backend subscribe
-city/lighting/zone/{zoneId}/status        ← Zone aggregate durumu
+Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
+Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
+Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ```
+
+- **Bölge komutu** MQTT'de tek topic değildir: backend o bölgedeki her cihazın
+  `Meven:<MAC>/cmd`'sine publish eder. "Tüm Sistem" → `Meven:all/cmd`.
+- Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
+  gömülemez); MAC payload'daki `deviceId`'den okunur.
 
 ### QoS Seviyeleri
 
-- Komutlar (command): **QoS 1** — en az bir kez iletim garantisi
-- Status: **QoS 0** — fire and forget, yüksek frekanslı
+- Komutlar (cmd): **QoS 1** — en az bir kez iletim garantisi
+- Veri (data): **QoS 0** — fire and forget, yüksek frekanslı
 
 ---
 
 ## Payload Formatları
 
-### Command Payload (Backend → ESP32)
+### Command Payload (Backend → ESP32, `Meven:<MAC>/cmd` veya `Meven:all/cmd`)
 
 ```json
-{
-  "action": "dim",
-  "value": 75,
-  "zoneId": "zone-1",
-  "deviceId": "esp32-001",
-  "requestId": "uuid-v4",
-  "timestamp": "2026-06-22T10:00:00Z"
-}
+{ "action": "dim", "value": 75 }
 ```
 
 `action` değerleri: `"on"` | `"off"` | `"dim"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
 
-### Status Payload (ESP32 → Backend)
+### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
 
 ```json
 {
-  "deviceId": "esp32-001",
-  "zoneId": "zone-1",
-  "action": "dim",
-  "value": 75,
-  "status": "ok",
+  "deviceId": "A842E3123456",
+  "brightness": 75,
+  "relayStatus": "on",
+  "temperature": 42,
   "rssi": -67,
-  "timestamp": "2026-06-22T10:00:01Z"
+  "status": "ok"
 }
 ```
 
-`status` değerleri: `"ok"` | `"error"`
+`relayStatus`: `"on"` | `"off"` (bölge açık/kapalı snapshot'ını sürer) · `status`: `"ok"` | `"error"`
 
-> **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/zoneId semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
+> **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/MAC semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
 
 ---
 
