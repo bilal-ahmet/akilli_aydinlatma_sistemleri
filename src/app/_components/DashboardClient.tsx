@@ -13,6 +13,9 @@ import { EffectPicker } from "./EffectPicker";
 import { Modal } from "./Modal";
 import { ZoneForm, type ZoneFormValues } from "./ZoneForm";
 
+/** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
+const DIM_DEBOUNCE_MS = 150;
+
 async function sendCommand(zoneId: string, action: Action, value?: number, number?: number) {
   const res = await fetch(`/api/zones/${zoneId}/command`, {
     method: "POST",
@@ -93,7 +96,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     timers.set(id, setTimeout(() => {
       sendCommand(id, "dim", value).catch(() => {});
       timers.delete(id);
-    }, 300));
+    }, DIM_DEBOUNCE_MS));
   }
 
   function setAll(on: boolean) {
@@ -109,7 +112,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     timers.set("__all__", setTimeout(() => {
       sendAll("dim", value).catch(() => {});
       timers.delete("__all__");
-    }, 300));
+    }, DIM_DEBOUNCE_MS));
   }
 
   // ── Efektler ───────────────────────────────────────────────

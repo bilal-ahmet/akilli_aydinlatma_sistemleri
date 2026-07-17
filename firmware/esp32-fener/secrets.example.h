@@ -11,3 +11,9 @@
 #define MQTT_PORT  8883
 #define MQTT_USER  "MQTT_KULLANICI"
 #define MQTT_PASS  "MQTT_SIFRE"
+
+// ── Bölge ─────────────────────────────────────────────────────────
+// Cihazın bağlı olduğu bölgenin slug'ı — dashboard'daki zone slug'ı ile
+// BİREBİR aynı olmalı (zones.slug). Cihaz Meven:<ZONE_SLUG>/cmd'ye subscribe
+// olur; yanlış yazılırsa bölge komutlarını almaz.
+#define ZONE_SLUG  "ataturk-bulvari"

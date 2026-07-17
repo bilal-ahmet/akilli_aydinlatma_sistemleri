@@ -4,7 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
-import { cmdTopic, ALL_CMD, DATA_WILDCARD } from "@/lib/topics";
+import { cmdTopic, zoneCmdTopic, ALL_CMD, DATA_WILDCARD } from "@/lib/topics";
 import {
   dataPayloadSchema,
   type Action,
@@ -16,9 +16,10 @@ import {
  * yaşar; globalThis ile cache'lenir (HMR'da çift bağlantı olmasın).
  *
  * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
- *  - subscribe "+/data"        → Meven:<MAC>/data mesajlarını işle
- *  - publish   Meven:<MAC>/cmd → tekil/bölge komutu
- *  - publish   Meven:all/cmd   → toplu komut
+ *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
+ *  - publish   Meven:<MAC>/cmd  → tekil komut
+ *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
+ *  - publish   Meven:all/cmd    → toplu komut
  */
 
 const globalForMqtt = globalThis as unknown as {
@@ -130,6 +131,16 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
   });
 }
 
+/** ESP'ye giden komut payload'ı — minimal tutulur (LoRa'da binary olacak). */
+function buildPayload(action: Action, value?: number, number?: number): string {
+  const payload: CommandPayload = {
+    action,
+    ...(value != null ? { value } : {}),
+    ...(number != null ? { number } : {}),
+  };
+  return JSON.stringify(payload);
+}
+
 /** Komut payload'ından bölge snapshot patch'i üretir. */
 function patchFor(action: Action, value?: number, number?: number) {
   const patch: Partial<typeof schema.zones.$inferInsert> = {};
@@ -151,20 +162,44 @@ function patchFor(action: Action, value?: number, number?: number) {
 }
 
 /**
- * Komut yayınla. target:
- *  - "device" → Meven:<MAC>/cmd (id = MAC)
- *  - "zone"   → bölgedeki her cihazın Meven:<MAC>/cmd'si (id = slug)
- *  - "all"    → Meven:all/cmd (id = "all")
- * commands tablosuna pending kaydeder; bölge/all'da snapshot'ı optimistic günceller.
+ * Komutu MQTT'ye yayınla. SENKRON ve DB'ye dokunmaz — çağrıldığı anda, zaten
+ * açık olan TLS bağlantısı üzerinden publish eder. DB yazımı ve SSE için
+ * ayrıca recordCommand'ı çağır (bkz. route'lardaki `after()`); böylece Neon
+ * round-trip'i komutun ESP'ye ulaşmasını geciktirmez.
+ *
+ * target:
+ *  - "device" → Meven:<MAC>/cmd  (id = MAC)
+ *  - "zone"   → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
+ *  - "all"    → Meven:all/cmd    (id = "all")
  */
-export async function publishCommand(
+export function publishCommand(
   target: "device" | "zone" | "all",
   id: string,
   action: Action,
   value?: number,
   number?: number,
-): Promise<{ requestId: string }> {
-  const requestId = randomUUID();
+): { requestId: string } {
+  const topic =
+    target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
+
+  getMqttClient().publish(topic, buildPayload(action, value, number), { qos: 1 });
+
+  return { requestId: randomUUID() };
+}
+
+/**
+ * publishCommand sonrası DB kaydı + bölge snapshot'ı + canlı event. Publish
+ * yolundan çıkarıldığı için gecikmesi kullanıcıya yansımaz; route'lar bunu
+ * `after()` içinde çağırır.
+ */
+export async function recordCommand(
+  target: "device" | "zone" | "all",
+  id: string,
+  requestId: string,
+  action: Action,
+  value?: number,
+  number?: number,
+): Promise<void> {
   const at = new Date().toISOString();
 
   await db.insert(schema.commands).values({
@@ -176,57 +211,57 @@ export async function publishCommand(
     status: "pending",
   });
 
-  const payload: CommandPayload = {
-    action,
-    ...(value != null ? { value } : {}),
-    ...(number != null ? { number } : {}),
-  };
-  const payloadStr = JSON.stringify(payload);
-  const client = getMqttClient();
+  if (target === "device") return; // cihaz komutunda ek snapshot işi yok
 
-  if (target === "device") {
-    client.publish(cmdTopic(id), payloadStr, { qos: 1 });
-  } else if (target === "zone") {
+  if (target === "zone") {
     const [zone] = await db
       .update(schema.zones)
       .set(patchFor(action, value, number))
       .where(eq(schema.zones.slug, id))
       .returning();
-    if (zone) {
-      emitLiveEvent({
-        zoneSlug: zone.slug,
-        isOn: zone.isOn,
-        brightness: zone.brightness,
-        activeFx: zone.activeFx,
-        status: "ok",
-        at,
-      });
-      const devs = await db
-        .select({ deviceId: schema.devices.deviceId })
-        .from(schema.devices)
-        .where(eq(schema.devices.zoneId, zone.id));
-      for (const dev of devs) {
-        client.publish(cmdTopic(dev.deviceId), payloadStr, { qos: 1 });
-      }
+    if (!zone) {
+      console.warn(`[mqtt] bilinmeyen zone slug'ı: ${id} (publish yine de gitti)`);
+      return;
     }
-  } else {
-    // all
-    const updated = await db
-      .update(schema.zones)
-      .set(patchFor(action, value, number))
-      .returning();
-    for (const z of updated) {
-      emitLiveEvent({
-        zoneSlug: z.slug,
-        isOn: z.isOn,
-        brightness: z.brightness,
-        activeFx: z.activeFx,
-        status: "ok",
-        at,
-      });
+    emitLiveEvent({
+      zoneSlug: zone.slug,
+      isOn: zone.isOn,
+      brightness: zone.brightness,
+      activeFx: zone.activeFx,
+      status: "ok",
+      at,
+    });
+
+    // GEÇİŞ: ZONE_SLUG ile flash'lanmamış eski firmware Meven:<slug>/cmd'ye
+    // subscribe değil — onlara MAC topic'inden de gönder. Publish'ten sonra,
+    // arka planda çalıştığı için gecikmeye katkısı yok; yeni firmware çift
+    // mesaj alır ama komutlar idempotent (durum set eder), zararsız.
+    // Tüm cihazlar flash'landıktan sonra bu blok silinecek.
+    const payloadStr = buildPayload(action, value, number);
+    const client = getMqttClient();
+    const devs = await db
+      .select({ deviceId: schema.devices.deviceId })
+      .from(schema.devices)
+      .where(eq(schema.devices.zoneId, zone.id));
+    for (const dev of devs) {
+      client.publish(cmdTopic(dev.deviceId), payloadStr, { qos: 1 });
     }
-    client.publish(ALL_CMD, payloadStr, { qos: 1 });
+    return;
   }
 
-  return { requestId };
+  // all
+  const updated = await db
+    .update(schema.zones)
+    .set(patchFor(action, value, number))
+    .returning();
+  for (const z of updated) {
+    emitLiveEvent({
+      zoneSlug: z.slug,
+      isOn: z.isOn,
+      brightness: z.brightness,
+      activeFx: z.activeFx,
+      status: "ok",
+      at,
+    });
+  }
 }
