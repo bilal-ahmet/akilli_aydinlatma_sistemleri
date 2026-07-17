@@ -231,21 +231,6 @@ export async function recordCommand(
       status: "ok",
       at,
     });
-
-    // GEÇİŞ: ZONE_SLUG ile flash'lanmamış eski firmware Meven:<slug>/cmd'ye
-    // subscribe değil — onlara MAC topic'inden de gönder. Publish'ten sonra,
-    // arka planda çalıştığı için gecikmeye katkısı yok; yeni firmware çift
-    // mesaj alır ama komutlar idempotent (durum set eder), zararsız.
-    // Tüm cihazlar flash'landıktan sonra bu blok silinecek.
-    const payloadStr = buildPayload(action, value, number);
-    const client = getMqttClient();
-    const devs = await db
-      .select({ deviceId: schema.devices.deviceId })
-      .from(schema.devices)
-      .where(eq(schema.devices.zoneId, zone.id));
-    for (const dev of devs) {
-      client.publish(cmdTopic(dev.deviceId), payloadStr, { qos: 1 });
-    }
     return;
   }
 

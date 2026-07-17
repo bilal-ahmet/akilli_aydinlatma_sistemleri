@@ -76,10 +76,11 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
   `ZONE_SLUG`'tan bilir ve o topic'e subscribe olur. "Tüm Sistem" → `Meven:all/cmd`.
 - Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
   gömülemez); MAC payload'daki `deviceId`'den okunur.
-- **Geçiş notu:** `ZONE_SLUG` ile flash'lanmamış eski firmware bölge topic'ini
-  dinlemez. `recordCommand` şimdilik MAC topic'lerine de fanout yapar (publish'ten
-  *sonra*, arka planda — gecikmeye katkısı yok). Tüm cihazlar flash'lanınca
-  `src/lib/mqtt.ts`'teki bu blok silinecek.
+- **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
+  topic'lerine ayrıca fanout yapmaz. Bu yüzden tüm cihazlar `ZONE_SLUG` ile
+  flash'lanmış olmalı — flash'lanmamış cihaz bölge komutu almaz. (Geçiş
+  döneminde geçici MAC fanout'u vardı; tüm cihazlar flash'landığı için
+  kaldırıldı — flash'lı cihazlar komutu iki kez alıyordu.)
 
 ### QoS Seviyeleri
 
