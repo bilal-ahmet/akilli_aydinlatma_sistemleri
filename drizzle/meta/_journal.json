@@ -22,6 +22,13 @@
       "when": 1782303728520,
       "tag": "0002_wonderful_darkstar",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784529612124,
+      "tag": "0003_outstanding_wither",
+      "breakpoints": true
     }
   ]
 }

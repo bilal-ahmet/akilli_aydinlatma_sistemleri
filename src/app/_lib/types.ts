@@ -29,6 +29,19 @@ export interface DeviceView {
   rssi: number | null;
 }
 
+/** Bir ESP'ye bağlı tek bağımsız aydınlatma (DALI kanalı). */
+export interface Fixture {
+  id: string;
+  deviceId: string; // MAC
+  channel: number; // 0-63
+  name: string | null;
+  brightness: number; // 0-100
+  isOn: boolean;
+  activeFx: number | null;
+  status: string; // ok | fault
+  lastSeen: string | null;
+}
+
 export interface SystemSummary {
   totalPoles: number;
   polesOn: number;

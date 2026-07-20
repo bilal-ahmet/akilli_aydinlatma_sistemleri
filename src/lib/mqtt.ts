@@ -70,15 +70,52 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
   const mac = d.deviceId;
   const now = new Date();
 
-  // 1) Ham telemetriyi logla
+  // 0) Çok-lamba ise kanallardan cihaz-seviyesi agregat türet (bölge snapshot'ı
+  //    ve cihaz telemetri satırı için). channels yoksa top-level alanlar kullanılır.
+  let aggBrightness = d.brightness;
+  let aggIsOn = d.relayStatus ? d.relayStatus === "on" : undefined;
+  if (d.channels && d.channels.length > 0) {
+    const onCh = d.channels.filter((c) => c.relayStatus === "on");
+    aggIsOn = onCh.length > 0;
+    const withBr = onCh.filter((c) => typeof c.brightness === "number");
+    aggBrightness = withBr.length
+      ? Math.round(withBr.reduce((a, c) => a + (c.brightness ?? 0), 0) / withBr.length)
+      : aggIsOn
+        ? aggBrightness
+        : 0;
+  }
+  const aggRelay = aggIsOn === undefined ? d.relayStatus : aggIsOn ? "on" : "off";
+
+  // 1) Ham telemetriyi logla (cihaz-seviyesi agregat)
   await db.insert(schema.deviceStatus).values({
     deviceId: mac,
-    brightness: d.brightness,
-    relayStatus: d.relayStatus,
+    brightness: aggBrightness,
+    relayStatus: aggRelay,
     temperature: d.temperature,
     rssi: d.rssi,
     status: d.status,
   });
+
+  // 1b) Çok-lamba: her kanalı fixtures'a upsert et + kanal başına canlı yayınla
+  if (d.channels && d.channels.length > 0) {
+    for (const c of d.channels) {
+      const fxPatch: StatePatch & { status?: string; lastSeen?: Date } = {
+        status: c.status === "error" ? "fault" : "ok",
+        lastSeen: now,
+      };
+      if (c.relayStatus) fxPatch.isOn = c.relayStatus === "on";
+      if (typeof c.brightness === "number") fxPatch.brightness = c.brightness;
+      await upsertFixture(mac, c.ch, fxPatch);
+      emitLiveEvent({
+        deviceId: mac,
+        channel: c.ch,
+        isOn: c.relayStatus ? c.relayStatus === "on" : undefined,
+        brightness: c.brightness,
+        status: c.status ?? d.status,
+        at: now.toISOString(),
+      });
+    }
+  }
 
   // 2) Cihazı bul, last_seen güncelle, bölgeyi çöz
   const [device] = await db
@@ -96,13 +133,13 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
       .limit(1);
     zoneSlug = zone?.slug;
 
-    // 3) Bölge snapshot'ını cihaz raporuna göre rafine et
+    // 3) Bölge snapshot'ını cihaz-seviyesi agregata göre rafine et
     if (zone) {
-      const patch: Partial<typeof schema.zones.$inferInsert> = {
+      const patch: StatePatch & { status?: string } = {
         status: d.status === "error" ? "fault" : "ok",
       };
-      if (d.relayStatus) patch.isOn = d.relayStatus === "on";
-      if (typeof d.brightness === "number") patch.brightness = d.brightness;
+      if (typeof aggIsOn === "boolean") patch.isOn = aggIsOn;
+      if (typeof aggBrightness === "number") patch.brightness = aggBrightness;
       await db.update(schema.zones).set(patch).where(eq(schema.zones.id, zone.id));
     }
   }
@@ -119,20 +156,23 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
       ),
     );
 
-  // 5) Dashboard'a canlı yayınla
+  // 5) Dashboard'a canlı yayınla (cihaz-seviyesi agregat)
   emitLiveEvent({
     zoneSlug,
     deviceId: mac,
-    isOn: d.relayStatus ? d.relayStatus === "on" : undefined,
-    brightness: d.brightness,
+    isOn: aggIsOn,
+    brightness: aggBrightness,
     status: d.status,
     at: now.toISOString(),
   });
 }
 
-/** Komut payload'ından bölge snapshot patch'i üretir. */
-function patchFor(action: Action, value?: number, number?: number) {
-  const patch: Partial<typeof schema.zones.$inferInsert> = {};
+/** Aç/kapa/dim/efekt durum yaması — hem `zones` hem `fixtures` snapshot'ına uygulanır. */
+type StatePatch = { isOn?: boolean; brightness?: number; activeFx?: number | null };
+
+/** Komut payload'ından snapshot patch'i üretir (bölge veya lamba). */
+function patchFor(action: Action, value?: number, number?: number): StatePatch {
+  const patch: StatePatch = {};
   if (action === "on") {
     patch.isOn = true;
     patch.activeFx = null; // efekt durur
@@ -150,12 +190,29 @@ function patchFor(action: Action, value?: number, number?: number) {
   return patch;
 }
 
+/** Tek lamba (fixture) satırını (deviceId, channel) upsert eder ve satırı döner. */
+async function upsertFixture(
+  deviceId: string,
+  channel: number,
+  patch: StatePatch & { status?: string; lastSeen?: Date },
+) {
+  const [row] = await db
+    .insert(schema.fixtures)
+    .values({ deviceId, channel, ...patch })
+    .onConflictDoUpdate({
+      target: [schema.fixtures.deviceId, schema.fixtures.channel],
+      set: patch,
+    })
+    .returning();
+  return row;
+}
+
 /**
  * Komut yayınla. target:
- *  - "device" → Meven:<MAC>/cmd (id = MAC)
+ *  - "device" → Meven:<MAC>/cmd (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
  *  - "zone"   → bölgedeki her cihazın Meven:<MAC>/cmd'si (id = slug)
  *  - "all"    → Meven:all/cmd (id = "all")
- * commands tablosuna pending kaydeder; bölge/all'da snapshot'ı optimistic günceller.
+ * commands tablosuna pending kaydeder; snapshot'ı (bölge/lamba) optimistic günceller.
  */
 export async function publishCommand(
   target: "device" | "zone" | "all",
@@ -163,6 +220,7 @@ export async function publishCommand(
   action: Action,
   value?: number,
   number?: number,
+  channel?: number,
 ): Promise<{ requestId: string }> {
   const requestId = randomUUID();
   const at = new Date().toISOString();
@@ -171,6 +229,7 @@ export async function publishCommand(
     requestId,
     targetType: target,
     targetId: id,
+    channel: channel ?? null,
     action,
     value: action === "efekt" ? number : value, // commands log
     status: "pending",
@@ -180,11 +239,45 @@ export async function publishCommand(
     action,
     ...(value != null ? { value } : {}),
     ...(number != null ? { number } : {}),
+    ...(channel != null ? { channel } : {}),
   };
   const payloadStr = JSON.stringify(payload);
   const client = getMqttClient();
 
   if (target === "device") {
+    // Optimistic lamba snapshot'ı: tek kanal ya da cihazın tüm bilinen lambaları.
+    const patch = patchFor(action, value, number);
+    if (channel != null) {
+      const fx = await upsertFixture(id, channel, patch);
+      if (fx) {
+        emitLiveEvent({
+          deviceId: id,
+          channel,
+          isOn: fx.isOn,
+          brightness: fx.brightness,
+          activeFx: fx.activeFx,
+          status: "ok",
+          at,
+        });
+      }
+    } else {
+      const updated = await db
+        .update(schema.fixtures)
+        .set(patch)
+        .where(eq(schema.fixtures.deviceId, id))
+        .returning();
+      for (const f of updated) {
+        emitLiveEvent({
+          deviceId: id,
+          channel: f.channel,
+          isOn: f.isOn,
+          brightness: f.brightness,
+          activeFx: f.activeFx,
+          status: "ok",
+          at,
+        });
+      }
+    }
     client.publish(cmdTopic(id), payloadStr, { qos: 1 });
   } else if (target === "zone") {
     const [zone] = await db

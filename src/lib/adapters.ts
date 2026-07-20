@@ -1,5 +1,5 @@
-import type { ZoneRow } from "@/lib/db/schema";
-import type { Zone, ZoneStatus, DeviceView } from "@/app/_lib/types";
+import type { ZoneRow, FixtureRow } from "@/lib/db/schema";
+import type { Zone, ZoneStatus, DeviceView, Fixture } from "@/app/_lib/types";
 
 /**
  * DB `zones` satırını frontend `Zone` tipine çevirir. Frontend stabil public
@@ -42,5 +42,20 @@ export function toDeviceView(row: {
     relayStatus: row.relayStatus ?? null,
     temperature: row.temperature ?? null,
     rssi: row.rssi ?? null,
+  };
+}
+
+/** DB `fixtures` satırını frontend `Fixture` tipine çevirir. */
+export function toFixture(row: FixtureRow): Fixture {
+  return {
+    id: row.id,
+    deviceId: row.deviceId,
+    channel: row.channel,
+    name: row.name,
+    brightness: row.brightness,
+    isOn: row.isOn,
+    activeFx: row.activeFx ?? null,
+    status: row.status,
+    lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,
   };
 }

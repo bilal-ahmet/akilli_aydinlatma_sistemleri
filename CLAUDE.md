@@ -87,17 +87,23 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ### Command Payload (Backend → ESP32, `Meven:<MAC>/cmd` veya `Meven:all/cmd`)
 
 ```json
-{ "action": "dim", "value": 75 }
+{ "action": "dim", "value": 75, "channel": 3 }
 ```
 
 `action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
+`channel`: 0–63 arası integer (opsiyonel) — hedef **DALI kanalı (lamba)**. Yoksa
+komut tüm cihazı (bütün lambaları) etkiler. Bir ESP'ye birden çok bağımsız
+aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür.
 
 **Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number` 1-tabanlı efekt
-sıra no (1-14, donmuş katalog `src/lib/effects.ts`). on/off/dim efekti durdurur.
-Bölge snapshot'ında `zones.active_fx` olarak optimistic tutulur.
+sıra no (1-14, donmuş katalog `src/lib/effects.ts`). `channel` ile tek lambaya da
+verilebilir. on/off/dim efekti durdurur. Bölge snapshot'ında `zones.active_fx`,
+lamba snapshot'ında `fixtures.active_fx` olarak optimistic tutulur.
 
 ### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
+
+Tek lamba (geriye uyum):
 
 ```json
 {
@@ -110,7 +116,24 @@ Bölge snapshot'ında `zones.active_fx` olarak optimistic tutulur.
 }
 ```
 
-`relayStatus`: `"on"` | `"off"` (bölge açık/kapalı snapshot'ını sürer) · `status`: `"ok"` | `"error"`
+Çok-lamba (DALI kanalları) — her lamba `channels[]` içinde kanal başına raporlanır:
+
+```json
+{
+  "deviceId": "A842E3123456",
+  "temperature": 42, "rssi": -67, "status": "ok",
+  "channels": [
+    { "ch": 0, "brightness": 45, "relayStatus": "on" },
+    { "ch": 1, "brightness": 80, "relayStatus": "on" },
+    { "ch": 2, "brightness": 0,  "relayStatus": "off" }
+  ]
+}
+```
+
+`relayStatus`: `"on"` | `"off"` · `status`: `"ok"` | `"error"`. `channels` gelince her
+kanal `fixtures` tablosuna upsert edilir; bölge snapshot'ı kanallardan türetilen
+cihaz-seviyesi agregatla (açık kanal varsa `isOn`, parlaklık açık kanal ortalaması)
+rafine edilir. `channels` yoksa mevcut tek-lamba davranışı korunur.
 
 > **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/MAC semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
 
@@ -122,16 +145,27 @@ Bölge snapshot'ında `zones.active_fx` olarak optimistic tutulur.
 
 ```
 POST /api/zones/:zoneId/command
-POST /api/devices/:deviceId/command
+POST /api/devices/:deviceId/command       # channel ile tek lamba, yoksa tüm cihaz
+POST /api/command/all                     # Meven:all/cmd (toplu)
 
 Body:
 {
-  "action": "dim" | "on" | "off",
-  "value": 0-100
+  "action": "dim" | "on" | "off" | "efekt",
+  "value": 0-100,          # dim için
+  "number": 1-14,          # efekt için
+  "channel": 0-63          # (opsiyonel) tek DALI kanalı (lamba); cihaz komutunda
 }
 ```
 
 Backend bu endpoint'leri aldığında ilgili MQTT topic'ine publish eder.
+
+**Lamba (DALI kanal) yönetimi:**
+
+```
+GET    /api/devices/:deviceId/fixtures          → cihaza bağlı lambalar
+POST   /api/devices/:deviceId/fixtures          → manuel lamba ekle { channel, name? }
+DELETE /api/devices/:deviceId/fixtures/:channel → lamba kaydını sil
+```
 
 ### Durum Okuma
 
@@ -189,6 +223,30 @@ CREATE TABLE devices (
 );
 ```
 
+### `fixtures`
+
+Bir ESP'ye (cihaza) bağlı tek bağımsız aydınlatma = DALI kanalı. Bir cihazda
+birden çok lamba olabilir; her biri `channel` (0-63) ile adreslenir ve bağımsız
+kontrol edilir. Cihaz verisinden (`channels[]`) otomatik upsert edilir; dashboard'dan
+manuel de eklenebilir.
+
+```sql
+CREATE TABLE fixtures (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id   VARCHAR(100) NOT NULL,          -- MAC (devices.device_id'ye mantıksal ref)
+  channel     INTEGER NOT NULL,               -- DALI kanal (lamba) no, 0-63
+  name        VARCHAR(100),
+  brightness  INTEGER NOT NULL DEFAULT 0,
+  is_on       BOOLEAN NOT NULL DEFAULT FALSE,
+  active_fx   INTEGER,                         -- aktif efekt (1-14, null = yok)
+  status      VARCHAR(20) NOT NULL DEFAULT 'ok',
+  last_seen   TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(device_id, channel)
+);
+CREATE INDEX idx_fixtures_device_id ON fixtures(device_id);
+```
+
 ### `device_status`
 
 ```sql
@@ -214,6 +272,7 @@ CREATE TABLE commands (
   request_id  UUID UNIQUE NOT NULL,
   target_type VARCHAR(20) NOT NULL,  -- 'zone' | 'device'
   target_id   VARCHAR(100) NOT NULL,
+  channel     INTEGER,               -- hedef DALI kanal (lamba) no; NULL = tüm cihaz
   action      VARCHAR(20) NOT NULL,
   value       INTEGER,
   status      VARCHAR(20) DEFAULT 'pending',  -- 'pending' | 'delivered' | 'failed'

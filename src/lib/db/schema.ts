@@ -8,6 +8,7 @@ import {
   timestamp,
   bigserial,
   index,
+  unique,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -44,6 +45,33 @@ export const devices = pgTable("devices", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+/**
+ * Bir ESP'ye (cihaza) bağlı tek bağımsız aydınlatma = "fixture" (DALI kanalı).
+ * Bir cihazda birden çok lamba olabilir; her biri ayrı `channel` (0-63) ile
+ * adreslenir ve bağımsız aç/kapa/dim/efekt ile sürülür. Cihaz raporundan
+ * (Meven:<MAC>/data → channels[]) otomatik upsert edilir; dashboard'dan manuel
+ * de eklenebilir. Kimlik deseni `device_status` ile aynı: deviceId = MAC.
+ */
+export const fixtures = pgTable(
+  "fixtures",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: varchar("device_id", { length: 100 }).notNull(), // MAC
+    channel: integer("channel").notNull(), // DALI kanal (lamba) no, 0-63
+    name: varchar("name", { length: 100 }),
+    brightness: integer("brightness").notNull().default(0),
+    isOn: boolean("is_on").notNull().default(false),
+    activeFx: integer("active_fx"), // aktif efekt numarası (1-14, null = yok)
+    status: varchar("status", { length: 20 }).notNull().default("ok"), // ok | fault
+    lastSeen: timestamp("last_seen", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    unique("uq_fixtures_device_channel").on(t.deviceId, t.channel),
+    index("idx_fixtures_device_id").on(t.deviceId),
+  ],
+);
+
 export const deviceStatus = pgTable(
   "device_status",
   {
@@ -71,6 +99,7 @@ export const commands = pgTable("commands", {
   requestId: uuid("request_id").notNull().unique(), // idempotency
   targetType: varchar("target_type", { length: 20 }).notNull(), // zone | device
   targetId: varchar("target_id", { length: 100 }).notNull(),
+  channel: integer("channel"), // hedef DALI kanal (lamba) no; null = tüm cihaz
   action: varchar("action", { length: 20 }).notNull(),
   value: integer("value"),
   status: varchar("status", { length: 20 }).notNull().default("pending"), // pending | delivered | failed
@@ -80,5 +109,6 @@ export const commands = pgTable("commands", {
 
 export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;
+export type FixtureRow = typeof fixtures.$inferSelect;
 export type DeviceStatusRow = typeof deviceStatus.$inferSelect;
 export type CommandRow = typeof commands.$inferSelect;

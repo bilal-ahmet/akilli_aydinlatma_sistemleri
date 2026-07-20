@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Zone, DeviceView } from "@/app/_lib/types";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
+import { DeviceControlModal } from "./DeviceControlModal";
 
 const inputCls =
   "w-full rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm text-text outline-none focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent";
@@ -38,6 +39,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DeviceView | null>(null);
+  const [controlling, setControlling] = useState<DeviceView | null>(null);
 
   useEffect(() => {
     fetch("/api/devices")
@@ -125,15 +127,20 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
             {devices.map((d) => {
               const tel = telemetry(d);
               return (
-                <li key={d.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</p>
-                    <p className="mt-0.5 text-xs text-muted">
+                <li key={d.id} className="flex items-center justify-between gap-3 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => setControlling(d)}
+                    title="Cihazı kontrol et"
+                    className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-2 py-2 text-left transition-colors hover:bg-glow/10"
+                  >
+                    <span className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</span>
+                    <span className="mt-0.5 text-xs text-muted">
                       {d.zoneName ?? "bölge yok"}
                       {d.name ? ` · ${d.name}` : ""} · son görülme: {formatSeen(d.lastSeen)}
-                    </p>
-                    {tel ? <p className="mt-0.5 font-mono text-[11px] text-accent">{tel}</p> : null}
-                  </div>
+                    </span>
+                    {tel ? <span className="mt-0.5 font-mono text-[11px] text-accent">{tel}</span> : null}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setDeleting(d)}
@@ -204,6 +211,15 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
           </button>
         </div>
       </Modal>
+
+      {/* Cihaz kontrol paneli (cihaz + lamba bazlı komut) */}
+      {controlling ? (
+        <DeviceControlModal
+          key={controlling.deviceId}
+          device={controlling}
+          onClose={() => setControlling(null)}
+        />
+      ) : null}
     </section>
   );
 }
