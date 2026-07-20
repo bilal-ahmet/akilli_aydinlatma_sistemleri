@@ -16,15 +16,16 @@ export async function POST(req: Request) {
   const { action, value, number } = parsed.data;
 
   let requestId: string;
+  let seq: number;
   try {
     // MQTT client kurulamazsa (örn. env eksik) burada fırlar → 502.
-    ({ requestId } = publishCommand("all", "all", action, value, number));
+    ({ requestId, seq } = publishCommand("all", "all", action, value, number));
   } catch (err) {
     return fail("Toplu komut yayınlanamadı", 502, String(err));
   }
 
   after(() =>
-    recordCommand("all", "all", requestId, action, value, number).catch((err) =>
+    recordCommand("all", "all", requestId, seq, action, value, number).catch((err) =>
       console.error("[cmd] toplu komut kaydı başarısız:", err),
     ),
   );

@@ -124,4 +124,9 @@ export type LiveEvent = {
   brightness?: number;
   activeFx?: number | null; // aktif efekt numarası (null = efekt yok)
   at: string;
+  // Komut-echo event'lerinde (recordCommand) doldurulur; publish anındaki
+  // sıraya göre monoton artar. Gerçek cihaz telemetrisinde (handleData) yok —
+  // ardışık komutların arka plandaki DB yazımı farklı sürede bitip SSE'ye ters
+  // sırayla düşebildiğinden (Kural #10), frontend bunu eski/yeni ayrımı için kullanır.
+  seq?: number;
 };

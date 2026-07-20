@@ -60,12 +60,22 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Son uygulanan komut-echo seq'i (zone bazlı). Ardışık komutların arka
+  // plandaki DB yazımı ters sırayla bitip SSE'ye eski değerle düşmesini
+  // (bkz. lib/mqtt.ts recordCommand) engellemek için kullanılır.
+  const lastSeqRef = useRef<Map<string, number>>(new Map());
+
   const summary = useMemo(() => summarize(zones), [zones]);
   const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
 
   // ── Canlı durum (SSE) ──────────────────────────────────────
   const onLive = useCallback((e: LiveEvent) => {
     if (!e.zoneSlug) return;
+    if (typeof e.seq === "number") {
+      const lastSeq = lastSeqRef.current.get(e.zoneSlug);
+      if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo, yok say
+      lastSeqRef.current.set(e.zoneSlug, e.seq);
+    }
     setZones((prev) =>
       prev.map((z) => {
         if (z.id !== e.zoneSlug) return z;

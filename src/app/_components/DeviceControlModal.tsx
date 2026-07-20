@@ -64,6 +64,11 @@ export function DeviceControlModal({
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Son uygulanan komut-echo seq'i (cihaz "__device__" ya da "ch-<no>" bazlı).
+  // Ardışık komutların arka plandaki DB yazımı ters sırayla bitip SSE'ye eski
+  // değerle düşmesini (bkz. lib/mqtt.ts recordCommand) engellemek için kullanılır.
+  const lastSeqRef = useRef<Map<string, number>>(new Map());
+
   useEffect(() => {
     // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
     fetch(`/api/devices/${deviceId}/fixtures`)
@@ -77,6 +82,12 @@ export function DeviceControlModal({
   const onLive = useCallback(
     (e: LiveEvent) => {
       if (e.deviceId !== deviceId) return;
+      const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
+      if (typeof e.seq === "number") {
+        const lastSeq = lastSeqRef.current.get(seqKey);
+        if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo, yok say
+        lastSeqRef.current.set(seqKey, e.seq);
+      }
       if (typeof e.channel === "number") {
         setFixtures((prev) =>
           prev.map((f) => {

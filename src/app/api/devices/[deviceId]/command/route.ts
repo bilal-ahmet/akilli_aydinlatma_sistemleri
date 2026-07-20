@@ -21,15 +21,16 @@ export async function POST(
   const { action, value, number, channel } = parsed.data;
 
   let requestId: string;
+  let seq: number;
   try {
     // MQTT client kurulamazsa (örn. env eksik) burada fırlar → 502.
-    ({ requestId } = publishCommand("device", deviceId, action, value, number, channel));
+    ({ requestId, seq } = publishCommand("device", deviceId, action, value, number, channel));
   } catch (err) {
     return fail("Komut yayınlanamadı", 502, String(err));
   }
 
   after(() =>
-    recordCommand("device", deviceId, requestId, action, value, number, channel).catch((err) =>
+    recordCommand("device", deviceId, requestId, seq, action, value, number, channel).catch((err) =>
       console.error("[cmd] cihaz kaydı başarısız:", err),
     ),
   );

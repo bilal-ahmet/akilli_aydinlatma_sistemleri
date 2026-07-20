@@ -230,6 +230,11 @@ function buildPayload(action: Action, value?: number, number?: number, channel?:
  *  - "zone"   → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
  *  - "all"    → Meven:all/cmd    (id = "all")
  */
+// Publish anında (senkron, route handler'da ilk iş olarak) atanır — komutların
+// gönderilme sırasını, arka plandaki recordCommand'ların bitiş sırasından
+// bağımsız olarak korur. Frontend SSE'de bunu eski/yeni event ayrımı için kullanır.
+let cmdSeq = 0;
+
 export function publishCommand(
   target: "device" | "zone" | "all",
   id: string,
@@ -237,13 +242,13 @@ export function publishCommand(
   value?: number,
   number?: number,
   channel?: number,
-): { requestId: string } {
+): { requestId: string; seq: number } {
   const topic =
     target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
 
   getMqttClient().publish(topic, buildPayload(action, value, number, channel), { qos: 1 });
 
-  return { requestId: randomUUID() };
+  return { requestId: randomUUID(), seq: ++cmdSeq };
 }
 
 /**
@@ -255,6 +260,7 @@ export async function recordCommand(
   target: "device" | "zone" | "all",
   id: string,
   requestId: string,
+  seq: number,
   action: Action,
   value?: number,
   number?: number,
@@ -286,6 +292,7 @@ export async function recordCommand(
           activeFx: fx.activeFx,
           status: "ok",
           at,
+          seq,
         });
       }
     } else {
@@ -303,6 +310,7 @@ export async function recordCommand(
           activeFx: f.activeFx,
           status: "ok",
           at,
+          seq,
         });
       }
     }
@@ -326,6 +334,7 @@ export async function recordCommand(
       activeFx: zone.activeFx,
       status: "ok",
       at,
+      seq,
     });
     return;
   }
@@ -343,6 +352,7 @@ export async function recordCommand(
       activeFx: z.activeFx,
       status: "ok",
       at,
+      seq,
     });
   }
 }
