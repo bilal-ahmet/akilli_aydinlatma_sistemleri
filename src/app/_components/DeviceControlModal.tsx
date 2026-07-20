@@ -18,13 +18,15 @@ const DIM_DEBOUNCE_MS = 150;
 async function sendDeviceCommand(
   deviceId: string,
   body: { action: Action; value?: number; number?: number; channel?: number },
-) {
+): Promise<number | undefined> {
   const res = await fetch(`/api/devices/${deviceId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
+  const json = await res.json().catch(() => null);
+  return json?.data?.seq;
 }
 
 const iconBtn =
@@ -64,10 +66,19 @@ export function DeviceControlModal({
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Son uygulanan komut-echo seq'i (cihaz "__device__" ya da "ch-<no>" bazlı).
-  // Ardışık komutların arka plandaki DB yazımı ters sırayla bitip SSE'ye eski
-  // değerle düşmesini (bkz. lib/mqtt.ts recordCommand) engellemek için kullanılır.
+  // Son bilinen komut seq'i ("__device__" ya da "ch-<no>" bazlı) — hem SSE
+  // echo'sundan hem de bu client'ın kendi gönderdiği komutun POST cevabından
+  // güncellenir. POST cevabı DB yazımını beklemeden döndüğü için SSE
+  // echo'sundan önce gelir; böylece henüz echo'su gelmemiş yeni bir yerel
+  // değişikliğin üzerine eski bir echo'nun yazması engellenir (bkz. lib/mqtt.ts
+  // recordCommand).
   const lastSeqRef = useRef<Map<string, number>>(new Map());
+
+  function applySeq(key: string, seq: number | undefined) {
+    if (typeof seq !== "number") return;
+    const cur = lastSeqRef.current.get(key);
+    if (cur === undefined || seq > cur) lastSeqRef.current.set(key, seq);
+  }
 
   useEffect(() => {
     // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
@@ -109,13 +120,15 @@ export function DeviceControlModal({
   );
   useLiveStatus(onLive);
 
-  function debounce(key: string, fn: () => Promise<void>) {
+  function debounce(key: string, fn: () => Promise<number | undefined>) {
     const timers = dimTimers.current;
     clearTimeout(timers.get(key));
     timers.set(
       key,
       setTimeout(() => {
-        fn().catch(() => {});
+        fn()
+          .then((seq) => applySeq(key, seq))
+          .catch(() => {});
         timers.delete(key);
       }, DIM_DEBOUNCE_MS),
     );
@@ -125,7 +138,9 @@ export function DeviceControlModal({
   function toggleDevice(on: boolean) {
     setDeviceOn(on);
     setFixtures((fs) => fs.map((f) => ({ ...f, isOn: on, activeFx: null })));
-    sendDeviceCommand(deviceId, { action: on ? "on" : "off" }).catch(() => {});
+    sendDeviceCommand(deviceId, { action: on ? "on" : "off" })
+      .then((seq) => applySeq("__device__", seq))
+      .catch(() => {});
   }
 
   function setDeviceDim(value: number) {
@@ -137,7 +152,9 @@ export function DeviceControlModal({
   // ── Tek lamba (kanal) ─────────────────────────────────────
   function toggleFixture(ch: number, on: boolean) {
     setFixtures((fs) => fs.map((f) => (f.channel === ch ? { ...f, isOn: on, activeFx: null } : f)));
-    sendDeviceCommand(deviceId, { action: on ? "on" : "off", channel: ch }).catch(() => {});
+    sendDeviceCommand(deviceId, { action: on ? "on" : "off", channel: ch })
+      .then((seq) => applySeq(`ch-${ch}`, seq))
+      .catch(() => {});
   }
 
   function setFixtureDim(ch: number, value: number) {
@@ -154,10 +171,14 @@ export function DeviceControlModal({
     if (t === "device") {
       setDeviceOn(true);
       setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, activeFx: number })));
-      sendDeviceCommand(deviceId, { action: "efekt", number }).catch(() => {});
+      sendDeviceCommand(deviceId, { action: "efekt", number })
+        .then((seq) => applySeq("__device__", seq))
+        .catch(() => {});
     } else {
       setFixtures((fs) => fs.map((f) => (f.channel === t ? { ...f, isOn: true, activeFx: number } : f)));
-      sendDeviceCommand(deviceId, { action: "efekt", number, channel: t }).catch(() => {});
+      sendDeviceCommand(deviceId, { action: "efekt", number, channel: t })
+        .then((seq) => applySeq(`ch-${t}`, seq))
+        .catch(() => {});
     }
     setEffectTarget(null);
   }
@@ -167,11 +188,15 @@ export function DeviceControlModal({
     if (t === null) return;
     if (t === "device") {
       setFixtures((fs) => fs.map((f) => ({ ...f, activeFx: null })));
-      sendDeviceCommand(deviceId, { action: "dim", value: deviceBrightness }).catch(() => {});
+      sendDeviceCommand(deviceId, { action: "dim", value: deviceBrightness })
+        .then((seq) => applySeq("__device__", seq))
+        .catch(() => {});
     } else {
       const f = fixtures.find((x) => x.channel === t);
       setFixtures((fs) => fs.map((x) => (x.channel === t ? { ...x, activeFx: null } : x)));
-      sendDeviceCommand(deviceId, { action: "dim", value: f?.brightness ?? 0, channel: t }).catch(() => {});
+      sendDeviceCommand(deviceId, { action: "dim", value: f?.brightness ?? 0, channel: t })
+        .then((seq) => applySeq(`ch-${t}`, seq))
+        .catch(() => {});
     }
     setEffectTarget(null);
   }

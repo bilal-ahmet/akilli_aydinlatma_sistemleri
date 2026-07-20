@@ -35,5 +35,5 @@ export async function POST(
     ),
   );
 
-  return ok({ requestId, status: "pending" }, { status: 202 });
+  return ok({ requestId, seq, status: "pending" }, { status: 202 });
 }

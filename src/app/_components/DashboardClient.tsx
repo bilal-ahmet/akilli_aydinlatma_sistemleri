@@ -16,23 +16,36 @@ import { ZoneForm, type ZoneFormValues } from "./ZoneForm";
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
 
-async function sendCommand(zoneId: string, action: Action, value?: number, number?: number) {
+async function sendCommand(
+  zoneId: string,
+  action: Action,
+  value?: number,
+  number?: number,
+): Promise<number | undefined> {
   const res = await fetch(`/api/zones/${zoneId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, value, number }),
   });
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
+  const json = await res.json().catch(() => null);
+  return json?.data?.seq;
 }
 
 /** Toplu komut → Meven:all/cmd (tek publish). */
-async function sendAll(action: Action, value?: number, number?: number) {
+async function sendAll(
+  action: Action,
+  value?: number,
+  number?: number,
+): Promise<number | undefined> {
   const res = await fetch(`/api/command/all`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, value, number }),
   });
   if (!res.ok) throw new Error(`Toplu komut başarısız (${res.status})`);
+  const json = await res.json().catch(() => null);
+  return json?.data?.seq;
 }
 
 /** Master slider başlangıcı: zone'ların ortalama parlaklığından türetilir. */
@@ -60,10 +73,18 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Son uygulanan komut-echo seq'i (zone bazlı). Ardışık komutların arka
-  // plandaki DB yazımı ters sırayla bitip SSE'ye eski değerle düşmesini
-  // (bkz. lib/mqtt.ts recordCommand) engellemek için kullanılır.
+  // Son bilinen komut seq'i (zone bazlı) — hem SSE echo'sundan hem de bu
+  // client'ın kendi gönderdiği komutun POST cevabından güncellenir. POST
+  // cevabı DB yazımını beklemeden döndüğü için SSE echo'sundan önce gelir;
+  // böylece henüz echo'su gelmemiş yeni bir yerel değişikliğin üzerine eski
+  // bir echo'nun yazması engellenir (bkz. lib/mqtt.ts recordCommand).
   const lastSeqRef = useRef<Map<string, number>>(new Map());
+
+  function applySeq(target: string, seq: number | undefined) {
+    if (typeof seq !== "number") return;
+    const cur = lastSeqRef.current.get(target);
+    if (cur === undefined || seq > cur) lastSeqRef.current.set(target, seq);
+  }
 
   const summary = useMemo(() => summarize(zones), [zones]);
   const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
@@ -96,7 +117,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   function toggleZone(id: string, on: boolean) {
     const prev = zones;
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on, activeFx: null } : z)));
-    sendCommand(id, on ? "on" : "off").catch(() => setZones(prev));
+    sendCommand(id, on ? "on" : "off")
+      .then((seq) => applySeq(id, seq))
+      .catch(() => setZones(prev));
   }
 
   function setZoneBrightness(id: string, value: number) {
@@ -104,23 +127,31 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
-      sendCommand(id, "dim", value).catch(() => {});
+      sendCommand(id, "dim", value)
+        .then((seq) => applySeq(id, seq))
+        .catch(() => {});
       timers.delete(id);
     }, DIM_DEBOUNCE_MS));
   }
 
   function setAll(on: boolean) {
     setZones((zs) => zs.map((z) => ({ ...z, isOn: on, activeFx: null })));
-    sendAll(on ? "on" : "off").catch(() => {}); // Meven:all/cmd
+    const ids = zones.map((z) => z.id);
+    sendAll(on ? "on" : "off")
+      .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+      .catch(() => {}); // Meven:all/cmd
   }
 
   function setAllBrightness(value: number) {
     setMasterBrightness(value);
     setZones((zs) => zs.map((z) => ({ ...z, brightness: value, activeFx: null })));
+    const ids = zones.map((z) => z.id);
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
     timers.set("__all__", setTimeout(() => {
-      sendAll("dim", value).catch(() => {});
+      sendAll("dim", value)
+        .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+        .catch(() => {});
       timers.delete("__all__");
     }, DIM_DEBOUNCE_MS));
   }
@@ -131,10 +162,15 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (!t) return;
     if (t === "all") {
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
-      sendAll("efekt", undefined, number).catch(() => {});
+      const ids = zones.map((z) => z.id);
+      sendAll("efekt", undefined, number)
+        .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+        .catch(() => {});
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, isOn: true, activeFx: number } : z)));
-      sendCommand(t.id, "efekt", undefined, number).catch(() => {});
+      sendCommand(t.id, "efekt", undefined, number)
+        .then((seq) => applySeq(t.id, seq))
+        .catch(() => {});
     }
     setEffectTarget(null);
   }
@@ -144,10 +180,15 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (!t) return;
     if (t === "all") {
       setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
-      sendAll("dim", masterBrightness).catch(() => {});
+      const ids = zones.map((z) => z.id);
+      sendAll("dim", masterBrightness)
+        .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+        .catch(() => {});
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, activeFx: null } : z)));
-      sendCommand(t.id, "dim", t.brightness).catch(() => {});
+      sendCommand(t.id, "dim", t.brightness)
+        .then((seq) => applySeq(t.id, seq))
+        .catch(() => {});
     }
     setEffectTarget(null);
   }
