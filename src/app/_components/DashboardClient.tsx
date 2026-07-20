@@ -73,18 +73,32 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  // Son bilinen komut seq'i (zone bazlı) — hem SSE echo'sundan hem de bu
-  // client'ın kendi gönderdiği komutun POST cevabından güncellenir. POST
-  // cevabı DB yazımını beklemeden döndüğü için SSE echo'sundan önce gelir;
-  // böylece henüz echo'su gelmemiş yeni bir yerel değişikliğin üzerine eski
-  // bir echo'nun yazması engellenir (bkz. lib/mqtt.ts recordCommand).
+  // Son bilinen komut seq'i (zone bazlı) — SSE echo'sundan ve bu client'ın
+  // kendi komutunun POST cevabından güncellenir; sırası bozulmuş eski
+  // echo'ları eler (bkz. lib/mqtt.ts recordCommand).
   const lastSeqRef = useRef<Map<string, number>>(new Map());
+
+  // Bir zone için yanıtı henüz dönmemiş (in-flight) komut sayısı. Bu > 0 iken
+  // gelen HİÇBİR SSE echo'su uygulanmaz: kullanıcı zaten daha yeni bir komut
+  // gönderdi ama o komutun kendi seq'i henüz bilinmiyor, dolayısıyla seq
+  // karşılaştırması tek başına yetersiz — az önce gönderilmiş ama seq'i henüz
+  // dönmemiş bir düzenlemenin üzerine, seq'i "eski değil" görünen ama aslında
+  // bayat bir echo'nun yazmasını bununla engelliyoruz.
+  const pendingRef = useRef<Map<string, number>>(new Map());
 
   function applySeq(target: string, seq: number | undefined) {
     if (typeof seq !== "number") return;
     const cur = lastSeqRef.current.get(target);
-    console.debug(`[seq-debug][post] target=${target} seq=${seq} cur=${cur} t=${Date.now()}`);
     if (cur === undefined || seq > cur) lastSeqRef.current.set(target, seq);
+  }
+
+  function beginPending(target: string) {
+    pendingRef.current.set(target, (pendingRef.current.get(target) ?? 0) + 1);
+  }
+  function endPending(target: string) {
+    const n = (pendingRef.current.get(target) ?? 1) - 1;
+    if (n <= 0) pendingRef.current.delete(target);
+    else pendingRef.current.set(target, n);
   }
 
   const summary = useMemo(() => summarize(zones), [zones]);
@@ -93,13 +107,10 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   // ── Canlı durum (SSE) ──────────────────────────────────────
   const onLive = useCallback((e: LiveEvent) => {
     if (!e.zoneSlug) return;
+    if ((pendingRef.current.get(e.zoneSlug) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
     if (typeof e.seq === "number") {
       const lastSeq = lastSeqRef.current.get(e.zoneSlug);
-      const ignored = lastSeq !== undefined && e.seq < lastSeq;
-      console.debug(
-        `[seq-debug][sse] zone=${e.zoneSlug} seq=${e.seq} lastSeq=${lastSeq} brightness=${e.brightness} ignored=${ignored} t=${Date.now()}`,
-      );
-      if (ignored) return; // eski komut-echo, yok say
+      if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo, yok say
       lastSeqRef.current.set(e.zoneSlug, e.seq);
     }
     setZones((prev) =>
@@ -122,21 +133,23 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   function toggleZone(id: string, on: boolean) {
     const prev = zones;
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on, activeFx: null } : z)));
+    beginPending(id);
     sendCommand(id, on ? "on" : "off")
       .then((seq) => applySeq(id, seq))
-      .catch(() => setZones(prev));
+      .catch(() => setZones(prev))
+      .finally(() => endPending(id));
   }
 
   function setZoneBrightness(id: string, value: number) {
-    console.debug(`[seq-debug][optimistic] zone=${id} value=${value} t=${Date.now()}`);
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value, activeFx: null } : z)));
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
-      console.debug(`[seq-debug][send] zone=${id} value=${value} t=${Date.now()}`);
+      beginPending(id);
       sendCommand(id, "dim", value)
         .then((seq) => applySeq(id, seq))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => endPending(id));
       timers.delete(id);
     }, DIM_DEBOUNCE_MS));
   }
@@ -144,9 +157,11 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   function setAll(on: boolean) {
     setZones((zs) => zs.map((z) => ({ ...z, isOn: on, activeFx: null })));
     const ids = zones.map((z) => z.id);
+    ids.forEach(beginPending);
     sendAll(on ? "on" : "off")
       .then((seq) => ids.forEach((id) => applySeq(id, seq)))
-      .catch(() => {}); // Meven:all/cmd
+      .catch(() => {})
+      .finally(() => ids.forEach(endPending)); // Meven:all/cmd
   }
 
   function setAllBrightness(value: number) {
@@ -156,9 +171,11 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
     timers.set("__all__", setTimeout(() => {
+      ids.forEach(beginPending);
       sendAll("dim", value)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => ids.forEach(endPending));
       timers.delete("__all__");
     }, DIM_DEBOUNCE_MS));
   }
@@ -170,14 +187,18 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (t === "all") {
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
       const ids = zones.map((z) => z.id);
+      ids.forEach(beginPending);
       sendAll("efekt", undefined, number)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => ids.forEach(endPending));
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, isOn: true, activeFx: number } : z)));
+      beginPending(t.id);
       sendCommand(t.id, "efekt", undefined, number)
         .then((seq) => applySeq(t.id, seq))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => endPending(t.id));
     }
     setEffectTarget(null);
   }
@@ -188,14 +209,18 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (t === "all") {
       setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
       const ids = zones.map((z) => z.id);
+      ids.forEach(beginPending);
       sendAll("dim", masterBrightness)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => ids.forEach(endPending));
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, activeFx: null } : z)));
+      beginPending(t.id);
       sendCommand(t.id, "dim", t.brightness)
         .then((seq) => applySeq(t.id, seq))
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => endPending(t.id));
     }
     setEffectTarget(null);
   }
