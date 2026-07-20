@@ -11,6 +11,9 @@ import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
 
+/** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
+const DIM_DEBOUNCE_MS = 150;
+
 /** Cihaz bazlı komut → POST /api/devices/:id/command. channel yoksa tüm cihaz. */
 async function sendDeviceCommand(
   deviceId: string,
@@ -103,7 +106,7 @@ export function DeviceControlModal({
       setTimeout(() => {
         fn().catch(() => {});
         timers.delete(key);
-      }, 300),
+      }, DIM_DEBOUNCE_MS),
     );
   }
 

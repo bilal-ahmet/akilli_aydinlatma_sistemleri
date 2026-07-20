@@ -66,14 +66,21 @@ MAC'e göre üretilir (`src/lib/topics.ts`).
 
 ```
 Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
+Meven:<slug>/cmd   ← Backend publish, o bölgedeki ESP32'ler subscribe (bölge komutu)
 Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
 Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ```
 
-- **Bölge komutu** MQTT'de tek topic değildir: backend o bölgedeki her cihazın
-  `Meven:<MAC>/cmd`'sine publish eder. "Tüm Sistem" → `Meven:all/cmd`.
+- **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
+  yayınlar, cihaz listesini DB'den çözmez. ESP kendi bölge slug'ını firmware'deki
+  `ZONE_SLUG`'tan bilir ve o topic'e subscribe olur. "Tüm Sistem" → `Meven:all/cmd`.
 - Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
   gömülemez); MAC payload'daki `deviceId`'den okunur.
+- **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
+  topic'lerine ayrıca fanout yapmaz. Bu yüzden tüm cihazlar `ZONE_SLUG` ile
+  flash'lanmış olmalı — flash'lanmamış cihaz bölge komutu almaz. (Geçiş
+  döneminde geçici MAC fanout'u vardı; tüm cihazlar flash'landığı için
+  kaldırıldı — flash'lı cihazlar komutu iki kez alıyordu.)
 
 ### QoS Seviyeleri
 
@@ -357,6 +364,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 7. **LoRa geçişinde** transport katmanı değişir (Chirpstack → MQTT → Backend), API kontratı aynı kalır.
 8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
 9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.
+10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar).
 
 ---
 

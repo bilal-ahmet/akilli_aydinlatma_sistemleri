@@ -22,12 +22,24 @@ Bu değer hem topic'lerde hem data payload'ındaki `deviceId` alanında kullanı
 ## 3) Topic yapısı
 | Topic | Yön | Açıklama |
 |---|---|---|
-| `Meven:<MAC>/cmd` | **subscribe** | Bu cihaza özel komut |
-| `Meven:all/cmd`   | **subscribe** | Tüm cihazlara toplu komut |
-| `Meven:<MAC>/data`| **publish**   | Bu cihazın durum/veri raporu |
+| `Meven:<MAC>/cmd`  | **subscribe** | Bu cihaza özel komut |
+| `Meven:<slug>/cmd` | **subscribe** | Cihazın bölgesine toplu komut |
+| `Meven:all/cmd`    | **subscribe** | Tüm cihazlara toplu komut |
+| `Meven:<MAC>/data` | **publish**   | Bu cihazın durum/veri raporu |
 
-Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:all/cmd`.
+Cihaz açılışta **üç** topic'e subscribe olur: `Meven:<MAC>/cmd`,
+`Meven:<ZONE_SLUG>/cmd` ve `Meven:all/cmd`.
 **QoS:** komutlara subscribe → 1 · data publish → 0.
+
+### ZONE_SLUG provisioning (cihaz başına, zorunlu)
+`secrets.h` içine cihazın bulunduğu bölgenin slug'ı yazılır:
+```c
+#define ZONE_SLUG  "ataturk-bulvari"
+```
+Bu değer dashboard'daki bölge slug'ı (`zones.slug`) ile **birebir** aynı olmalı —
+`GET /api/zones` yanıtındaki `id` alanından okunabilir. Yanlış yazılırsa cihaz
+bölge komutlarını almaz (tekil ve toplu komutlar çalışmaya devam eder).
+Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 
 ## 4) Komut payload (gelen, cmd)
 ```json
@@ -85,6 +97,7 @@ Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve `Meven:a
 
 ## 6) Akış özeti
 - Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
+- Dashboard bölge komutu → `Meven:<slug>/cmd`'e **tek publish** (o bölgedeki her cihaz alır).
 - Dashboard "Tüm Sistem" → `Meven:all/cmd`'e tek publish (her cihaz alır).
 - Cihaz durum bildirir → `Meven:<MAC>/data`'ya publish → backend `deviceId`(MAC) ile
   cihazı bulup dashboard'ı günceller. (Cihazın MAC'i önceden dashboard'dan `devices`

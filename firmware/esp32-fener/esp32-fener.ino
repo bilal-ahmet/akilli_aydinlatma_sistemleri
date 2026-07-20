@@ -3,8 +3,11 @@
  * ------------------------------------------------------------------
  * Cihaz açılışta kendi MAC'ini okur (iki noktasız), HiveMQ Cloud'a TLS (8883)
  * ile bağlanır ve şu topic'leri kullanır:
- *   subscribe: Meven:<MAC>/cmd , Meven:all/cmd
+ *   subscribe: Meven:<MAC>/cmd , Meven:<ZONE_SLUG>/cmd , Meven:all/cmd
  *   publish  : Meven:<MAC>/data
+ *
+ * ZONE_SLUG secrets.h'ten gelir ve dashboard'daki zone slug'ı ile birebir aynı
+ * olmalıdır. Backend bölge komutunu tek publish ile bu topic'e atar.
  *
  * Komut payload : { "action": "on|off|dim", "value": 0-100 }
  * Veri payload  : { deviceId, brightness, relayStatus, temperature, rssi, status }
@@ -29,6 +32,7 @@ PubSubClient mqtt(net);
 
 String DEVICE_MAC;     // "A842E3123456"
 String T_CMD;          // Meven:<MAC>/cmd
+String T_ZONE;         // Meven:<ZONE_SLUG>/cmd
 String T_ALL = "Meven:all/cmd";
 String T_DATA;         // Meven:<MAC>/data
 
@@ -117,8 +121,10 @@ void connectMQTT() {
     if (mqtt.connect(DEVICE_MAC.c_str(), MQTT_USER, MQTT_PASS)) {
       Serial.println("OK");
       mqtt.subscribe(T_CMD.c_str(), 1);
+      mqtt.subscribe(T_ZONE.c_str(), 1);
       mqtt.subscribe(T_ALL.c_str(), 1);
-      Serial.printf("[mqtt] subscribe: %s , %s\n", T_CMD.c_str(), T_ALL.c_str());
+      Serial.printf("[mqtt] subscribe: %s , %s , %s\n",
+                    T_CMD.c_str(), T_ZONE.c_str(), T_ALL.c_str());
       publishData("ok");
     } else {
       Serial.printf("hata rc=%d, 3sn sonra tekrar\n", mqtt.state());
@@ -138,8 +144,9 @@ void setup() {
 
   DEVICE_MAC = readMac();
   T_CMD  = "Meven:" + DEVICE_MAC + "/cmd";
+  T_ZONE = "Meven:" + String(ZONE_SLUG) + "/cmd";
   T_DATA = "Meven:" + DEVICE_MAC + "/data";
-  Serial.printf("[id] MAC: %s\n", DEVICE_MAC.c_str());
+  Serial.printf("[id] MAC: %s , bolge: %s\n", DEVICE_MAC.c_str(), ZONE_SLUG);
 
   // TLS: hızlı test için doğrulama atla. Üretimde net.setCACert(...) kullan.
   net.setInsecure();
