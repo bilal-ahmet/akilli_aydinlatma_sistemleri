@@ -77,6 +77,7 @@ export function DeviceControlModal({
   function applySeq(key: string, seq: number | undefined) {
     if (typeof seq !== "number") return;
     const cur = lastSeqRef.current.get(key);
+    console.debug(`[seq-debug][post] key=${key} seq=${seq} cur=${cur} t=${Date.now()}`);
     if (cur === undefined || seq > cur) lastSeqRef.current.set(key, seq);
   }
 
@@ -96,7 +97,11 @@ export function DeviceControlModal({
       const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
       if (typeof e.seq === "number") {
         const lastSeq = lastSeqRef.current.get(seqKey);
-        if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo, yok say
+        const ignored = lastSeq !== undefined && e.seq < lastSeq;
+        console.debug(
+          `[seq-debug][sse] key=${seqKey} seq=${e.seq} lastSeq=${lastSeq} brightness=${e.brightness} ignored=${ignored} t=${Date.now()}`,
+        );
+        if (ignored) return; // eski komut-echo, yok say
         lastSeqRef.current.set(seqKey, e.seq);
       }
       if (typeof e.channel === "number") {
@@ -144,9 +149,13 @@ export function DeviceControlModal({
   }
 
   function setDeviceDim(value: number) {
+    console.debug(`[seq-debug][optimistic] key=__device__ value=${value} t=${Date.now()}`);
     setDeviceBrightness(value);
     setFixtures((fs) => fs.map((f) => ({ ...f, brightness: value, isOn: true, activeFx: null })));
-    debounce("__device__", () => sendDeviceCommand(deviceId, { action: "dim", value }));
+    debounce("__device__", () => {
+      console.debug(`[seq-debug][send] key=__device__ value=${value} t=${Date.now()}`);
+      return sendDeviceCommand(deviceId, { action: "dim", value });
+    });
   }
 
   // ── Tek lamba (kanal) ─────────────────────────────────────
@@ -158,10 +167,14 @@ export function DeviceControlModal({
   }
 
   function setFixtureDim(ch: number, value: number) {
+    console.debug(`[seq-debug][optimistic] key=ch-${ch} value=${value} t=${Date.now()}`);
     setFixtures((fs) =>
       fs.map((f) => (f.channel === ch ? { ...f, brightness: value, isOn: true, activeFx: null } : f)),
     );
-    debounce(`ch-${ch}`, () => sendDeviceCommand(deviceId, { action: "dim", value, channel: ch }));
+    debounce(`ch-${ch}`, () => {
+      console.debug(`[seq-debug][send] key=ch-${ch} value=${value} t=${Date.now()}`);
+      return sendDeviceCommand(deviceId, { action: "dim", value, channel: ch });
+    });
   }
 
   // ── Efektler ──────────────────────────────────────────────

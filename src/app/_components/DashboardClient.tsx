@@ -83,6 +83,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   function applySeq(target: string, seq: number | undefined) {
     if (typeof seq !== "number") return;
     const cur = lastSeqRef.current.get(target);
+    console.debug(`[seq-debug][post] target=${target} seq=${seq} cur=${cur} t=${Date.now()}`);
     if (cur === undefined || seq > cur) lastSeqRef.current.set(target, seq);
   }
 
@@ -94,7 +95,11 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (!e.zoneSlug) return;
     if (typeof e.seq === "number") {
       const lastSeq = lastSeqRef.current.get(e.zoneSlug);
-      if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo, yok say
+      const ignored = lastSeq !== undefined && e.seq < lastSeq;
+      console.debug(
+        `[seq-debug][sse] zone=${e.zoneSlug} seq=${e.seq} lastSeq=${lastSeq} brightness=${e.brightness} ignored=${ignored} t=${Date.now()}`,
+      );
+      if (ignored) return; // eski komut-echo, yok say
       lastSeqRef.current.set(e.zoneSlug, e.seq);
     }
     setZones((prev) =>
@@ -123,10 +128,12 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   function setZoneBrightness(id: string, value: number) {
+    console.debug(`[seq-debug][optimistic] zone=${id} value=${value} t=${Date.now()}`);
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value, activeFx: null } : z)));
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
+      console.debug(`[seq-debug][send] zone=${id} value=${value} t=${Date.now()}`);
       sendCommand(id, "dim", value)
         .then((seq) => applySeq(id, seq))
         .catch(() => {});
