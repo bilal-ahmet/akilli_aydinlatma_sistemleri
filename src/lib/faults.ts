@@ -1,5 +1,6 @@
 import type { D4iPeriodic } from "@/types/lighting";
 import { flagToBool } from "@/types/lighting";
+import { pickNumber, type D4iBlock } from "@/lib/d4i";
 
 /**
  * Arıza kataloğu — TEK kaynak. Hem D4i panelindeki rozetler, hem arıza
@@ -97,10 +98,10 @@ export function activeFaultCodes(d: D4iPeriodic, raw: unknown): string[] {
     ["driver", DRIVER_FAULTS],
     ["led", LED_FAULTS],
   ] as const) {
-    const b = d4i?.[block] as Record<string, number | null> | undefined;
+    const b = d4i?.[block] as D4iBlock | undefined;
     if (!b) continue;
     for (const { key } of keys) {
-      if (isFlagActive(b[key])) codes.push(`${block}.${key}`);
+      if (isFlagActive(pickNumber(b, key))) codes.push(`${block}.${key}`);
     }
   }
 

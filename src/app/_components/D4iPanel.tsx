@@ -3,11 +3,25 @@
 import type { D4iSnapshot } from "@/app/_lib/types";
 import { MAX_ARC_LEVEL, levelToPercent } from "@/types/lighting";
 import { DRIVER_FAULTS, LED_FAULTS, isFlagActive, type FaultKey } from "@/lib/faults";
+import {
+  pickBool,
+  pickNumber,
+  pickString,
+  readCounter,
+  readMeasurement,
+  reasonLabel,
+  type D4iBlock,
+  type Reading,
+} from "@/lib/d4i";
 
 /**
  * Cihazın D4i periyodik raporundan gelen sürücü/LED telemetrisi. Veri
- * `GET /api/devices/:id/telemetry` ile kanal başına son satır olarak gelir;
- * arıza sayaçları gibi tüm ayrıntılar raporun ham `d4i` bloğunda (`raw`).
+ * `GET /api/devices/:id/telemetry` ile kanal başına son satır olarak gelir.
+ *
+ * Ölçümler `raw` üzerinden okunur (`lib/d4i.ts`): sürücü doğrulayamadığı
+ * değerleri `null`'a çektiği için `d4i_telemetry` sütunları boş kalabiliyor.
+ * Doğrulanmış değer düz, tahmini `≈`, doğrulanmamış ham ölçüm `*` ile yazılır;
+ * ham/teknik alanlar ana ızgarada değil "Teknik detay" bölümünde durur.
  */
 
 const tr0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
@@ -24,22 +38,61 @@ function hours(seconds: number | null | undefined): string | null {
   return `${tr0.format(Math.round(seconds / 3600))} sa`;
 }
 
-// Arıza bayrağı/etiket kataloğu lib/faults.ts'te — arıza geçmişi de aynı
-// listeden okur. Buradaki ilk sıra (`general_failure`) özet olarak gösterilir,
-// kalanı tıklanınca açılır.
+interface Metric {
+  label: string;
+  value: string | null;
+  /** Etiketin yanındaki ⓘ açıklaması. */
+  note?: string;
+  /** Ölçümün güvenilirliği — `≈` / `*` işaretlerini belirler. */
+  kind?: Reading["kind"];
+}
 
-type Metric = [label: string, value: string | null];
+/** Ölçümü birim ve güvenilirlik işaretiyle metne çevirir. */
+function reading(r: Reading | null, unit: string, fmt = tr1): Metric["value"] {
+  if (!r) return null;
+  const prefix = r.kind === "estimated" ? "≈" : "";
+  const suffix = r.kind === "unverified" ? " *" : "";
+  return `${prefix}${fmt.format(r.value)} ${unit}${suffix}`;
+}
 
-/** Etiket + değer çiftleri; değeri olmayan alanlar hiç basılmaz. */
+/** Ölçümün ⓘ açıklaması: tahminin/şüphenin sebebi ve varsa ham değer. */
+function readingNote(r: Reading | null, unit: string, fmt = tr1): string | undefined {
+  if (!r || r.kind === "exact") return undefined;
+  const parts: string[] = [
+    r.kind === "estimated"
+      ? "Sürücünün tahmini değeri — ölçüm doğrulanamadı."
+      : "Ham ölçüm; sürücü doğrulayamadı.",
+  ];
+  if (typeof r.reported === "number") {
+    parts.push(`Cihazın raporladığı ham değer: ${fmt.format(r.reported)} ${unit}`);
+  }
+  if (r.reason) parts.push(`Sebep: ${reasonLabel(r.reason)}`);
+  return parts.join(" ");
+}
+
+/**
+ * Etiket + değer ızgarası; değeri olmayan alanlar hiç basılmaz. Etiketler uzun
+ * olabildiği için (örn. "Enerjilenme/başlatma sayısı") kırpılmaz, sarılır.
+ */
 function Metrics({ items }: { items: Metric[] }) {
-  const shown = items.filter((m): m is [string, string] => m[1] !== null);
+  const shown = items.filter((m) => m.value !== null);
   if (shown.length === 0) return null;
   return (
     <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-      {shown.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="truncate text-xs text-muted">{label}</dt>
-          <dd className="truncate font-mono text-sm text-text">{value}</dd>
+      {shown.map((m) => (
+        <div key={m.label} className="min-w-0">
+          <dt className="flex items-start text-xs leading-snug text-muted">
+            <span>{m.label}</span>
+            {m.note ? <InfoMark note={m.note} /> : null}
+          </dt>
+          <dd
+            className={`font-mono text-sm ${
+              m.kind === "estimated" || m.kind === "unverified" ? "text-accent" : "text-text"
+            }`}
+            title={m.note}
+          >
+            {m.value}
+          </dd>
         </div>
       ))}
     </dl>
@@ -60,19 +113,26 @@ interface FaultItem {
   note?: string;
   active: boolean;
   count: number | null;
+  /** Ekrana yazılan sayı — doymuş sayaçlarda "253+". */
+  text: string | null;
+  saturated: boolean;
 }
 
-function faultItems(
-  block: Record<string, number | null> | undefined,
-  keys: FaultKey[],
-): FaultItem[] {
+function faultItems(block: D4iBlock | undefined, keys: FaultKey[]): FaultItem[] {
   if (!block) return [];
   return keys
     .map(({ key, label, note }): FaultItem | null => {
-      const active = block[key];
-      const count = block[`${key}_count`];
-      if (typeof active !== "number" && typeof count !== "number") return null;
-      return { label, note, active: isFlagActive(active), count: count ?? null };
+      const flag = pickNumber(block, key);
+      const counter = readCounter(block, key);
+      if (flag === null && counter === null) return null;
+      return {
+        label,
+        note,
+        active: isFlagActive(flag),
+        count: counter?.count ?? null,
+        text: counter?.text ?? null,
+        saturated: counter?.saturated ?? false,
+      };
     })
     .filter((x): x is FaultItem => x !== null);
 }
@@ -110,13 +170,7 @@ function InfoMark({ note }: { note: string }) {
  * Karmaşayı katlayarak değil, ağırlıkla çözüyoruz: aktif arıza kırmızı, sıfır
  * sayaç sönük, dolu sayaç normal — göz doğrudan anlamlı olana gidiyor.
  */
-function Faults({
-  block,
-  keys,
-}: {
-  block: Record<string, number | null> | undefined;
-  keys: FaultKey[];
-}) {
+function Faults({ block, keys }: { block: D4iBlock | undefined; keys: FaultKey[] }) {
   const items = faultItems(block, keys);
   if (items.length === 0) return null;
 
@@ -154,8 +208,13 @@ function Faults({
                     ? "text-text"
                     : "text-muted/60"
               }`}
+              title={
+                it.saturated
+                  ? "Sayaç tavana ulaştı ve saymayı bıraktı; gerçek sayı daha yüksek."
+                  : undefined
+              }
             >
-              {it.count !== null ? tr0.format(it.count) : "—"}
+              {it.text ?? "—"}
               {it.active ? (
                 <span className="ml-1.5 rounded bg-danger/15 px-1 py-0.5 text-[10px] font-semibold uppercase">
                   aktif
@@ -169,8 +228,117 @@ function Faults({
       <p className="mt-2 text-xs text-muted">
         Sayaçlar sürücünün ömrü boyunca birikir ve birbirinden bağımsızdır; sıfır
         olmayan bir sayaç geçmişte yaşanmış arızayı gösterir, aktif arızayı değil.
+        {items.some((i) => i.saturated)
+          ? " “+” ile biten sayaçlar tavana ulaşmış, gerçek sayı daha yüksek."
+          : ""}
       </p>
     </div>
+  );
+}
+
+/** Teknik detaydaki tek satır — değeri olmayan alan hiç basılmaz. */
+function DetailRow({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-0.5 py-1">
+      <dt className="w-40 shrink-0 text-xs text-muted">{label}</dt>
+      <dd className="min-w-0 flex-1 break-all font-mono text-xs text-text">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * Ana ızgaraya ait olmayan alanlar: ham (doğrulanamamış) ölçümler, doğrulama
+ * sebepleri, ölçek üsleri, bank sürümleri ve bank 206 ham verisi. Ham JSON
+ * dökümü yerine etiketli liste — teknik ama okunur.
+ *
+ * `<details>` kullanılıyor: state yok, klavye/erişilebilirlik tarayıcıdan gelir.
+ */
+function TechnicalDetail({ snapshot }: { snapshot: D4iSnapshot }) {
+  const d4i = snapshot.raw?.d4i;
+  if (!d4i) return null;
+
+  const drv = d4i.driver;
+  const led = d4i.led;
+
+  const status = pickString(led, "measurement_status");
+  const rawVoltage = pickNumber(led, "voltage_reported_v");
+  const rawCurrent = pickNumber(led, "current_reported_a");
+  const rawTemp = pickNumber(led, "temperature_reported_c");
+  const estimationReason = pickString(led, "temperature_estimation_reason");
+  const coherent = pickBool(d4i as D4iBlock, "sample_coherent") ?? pickBool(led, "sample_coherent");
+  const sampleState =
+    pickString(d4i as D4iBlock, "sample_state") ?? pickString(led, "measurement_state");
+  const bankHex = pickString(d4i as D4iBlock, "bank_206_raw_hex");
+  const bankLen = pickNumber(d4i as D4iBlock, "bank_206_length");
+  const bankVer = pickNumber(d4i as D4iBlock, "bank_206_version");
+  const drvVer = pickNumber(drv, "bank_version");
+  const ledVer = pickNumber(led, "bank_version");
+  const energyScale = d4i.energy?.scale_exponent;
+  const powerScale = d4i.power?.scale_exponent;
+
+  /** "1,8 V (doğrulanamadı)" — ham değerin neden ana ekranda olmadığını söyler. */
+  const rawWithReason = (
+    v: number | null,
+    unit: string,
+    reasonKey: string,
+    fmt = tr1,
+  ): string | null => {
+    if (v === null) return null;
+    const reason = pickString(led, reasonKey);
+    return `${fmt.format(v)} ${unit}${reason ? ` — ${reasonLabel(reason)}` : " — doğrulanamadı"}`;
+  };
+
+  const versions = [
+    drvVer !== null ? `sürücü v${drvVer}` : null,
+    ledVer !== null ? `LED v${ledVer}` : null,
+    bankVer !== null
+      ? `bank206 v${bankVer}${bankLen !== null ? ` (${bankLen} bayt)` : ""}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const scales = [
+    typeof energyScale === "number" ? `enerji ×10^${energyScale}` : null,
+    typeof powerScale === "number" ? `güç ×10^${powerScale}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const sample = [
+    coherent !== null ? `örnek ${coherent ? "tutarlı" : "TUTARSIZ"}` : null,
+    sampleState ? `durum: ${sampleState}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const rows: Array<[string, string | null]> = [
+    ["Ölçüm durumu", status ? reasonLabel(status) : null],
+    ["Ham LED gerilimi", rawWithReason(rawVoltage, "V", "voltage_implausibility_reason")],
+    ["Ham LED akımı", rawWithReason(rawCurrent, "A", "current_implausibility_reason", tr3)],
+    ["Ham LED sıcaklığı", rawWithReason(rawTemp, "°C", "temperature_implausibility_reason", tr0)],
+    ["Tahmin sebebi", estimationReason ? reasonLabel(estimationReason) : null],
+    ["Örnekleme", sample || null],
+    ["Bank sürümleri", versions || null],
+    ["Ölçek üsleri", scales || null],
+    ["bank 206 (ham)", bankHex],
+  ];
+
+  if (rows.every(([, v]) => !v)) return null;
+
+  return (
+    <details className="mt-2.5 border-t border-border pt-2">
+      <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-wide text-muted transition-colors hover:text-text">
+        <span className="mr-1 inline-block transition-transform">▸</span>
+        Teknik detay
+      </summary>
+      <dl className="mt-1.5 divide-y divide-border/60">
+        {rows.map(([label, value]) => (
+          <DetailRow key={label} label={label} value={value} />
+        ))}
+      </dl>
+    </details>
   );
 }
 
@@ -247,6 +415,14 @@ export function D4iPanel({
             const drv = r.raw?.d4i?.driver;
             const led = r.raw?.d4i?.led;
             const name = names.get(r.channel) || `Lamba ${r.channel}`;
+
+            // LED ölçümleri sütunlardan değil ham bloktan okunur: sürücü
+            // doğrulayamadığı değeri null'a çekiyor, sütunlar da boş kalıyor.
+            // `readMeasurement` doğrulanmış → tahmini → ham sırasını uygular ve
+            // eski (yalnız `voltage_v` gönderen) payload'larla uyumludur.
+            const ledVoltage = readMeasurement(led, "voltage", "v");
+            const ledCurrent = readMeasurement(led, "current", "a");
+            const ledTemp = readMeasurement(led, "temperature", "c");
             return (
               <div
                 key={r.channel}
@@ -285,26 +461,44 @@ export function D4iPanel({
                 <div className="space-y-2.5">
                   <Metrics
                     items={[
-                      ["Anlık güç", num(r.powerW, "W")],
-                      ["Toplam enerji", num(r.energyWh, "Wh", tr1)],
+                      {
+                        label: "Anlık güç",
+                        value: num(r.powerW, "W"),
+                        note: "Sürücünün şebekeden çektiği güç. LED'e giden güç ayrıca “Yük gücü” olarak gösterilir.",
+                      },
+                      { label: "Toplam enerji", value: num(r.energyWh, "Wh", tr1) },
                     ]}
                   />
 
                   <Section title="Sürücü">
                     <Metrics
                       items={[
-                        ["Çalışma sıcaklığı", num(r.driverTemperatureC, "°C", tr0)],
-                        ["Çalışma gerilimi", num(r.driverVoltageV, "V", tr0)],
-                        ["Şebeke frekansı", num(drv?.mains_frequency_hz, "Hz", tr0)],
-                        ["Güç katsayısı", num(drv?.power_factor, "", tr1)],
-                        ["Çalışma akımı", num(drv?.output_current_percent, "%", tr0)],
-                        ["Çalışma süresi", hours(r.driverOperatingTimeS)],
-                        [
-                          "Açma/kapama sayısı",
-                          typeof drv?.startup_count === "number"
-                            ? tr0.format(drv.startup_count)
-                            : null,
-                        ],
+                        { label: "Çalışma sıcaklığı", value: num(r.driverTemperatureC, "°C", tr0) },
+                        { label: "Çalışma gerilimi", value: num(r.driverVoltageV, "V", tr0) },
+                        {
+                          label: "Şebeke frekansı",
+                          value: num(pickNumber(drv, "mains_frequency_hz"), "Hz", tr0),
+                        },
+                        {
+                          label: "Güç katsayısı",
+                          value: num(pickNumber(drv, "power_factor"), "", tr1),
+                        },
+                        {
+                          label: "Çıkış akımı seviyesi",
+                          // Yüzde Türkçede önce yazılır (%85) — kartın üstündeki
+                          // seviye göstergesiyle aynı biçim.
+                          value: (() => {
+                            const v = pickNumber(drv, "output_current_percent");
+                            return v === null ? null : `%${tr0.format(v)}`;
+                          })(),
+                          note: "Sürücünün LED'e verdiği akımın, azami akıma oranı.",
+                        },
+                        { label: "Çalışma süresi", value: hours(r.driverOperatingTimeS) },
+                        {
+                          label: "Enerjilenme/başlatma sayısı",
+                          value: num(pickNumber(drv, "startup_count"), "", tr0),
+                          note: "Sürücüye enerji verilip başlatılma sayısı — lambanın aç/kapa sayısı değildir.",
+                        },
                       ]}
                     />
                     <Faults block={drv} keys={DRIVER_FAULTS} />
@@ -313,36 +507,75 @@ export function D4iPanel({
                   <Section title="LED">
                     <Metrics
                       items={[
-                        ["Çalışma sıcaklığı", num(r.ledTemperatureC, "°C", tr0)],
-                        ["Çalışma gerilimi", num(r.ledVoltageV, "V", tr1)],
-                        ["Çalışma akımı", num(r.ledCurrentA, "A", tr3)],
-                        ["Çalışma süresi", hours(led?.operating_time_s)],
-                        [
-                          "Açma/kapama sayısı",
-                          typeof led?.startup_count === "number"
-                            ? tr0.format(led.startup_count)
-                            : null,
-                        ],
+                        {
+                          label: "LED gerilimi",
+                          value: reading(ledVoltage, "V", tr1),
+                          note: readingNote(ledVoltage, "V", tr1),
+                          kind: ledVoltage?.kind,
+                        },
+                        {
+                          label: "LED akımı",
+                          value: reading(ledCurrent, "A", tr3),
+                          note: readingNote(ledCurrent, "A", tr3),
+                          kind: ledCurrent?.kind,
+                        },
+                        {
+                          label: "LED sıcaklığı",
+                          value: reading(ledTemp, "°C", tr0),
+                          note: readingNote(ledTemp, "°C", tr0),
+                          kind: ledTemp?.kind,
+                        },
+                        {
+                          label: "Yük gücü",
+                          value: num(r.raw?.d4i?.load_power?.value, "W", tr0),
+                          note: "LED'e aktarılan güç (sürücü kayıpları hariç).",
+                        },
+                        { label: "Çalışma süresi", value: hours(pickNumber(led, "operating_time_s")) },
+                        {
+                          label: "Enerjilenme/başlatma sayısı",
+                          value: num(pickNumber(led, "startup_count"), "", tr0),
+                          note: "LED modülünün enerjilenme sayısı — lambanın aç/kapa sayısı değildir.",
+                        },
                       ]}
                     />
+                    {[ledVoltage, ledCurrent, ledTemp].some((m) => m?.kind === "unverified") ? (
+                      <p className="mt-1.5 text-xs text-muted">
+                        * Ham ölçüm; gerilim/güç kontrolüyle doğrulanamadı.
+                      </p>
+                    ) : null}
+                    {[ledVoltage, ledCurrent, ledTemp].some((m) => m?.kind === "estimated") ? (
+                      <p className="mt-1 text-xs text-muted">
+                        ≈ ile yazılan değerler sürücünün tahminidir; ham ölçümler “Teknik
+                        detay” bölümünde.
+                      </p>
+                    ) : null}
                     <Faults block={led} keys={LED_FAULTS} />
                   </Section>
 
                   <Section title="Seviye sınırları">
                     <Metrics
                       items={[
-                        ["En düşük", typeof r.minLevel === "number" ? `${r.minLevel}` : null],
-                        ["En yüksek", typeof r.maxLevel === "number" ? `${r.maxLevel}` : null],
-                        [
-                          "Fiziksel min",
-                          typeof r.physicalMinLevel === "number"
-                            ? `${r.physicalMinLevel}`
-                            : null,
-                        ],
+                        {
+                          label: "En düşük",
+                          value: typeof r.minLevel === "number" ? `${r.minLevel}` : null,
+                        },
+                        {
+                          label: "En yüksek",
+                          value: typeof r.maxLevel === "number" ? `${r.maxLevel}` : null,
+                        },
+                        {
+                          label: "Fiziksel min",
+                          value:
+                            typeof r.physicalMinLevel === "number"
+                              ? `${r.physicalMinLevel}`
+                              : null,
+                        },
                       ]}
                     />
                   </Section>
                 </div>
+
+                <TechnicalDetail snapshot={r} />
 
                 {r.recordedAt ? (
                   <p className="mt-2.5 text-xs text-muted">

@@ -176,7 +176,8 @@ metin yutulmaz**, `known:false` ile ham haliyle gösterilir. Tam tablo:
   "status": { "status": 4, "lamp_power_on": 255, "actual_level": 254,
               "max_level": 254, "min_level": 157, "lamp_failure": null },
   "d4i_supported": true,
-  "d4i": { "energy": {...}, "power": {...}, "driver": {...}, "led": {...} }
+  "d4i": { "energy": {...}, "power": {...}, "load_power": { "value": 39, "unit": "W" },
+           "driver": {...}, "led": {...} }
 }
 ```
 
@@ -187,9 +188,39 @@ metin yutulmaz**, `known:false` ile ham haliyle gösterilir. Tam tablo:
   (`levelToPercent`, tek dönüşüm noktası).
 - DALI sorgu yanıtları üç durumlu: `255` evet, `0` hayır, `null` yanıt yok
   (`flagToBool`).
+- `power` = şebekeden **çekilen** güç, `load_power` = LED'e giden **yük** gücü.
+  İkisi farklıdır (47,4 W ↔ 39 W), panelde ayrı gösterilir.
 - Raporun tamamı `d4i_telemetry`'ye yazılır (ham `d4i` bloğu `raw` JSONB'de);
   cihaz modalindeki "D4i telemetrisi" paneli `GET /api/devices/:id/telemetry`
   ile bunu okur.
+
+#### Doğrulanmış / tahmini / ham ölçümler
+
+Sürücü LED ölçümlerini kendisi **doğruluyor** ve güvenmediğini `null`'a çekiyor:
+
+```jsonc
+"voltage_v": null,                  // doğrulanmış değer — YOK
+"voltage_reported_v": 1.8,          // ham ölçüm (yanıltıcı)
+"voltage_estimated_v": 65.878,      // sürücünün tahmini
+"voltage_plausible": false,
+"voltage_implausibility_reason": "load_power_current_mismatch"
+```
+
+Okuma sırası tek yerde: `src/lib/d4i.ts` → `readMeasurement(block, ad, birim)`
+→ **doğrulanmış → tahmini → ham**. UI'da doğrulanmış düz, tahmini `≈`,
+doğrulanmamış ham `*` ile yazılır; ham değerler ve sebep kodları ana ızgarada
+değil, lamba kartının "Teknik detay" bölümünde durur (`bank_206_raw_hex`,
+ölçek üsleri, `*_available/plausible` alanları da oraya aittir).
+
+> **`d4i_telemetry.led_voltage_v / led_current_a / led_temperature_c` sütunları
+> yalnızca DOĞRULANMIŞ değeri taşır**, yani yeni firmware'de çoğunlukla NULL'dur.
+> Panel bu yüzden ölçümleri sütunlardan değil `raw`'dan okur. Tahminler üzerinden
+> grafik gerekirse ayrı `*_estimated_*` sütunları + migration eklenmeli.
+
+Arıza sayaçları 1 baytlıktır ve tavana ulaşınca saymayı bırakır; firmware bunu
+`<key>_count_saturated: true` + `<key>_count_text: "253+"` ile bildirir
+(`readCounter`). Panel `253` yerine `253+` yazar — sayaçlar birbirinden
+bağımsızdır, `general_failure_count` diğerlerinin toplamı **değildir**.
 
 **3. Eski rapor (geriye uyum)** — `deviceId` alanı olan ilk kontrat:
 

@@ -57,6 +57,82 @@ function ack(error?: string) {
   console.log(error ? `  → ack: HATA "${error}"` : "  → ack: ok");
 }
 
+/**
+ * LED bloğu — iki senaryo birden test edilsin diye adrese göre değişir:
+ *
+ *  - TEK adres (1, 3, …): sürücü ölçümleri DOĞRULAYAMIYOR. `voltage_v`/
+ *    `current_a`/`temperature_c` null gelir, yanlarında ham (`*_reported_*`) ve
+ *    tahmini (`*_estimated_*`) değerler + sebep kodları durur. Sayaçlar tavana
+ *    ulaşmış (`*_saturated` + `*_text: "253+"`). Sahadan gelen gerçek örnek.
+ *  - ÇİFT adres (2, 4, …): eski/doğrulanmış biçim — düz `voltage_v` vb.
+ *    Panelin geriye uyumu bununla görülür (≈ ve * işareti çıkmamalı).
+ */
+function ledBlock(address: number, on: boolean): Record<string, unknown> {
+  const common = {
+    bank_version: 1,
+    fault_counts_are_historical: true,
+    startup_count: 21998,
+    operating_time_s: 762771,
+    sample_coherent: true,
+    measurement_state: on ? "on" : "off",
+    general_failure: 0,
+    short_circuit: 0,
+    short_circuit_count: 10,
+    open_circuit: 0,
+    thermal_derating: 0,
+    thermal_derating_count: 1,
+    thermal_shutdown: 0,
+    thermal_shutdown_count: 5,
+  };
+
+  if (address % 2 === 0) {
+    return {
+      ...common,
+      voltage_v: 63.3,
+      current_a: 0.592,
+      temperature_c: 40 + Math.floor(Math.random() * 10),
+      general_failure_count: 5,
+      open_circuit_count: 12,
+    };
+  }
+
+  return {
+    ...common,
+    current_reported_a: 0.592,
+    current_available: true,
+    voltage_reported_v: 1.8,
+    voltage_estimated_v: 65.8783783783784,
+    voltage_implausibility_reason: "load_power_current_mismatch",
+    current_implausibility_reason: "load_power_current_mismatch",
+    voltage_v: null,
+    current_a: null,
+    voltage_available: true,
+    voltage_plausible: false,
+    current_plausible: false,
+    voltage_plausibility_checked: true,
+    current_plausibility_checked: true,
+    measurement_status: "load_power_current_mismatch",
+    general_failure_count: 253,
+    general_failure_count_saturated: true,
+    general_failure_count_text: "253+",
+    open_circuit_count: 253,
+    open_circuit_count_saturated: true,
+    open_circuit_count_text: "253+",
+    temperature_raw: 53,
+    temperature_reported_c: -7,
+    temperature_implausibility_reason: "gear_temperature_mismatch",
+    temperature_estimated_c: 53,
+    temperature_estimation_reason: "suspected_missing_plus_60_offset",
+    temperature_c: null,
+    temperature_available: true,
+    temperature_plausible: false,
+    temperature_plausibility_checked: true,
+    measurements_available: true,
+    measurements_plausibility_checked: true,
+    measurements_plausible: false,
+  };
+}
+
 /** Sürücü/LED sayaçlarıyla birlikte tek adresin D4i raporu. */
 function publishD4i(address: number) {
   const s = channels.get(address);
@@ -82,16 +158,32 @@ function publishD4i(address: number) {
 
   if (supported) {
     const powerW = s.on ? Math.round((s.level / MAX_ARC_LEVEL) * 473) / 10 : 0;
+    const loadW = s.on ? Math.round((s.level / MAX_ARC_LEVEL) * 39) : 0;
+
     payload.d4i = {
-      energy: { raw_integer: "9820154", scale_exponent: -3, value: 9820.154, unit: "Wh" },
-      power: { raw_integer: Math.round(powerW * 10), scale_exponent: -1, value: powerW, unit: "W" },
+      energy: {
+        raw_integer: "9971068",
+        scale_raw: 253,
+        scale_exponent: -3,
+        value: 9971.068,
+        unit: "Wh",
+      },
+      power: {
+        raw_integer: Math.round(powerW * 10),
+        scale_raw: 255,
+        scale_exponent: -1,
+        value: powerW,
+        unit: "W",
+      },
       driver: {
-        operating_time_s: 1685203,
-        startup_count: 85,
-        input_voltage_v: 230 + Math.floor(Math.random() * 5),
+        bank_version: 1,
+        fault_counts_are_historical: true,
+        operating_time_s: 1712344,
+        startup_count: 87,
+        input_voltage_v: 229 + Math.floor(Math.random() * 4),
         mains_frequency_hz: 49,
         power_factor: 1,
-        temperature_c: 45 + Math.floor(Math.random() * 10),
+        temperature_c: 50 + Math.floor(Math.random() * 6),
         output_current_percent: Math.round((s.level / MAX_ARC_LEVEL) * 100),
         general_failure: 0,
         general_failure_count: 5,
@@ -106,23 +198,14 @@ function publishD4i(address: number) {
         thermal_shutdown: 0,
         thermal_shutdown_count: 0,
       },
-      led: {
-        startup_count: 11792,
-        operating_time_s: 747782,
-        voltage_v: 1.7,
-        current_a: 0.592,
-        general_failure: 0,
-        general_failure_count: 253,
-        short_circuit: 0,
-        short_circuit_count: 6,
-        open_circuit: 0,
-        open_circuit_count: 253,
-        thermal_derating: 0,
-        thermal_derating_count: 1,
-        thermal_shutdown: 0,
-        thermal_shutdown_count: 5,
-        temperature_c: 40 + Math.floor(Math.random() * 10),
-      },
+      load_power: { value: loadW, unit: "W" },
+      bank_206_raw_hex:
+        "2000FF010055EE0055EE000BA393000BA3930012025000FD000A00FD0001000535",
+      bank_206_length: 33,
+      bank_206_version: 1,
+      sample_coherent: true,
+      sample_state: s.on ? "on" : "off",
+      led: ledBlock(address, s.on),
     };
   }
 

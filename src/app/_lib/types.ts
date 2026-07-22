@@ -1,3 +1,5 @@
+import type { D4iBlock } from "@/lib/d4i";
+
 export type ThemeMode = "light" | "dark" | "auto";
 
 export type ZoneStatus = "ok" | "warning" | "fault";
@@ -60,14 +62,29 @@ export interface D4iSnapshot {
   recordedAt: string | null;
 }
 
-/** `d4i_periodic` payload'ının ham gövdesi (yalnızca okunan alanlar tiplenir). */
+/**
+ * `d4i_periodic` payload'ının ham gövdesi. `driver`/`led` blokları sayı, metin
+ * ve boolean karışık taşır (`voltage_estimated_v`, `general_failure_count_text`,
+ * `voltage_plausible`…), bu yüzden `D4iBlock` ile okunur — değer çekmek için
+ * `lib/d4i.ts` daraltıcılarını (`pickNumber`, `readMeasurement`) kullan.
+ */
 export interface D4iRaw {
   d4i?: {
-    driver?: Record<string, number | null>;
-    led?: Record<string, number | null>;
-    energy?: { value?: number | null; unit?: string | null };
-    power?: { value?: number | null; unit?: string | null };
+    driver?: D4iBlock;
+    led?: D4iBlock;
+    energy?: D4iMetric;
+    power?: D4iMetric;
+    /** LED'e giden yük gücü — şebekeden çekilen `power`'dan ayrıdır. */
+    load_power?: D4iMetric;
+    /** Teknik detay alanları (bank_206_raw_hex, sample_state, …). */
+    [key: string]: unknown;
   };
+}
+
+interface D4iMetric {
+  value?: number | null;
+  unit?: string | null;
+  scale_exponent?: number | null;
 }
 
 /**

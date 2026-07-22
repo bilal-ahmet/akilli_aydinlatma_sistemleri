@@ -191,10 +191,14 @@ hatalarda hangi lamba olduğunu göstermek için).
   },
   "d4i_supported": true,
   "d4i": {
-    "energy": { "value": 9820.154, "unit": "Wh" },
-    "power":  { "value": 47.3, "unit": "W" },
-    "driver": { "temperature_c": 52, "input_voltage_v": 232, "operating_time_s": 1685203, "…": "arıza sayaçları" },
-    "led":    { "voltage_v": 1.7, "current_a": 0.592, "temperature_c": -7, "…": "arıza sayaçları" }
+    "energy": { "value": 9971.068, "unit": "Wh" },
+    "power":  { "value": 47.4, "unit": "W" },
+    "load_power": { "value": 39, "unit": "W" },
+    "driver": { "temperature_c": 54, "input_voltage_v": 229, "operating_time_s": 1712344,
+                "output_current_percent": 85, "startup_count": 87, "…": "arıza sayaçları" },
+    "led":    { "voltage_v": null, "voltage_reported_v": 1.8, "voltage_estimated_v": 65.878,
+                "…": "ölçüm doğrulama + arıza sayaçları" },
+    "bank_206_raw_hex": "2000FF01…", "sample_coherent": true, "sample_state": "on"
   }
 }
 ```
@@ -204,8 +208,32 @@ hatalarda hangi lamba olduğunu göstermek için).
   (`level/254×100`) — firmware `dim` değerini de doğrusal ölçeklediği için.
 - DALI sorgu yanıtları üç durumlu: `255` (evet), `0` (hayır), `null` (yanıt yok).
 - `d4i_supported: false` ise `d4i` bloğu gönderilmez; `status` bloğu yine gelir.
+- `power` şebekeden **çekilen**, `load_power` LED'e giden **yük** gücüdür.
 - Raporun tamamı `d4i_telemetry` tablosunda saklanır (ham `d4i` bloğu dahil) ve
   cihaz modalindeki "D4i telemetrisi" panelinde gösterilir.
+
+#### Ölçüm doğrulama (LED bloğu)
+
+Sürücü güvenmediği ölçümü `null`'a çeker; yanına ham ve — hesaplayabiliyorsa —
+tahmini değeri koyar:
+
+| Alan | Anlamı | Dashboard |
+|---|---|---|
+| `voltage_v` / `current_a` / `temperature_c` | **doğrulanmış** değer (yoksa `null`) | düz yazılır: `63,3 V` |
+| `*_estimated_*` | sürücünün tahmini | `≈65,9 V` |
+| `*_reported_*` | ham ölçüm | yalnızca "Teknik detay"da |
+| `*_plausible: false` | ham değer doğrulanamadı | `0,592 A *` + dipnot |
+| `*_implausibility_reason`, `*_estimation_reason` | sebep kodu | Türkçeye çevrilir (`src/lib/d4i.ts`) |
+| `<key>_count_saturated` + `<key>_count_text` | sayaç tavana ulaştı | `253+` |
+
+Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → ham. Yalnızca
+`voltage_v` gönderen eski firmware ilk kuraldan geçtiği için **geriye uyumludur**.
+
+> `d4i_telemetry.led_voltage_v / led_current_a / led_temperature_c` sütunları
+> yalnızca **doğrulanmış** değeri taşır; doğrulama başarısızsa NULL kalırlar.
+> Panel ölçümleri bu yüzden sütunlardan değil ham `raw` bloğundan okur.
+> `bank_206_*`, ölçek üsleri ve `*_available/plausible` alanları ana ekranda
+> değil, lamba kartının katlanır "Teknik detay" bölümündedir.
 
 ### 5.3) Eski (ilk kontrat) rapor — hâlâ destekleniyor
 ```json
