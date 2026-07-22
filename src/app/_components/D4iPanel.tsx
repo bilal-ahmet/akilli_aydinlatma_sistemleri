@@ -93,6 +93,17 @@ function faultItems(
     .filter((x): x is FaultItem => x !== null);
 }
 
+/** Satırda gösterilecek bir arıza var mı — panel başlığındaki özet için. */
+function isFaulty(r: D4iSnapshot): boolean {
+  if (r.lampFailure || r.online === false) return true;
+  const drv = r.raw?.d4i?.driver;
+  const led = r.raw?.d4i?.led;
+  return (
+    faultItems(drv, DRIVER_FAULTS).some((i) => i.active) ||
+    faultItems(led, LED_FAULTS).some((i) => i.active)
+  );
+}
+
 function Chip({ item }: { item: FaultItem }) {
   return (
     <span
@@ -118,19 +129,22 @@ function Faults({
   block: Record<string, number | null> | undefined;
   pairs: Array<[string, string]>;
 }) {
-  const [open, setOpen] = useState(false);
+  // null = kullanıcı dokunmadı; o durumda gizli kalan aktif bir arıza varsa
+  // liste kendiliğinden açılır (arıza gelir gelmez görünür olmalı).
+  const [manual, setManual] = useState<boolean | null>(null);
   const items = faultItems(block, pairs);
   if (items.length === 0) return null;
 
   const general = items[0];
   const rest = items.slice(1);
   const activeRest = rest.filter((i) => i.active).length;
+  const open = manual ?? activeRest > 0;
 
   return (
     <div className="mt-2">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setManual(!open)}
         aria-expanded={open}
         disabled={rest.length === 0}
         className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-sm transition-colors ${
@@ -184,29 +198,61 @@ export function D4iPanel({
   rows,
   names,
   loading,
+  updatedAt,
   onRefresh,
 }: {
   rows: D4iSnapshot[];
   /** Kanal → dashboard'da girilen lamba adı (yoksa "Lamba <ch>" kullanılır). */
   names: Map<number, string | null>;
   loading: boolean;
+  /** Verinin en son çekildiği an (ms) — canlı tazelemenin çalıştığını gösterir. */
+  updatedAt: number | null;
   onRefresh: () => void;
 }) {
+  const faulty = rows.filter(isFaulty).length;
+
   return (
     <div className="mt-5">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-base font-semibold text-text">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-text">
           D4i telemetrisi{" "}
           <span className="text-sm font-normal text-muted">({rows.length} lamba)</span>
+          {faulty > 0 ? (
+            <span className="rounded-md bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
+              {faulty} lambada arıza
+            </span>
+          ) : null}
         </h3>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-text disabled:opacity-50"
-        >
-          {loading ? "Yükleniyor…" : "Yenile"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Cihazdan her yeni rapor geldiğinde panel kendiliğinden tazelenir. */}
+          <span
+            className="flex items-center gap-1.5 text-xs text-muted"
+            title={
+              updatedAt
+                ? `Son güncelleme: ${new Date(updatedAt).toLocaleTimeString("tr-TR")} — cihazdan yeni rapor geldikçe otomatik yenilenir`
+                : "Cihazdan yeni rapor geldikçe otomatik yenilenir"
+            }
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+            </span>
+            canlı
+            {updatedAt ? (
+              <span className="hidden font-mono sm:inline">
+                {new Date(updatedAt).toLocaleTimeString("tr-TR")}
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-text disabled:opacity-50"
+          >
+            {loading ? "Yükleniyor…" : "Yenile"}
+          </button>
+        </div>
       </div>
 
       {rows.length === 0 ? (
@@ -222,7 +268,12 @@ export function D4iPanel({
             const led = r.raw?.d4i?.led;
             const name = names.get(r.channel) || `Lamba ${r.channel}`;
             return (
-              <div key={r.channel} className="rounded-xl border border-border bg-panel-2 p-3.5">
+              <div
+                key={r.channel}
+                className={`rounded-xl border bg-panel-2 p-3.5 ${
+                  isFaulty(r) ? "border-danger/50" : "border-border"
+                }`}
+              >
                 <div className="mb-2.5 flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-text">{name}</span>
                   <span className="font-mono text-xs text-muted">ch{r.channel}</span>

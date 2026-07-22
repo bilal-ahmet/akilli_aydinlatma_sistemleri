@@ -16,6 +16,12 @@ import { D4iPanel } from "./D4iPanel";
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
 
+/**
+ * Cihazdan rapor gelince D4i panelinin tazelenmesi bu kadar geciktirilir; aynı
+ * anda birden çok kanalın raporu düşerse tek fetch'te birleşir.
+ */
+const TELEMETRY_REFRESH_MS = 1200;
+
 /** Cihaz bazlı komut → POST /api/devices/:id/command. channel yoksa tüm cihaz. */
 async function sendDeviceCommand(
   deviceId: string,
@@ -59,9 +65,12 @@ export function DeviceControlModal({
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // D4i telemetrisi (kanal başına son rapor) — açılışta ve "Yenile" ile çekilir.
+  // D4i telemetrisi (kanal başına son rapor) — açılışta, cihazdan her yeni
+  // rapor geldiğinde (SSE) ve "Yenile" ile çekilir.
   const [telemetry, setTelemetry] = useState<D4iSnapshot[]>([]);
   const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [telemetryAt, setTelemetryAt] = useState<number | null>(null);
+  const telemetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cihazın son komut yanıtı hatası; SSE'den gelen ack ile canlı güncellenir.
   const [lastError, setLastError] = useState<string | null>(device.lastError);
@@ -119,20 +128,44 @@ export function DeviceControlModal({
       .finally(() => setLoading(false));
   }, [deviceId]);
 
-  useEffect(() => {
+  /**
+   * Telemetriyi arka planda tazeler — "Yükleniyor…" göstergesini KENDİSİ
+   * açmaz (canlı yenilemede butonun sürekli titrememesi için); manuel
+   * "Yenile" butonu bunu ayrıca `setTelemetryLoading(true)` ile yapar.
+   */
+  const loadTelemetry = useCallback(() => {
     fetchTelemetry(deviceId)
-      .then(setTelemetry)
+      .then((rows) => {
+        setTelemetry(rows);
+        setTelemetryAt(Date.now());
+      })
       .catch(() => {})
       .finally(() => setTelemetryLoading(false));
   }, [deviceId]);
 
-  function refreshTelemetry() {
-    setTelemetryLoading(true);
-    fetchTelemetry(deviceId)
-      .then(setTelemetry)
-      .catch(() => {})
-      .finally(() => setTelemetryLoading(false));
-  }
+  useEffect(() => {
+    loadTelemetry();
+  }, [loadTelemetry]);
+
+  /**
+   * Cihazdan yeni rapor geldiğinde paneli tazeler. Cihaz her DALI adresi için
+   * ayrı mesaj yayınladığından (bkz. handleD4i) art arda gelen kanal raporları
+   * tek fetch'te birleşsin diye kısa bir pencere beklenir.
+   */
+  const scheduleTelemetryRefresh = useCallback(() => {
+    if (telemetryTimer.current) return; // tazeleme zaten planlı
+    telemetryTimer.current = setTimeout(() => {
+      telemetryTimer.current = null;
+      loadTelemetry();
+    }, TELEMETRY_REFRESH_MS);
+  }, [loadTelemetry]);
+
+  useEffect(() => {
+    const timer = telemetryTimer;
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
 
   // ── Canlı durum (SSE): bu cihaza ait event'leri rafine et ──
   const onLive = useCallback(
@@ -144,6 +177,10 @@ export function DeviceControlModal({
         setLastError(e.error ?? null);
         return;
       }
+      // Cihazın periyodik raporu: D4i paneli DB'den okuduğu için event'in
+      // kendisi arıza ayrıntısını taşımaz — paneli tazele. Aşağıdaki in-flight
+      // guard'ı yalnızca optimistic UI state'i içindir, tazelemeyi kapsamaz.
+      if (e.kind === "telemetry") scheduleTelemetryRefresh();
       const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
       if ((pendingRef.current.get(seqKey) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
       if (typeof e.seq === "number") {
@@ -168,7 +205,7 @@ export function DeviceControlModal({
         if (typeof e.brightness === "number") setDeviceBrightness(e.brightness);
       }
     },
-    [deviceId],
+    [deviceId, scheduleTelemetryRefresh],
   );
   useLiveStatus(onLive);
 
@@ -515,7 +552,11 @@ export function DeviceControlModal({
           rows={telemetry}
           names={fixtureNames}
           loading={telemetryLoading}
-          onRefresh={refreshTelemetry}
+          updatedAt={telemetryAt}
+          onRefresh={() => {
+            setTelemetryLoading(true);
+            loadTelemetry();
+          }}
         />
       </Modal>
 
