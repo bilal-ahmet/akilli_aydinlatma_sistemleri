@@ -21,7 +21,6 @@ import {
   flagToBool,
   d4iIsOn,
   d4iHasFault,
-  BROADCAST_CHANNEL,
   type Action,
   type CommandAck,
   type CommandPayload,
@@ -463,10 +462,11 @@ export type CommandInput = {
 /**
  * ESP'ye giden komut payload'ı — minimal tutulur (LoRa'da binary olacak).
  *
- * `channel` HER komutta gönderilir: firmware `dim` ve `efekt` için zorunlu
- * tutuyor ("... ve channel (0..63 veya 255) gerekli"). Tek lamba hedefi yoksa
- * DALI broadcast adresi (255) yazılır — API kontratında `channel` yokluğu
- * "tüm cihaz" demeye devam eder, çeviri yalnızca burada yapılır.
+ * `channel` YALNIZCA tek lamba hedeflendiğinde gönderilir (0-63). Toplu
+ * komutta (tüm cihaz / bölge / tüm sistem) alan payload'a HİÇ konmaz;
+ * cihaz alanın yokluğundan "tüm lambalar"ı anlar. Bir dönem bunun için
+ * broadcast 255 gönderiliyordu — firmware artık reddediyor
+ * ("bilinmeyen action"), bu yüzden 255 kaldırıldı.
  *
  * `text` yalnızca doluysa eklenir: alan hiç gönderilmediğinde cihaz son
  * ayarlanan Mors metnini tekrar çalar, boş string göndermek bunu bozardı.
@@ -483,7 +483,11 @@ function buildPayload({ action, value, number, channel, text }: CommandInput): s
     ...(value != null ? { value } : {}),
     ...(number != null ? { number } : {}),
     ...(text ? { text } : {}),
-    ...(fx?.allLamps ? {} : { channel: channel ?? BROADCAST_CHANNEL }),
+    // `channel` YALNIZCA tek lamba hedeflenmişse konur. Toplu komutta (tüm
+    // cihaz / bölge / tüm sistem) alan hiç gönderilmez — firmware broadcast
+    // için 255'i kabul etmiyor, alanın yokluğunu bekliyor. Tüm hattı süren
+    // efektler zaten kanal kabul etmez.
+    ...(channel != null && !fx?.allLamps ? { channel } : {}),
   };
   return JSON.stringify(payload);
 }

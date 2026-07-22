@@ -20,7 +20,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
 import { effectByNumber, EFFECT_MAX_NUMBER, MORSE_TEXT_MAX } from "@/lib/effects";
-import { BROADCAST_CHANNEL, MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
+import { MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
 
 const MAC = (process.argv[2] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
@@ -135,26 +135,25 @@ function publishD4i(address: number) {
 /** Firmware sınırı: aynı anda en fazla bu kadar kanalda efekt çalışabilir. */
 const EFFECT_SLOTS = 4;
 
-/** Komutun hedeflediği adresler: 255 = broadcast, aksi halde tek adres. */
-function targets(channel: number): number[] {
-  return channel === BROADCAST_CHANNEL ? [...channels.keys()] : [channel];
+/**
+ * Komutun hedeflediği adresler: `channel` YOKSA cihazdaki tüm lambalar, varsa
+ * yalnızca o adres. Broadcast için ayrı bir değer (eski 255) yoktur — alanın
+ * kendisi opsiyoneldir.
+ */
+function targets(channel?: number): number[] {
+  return channel === undefined ? [...channels.keys()] : [channel];
 }
 
-/** Efekt hedefi: `channel` yoksa (tüm hattı süren efekt) bütün adresler. */
-function effectTargets(channel?: number): number[] {
-  return channel === undefined ? [...channels.keys()] : targets(channel);
+/** Komut var olmayan bir DALI adresini hedefliyorsa true. */
+function channelMissing(channel?: number): boolean {
+  return channel !== undefined && !channels.has(channel);
 }
 
-/** Komut var olmayan bir DALI adresini hedefliyorsa hata metnini döner. */
-function channelMissing(channel: number): boolean {
-  return channel !== BROADCAST_CHANNEL && !channels.has(channel);
-}
-
-function validChannel(c: unknown): c is number {
+/** `channel` ya hiç gelmez (tüm lambalar) ya da geçerli bir DALI adresidir. */
+function validChannel(c: unknown): c is number | undefined {
   return (
-    typeof c === "number" &&
-    Number.isInteger(c) &&
-    ((c >= 0 && c <= MAX_CHANNEL) || c === BROADCAST_CHANNEL)
+    c === undefined ||
+    (typeof c === "number" && Number.isInteger(c) && c >= 0 && c <= MAX_CHANNEL)
   );
 }
 
@@ -187,7 +186,7 @@ client.on("message", (topic, raw) => {
   const { action, value, number, channel, text } = cmd;
   if (action === undefined) return ack("action alani yok");
   if (typeof action !== "string") return ack("action string degil");
-  const scope = channel === BROADCAST_CHANNEL ? "tüm kanallar" : `ch${channel}`;
+  const scope = channel === undefined ? "tüm kanallar" : `ch${channel}`;
 
   if (action === "on" || action === "off") {
     if (!validChannel(channel)) return ack("bilinmeyen action");
@@ -211,7 +210,7 @@ client.on("message", (topic, raw) => {
   if (action === "dim") {
     if (typeof value !== "number" || value < 0 || value > 100 || !validChannel(channel)) {
       console.warn(`◀ dim reddedildi (value=${value} channel=${channel})`);
-      return ack("dim icin value (0..100) ve channel (0..63 veya 255) gerekli");
+      return ack("dim icin value (0..100) ve channel (0..63) gerekli");
     }
     if (channelMissing(channel)) {
       console.warn(`◀ dim reddedildi: ch${channel} hatta yok`);
@@ -233,7 +232,7 @@ client.on("message", (topic, raw) => {
   if (action === "efekt") {
     if (typeof number !== "number" || number < 0 || number > EFFECT_MAX_NUMBER) {
       console.warn(`◀ efekt reddedildi (number=${number})`);
-      return ack("efekt icin number (0..14) ve channel (0..63 veya 255) gerekli");
+      return ack("efekt icin number (0..14) ve channel (0..63) gerekli");
     }
 
     const fx = effectByNumber(number);
@@ -251,7 +250,7 @@ client.on("message", (topic, raw) => {
       }
     } else if (!validChannel(channel)) {
       console.warn(`◀ efekt reddedildi (channel=${channel})`);
-      return ack("efekt icin number (0..14) ve channel (0..63 veya 255) gerekli");
+      return ack("efekt icin number (0..14) ve channel (0..63) gerekli");
     }
 
     // Hattaki gerçek adres mi? (broadcast hariç)
@@ -262,7 +261,7 @@ client.on("message", (topic, raw) => {
 
     // Aynı anda en fazla 4 kanalda efekt çalışabilir (firmware slot sınırı).
     const wouldRun = new Set([...channels.entries()].filter(([, s]) => s.fx).map(([a]) => a));
-    if (number > 0) for (const a of effectTargets(channel)) wouldRun.add(a);
+    if (number > 0) for (const a of targets(channel)) wouldRun.add(a);
     if (wouldRun.size > EFFECT_SLOTS) {
       console.warn(`◀ efekt reddedildi: slot dolu (${wouldRun.size}/${EFFECT_SLOTS})`);
       return ack("efekt baslatilamadi (bos slot yok veya bellek yetersiz)");
@@ -276,7 +275,7 @@ client.on("message", (topic, raw) => {
       }
       morseText = text;
     }
-    for (const a of effectTargets(channel)) {
+    for (const a of targets(channel)) {
       const s = channels.get(a);
       if (!s) continue;
       s.fx = number === 0 ? null : number;
@@ -285,7 +284,7 @@ client.on("message", (topic, raw) => {
     const suffix = fx?.needsText ? ` "${morseText || "(metin ayarlanmadı)"}"` : "";
     console.log(`◀ efekt #${number} ${fx?.label ?? "durdur"}${suffix} (${via}, ${scope})`);
     ack();
-    for (const a of effectTargets(channel)) publishD4i(a);
+    for (const a of targets(channel)) publishD4i(a);
     return;
   }
 

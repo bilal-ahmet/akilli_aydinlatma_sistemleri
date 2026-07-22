@@ -15,7 +15,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
 import { effectByNumber } from "@/lib/effects";
-import { BROADCAST_CHANNEL } from "@/types/lighting";
+import { MAX_CHANNEL } from "@/types/lighting";
 
 const ONLY = process.argv[2]?.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
 // "+/cmd" tüm Meven:<x>/cmd topic'lerini kapsar (MAC, bölge slug'ı ve "all").
@@ -38,6 +38,21 @@ client.on("connect", () => {
   });
 });
 
+/**
+ * Komutun kapsamı: `channel` YOKSA cihazın tüm lambaları, varsa tek lamba.
+ * Broadcast için 255 göndermek YASAK — firmware "bilinmeyen action" döner.
+ */
+function scopeNote(channel: unknown): string {
+  if (channel === undefined) return "✓ channel yok → cihazdaki tüm lambalar";
+  if (typeof channel !== "number" || !Number.isInteger(channel)) {
+    return `✗ HATA: channel sayı değil (${String(channel)})`;
+  }
+  if (channel < 0 || channel > MAX_CHANNEL) {
+    return `✗ HATA: channel ${channel} aralık dışı — 0-${MAX_CHANNEL} olmalı (255 broadcast KALDIRILDI)`;
+  }
+  return `✓ tek lamba → channel ${channel}`;
+}
+
 /** Payload'ı kontrata göre denetle — beklenmedik bir şey varsa işaretle. */
 function audit(p: Record<string, unknown>): string[] {
   const notes: string[] = [];
@@ -57,8 +72,8 @@ function audit(p: Record<string, unknown>): string[] {
     } else {
       notes.push(
         typeof channel === "number"
-          ? `✓ "${fx.label}" tek lamba → channel ${channel === BROADCAST_CHANNEL ? "255 (broadcast)" : channel}`
-          : `⚠ "${fx.label}" için channel yok — cihaz reddedebilir`,
+          ? `✓ "${fx.label}" tek lambaya → channel ${channel}`
+          : `✓ "${fx.label}" tüm lambalara → channel yok (doğru)`,
       );
     }
     if (fx?.needsText) {
@@ -66,9 +81,9 @@ function audit(p: Record<string, unknown>): string[] {
     }
   } else if (action === "dim") {
     if (typeof value !== "number") notes.push("✗ HATA: dim'de value yok");
-    if (typeof channel !== "number") notes.push("✗ HATA: dim'de channel yok (cihaz reddeder)");
+    notes.push(scopeNote(channel));
   } else if (action === "on" || action === "off") {
-    if (typeof channel !== "number") notes.push("⚠ on/off'ta channel yok");
+    notes.push(scopeNote(channel));
   } else {
     notes.push(`⚠ bilinmeyen action: ${String(action)}`);
   }

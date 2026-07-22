@@ -79,20 +79,22 @@ const EXACT: Record<string, Entry> = {
 
 /** Değişken içeren (sayı taşıyan) metinler. */
 const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => Entry }> = [
+  // `veya 255` kısmı opsiyonel: broadcast 255 kaldırıldıktan sonra firmware
+  // metni "(0..63)" olarak kısaldı, eski sürümlerdeki metin de eşleşsin.
   {
-    re: /^dim icin value \(0\.\.100\) ve channel \(0\.\.63 veya 255\) gerekli$/,
+    re: /^dim icin value \(0\.\.100\) ve channel \(0\.\.63( veya 255)?\) gerekli$/,
     build: () => ({
       code: "dim-args",
       title: "Dim komutu eksik",
-      cause: "`value` (0-100) ya da `channel` (0-63 / 255) eksik veya aralık dışı.",
+      cause: "`value` (0-100) eksik ya da `channel` aralık dışı (0-63).",
     }),
   },
   {
-    re: /^efekt icin number \(0\.\.(\d+)\) ve channel \(0\.\.63 veya 255\) gerekli$/,
+    re: /^efekt icin number \(0\.\.(\d+)\) ve channel \(0\.\.63( veya 255)?\) gerekli$/,
     build: (m) => ({
       code: "efekt-args",
       title: "Efekt komutu eksik",
-      cause: `\`number\` (0-${m[1]}) ya da \`channel\` (0-63 / 255) eksik veya aralık dışı.`,
+      cause: `\`number\` (0-${m[1]}) eksik ya da \`channel\` aralık dışı (0-63).`,
       hint: "Cihazın desteklemediği bir efekt numarası gönderilmiş olabilir.",
     }),
   },

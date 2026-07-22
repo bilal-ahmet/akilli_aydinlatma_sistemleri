@@ -99,16 +99,18 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 
 `action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
-`channel`: hedef **DALI kanalı (lamba)** — 0–63, ya da **255 = broadcast**
-(cihazdaki tüm lambalar). Bir ESP'ye birden çok bağımsız aydınlatma bağlanabilir;
-her biri bu kanal no ile ayrı sürülür.
+`channel`: hedef **DALI kanalı (lamba)** — 0–63. Bir ESP'ye birden çok bağımsız
+aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür.
 
-> **`channel` her komutta gönderilir.** Firmware `dim` ve `efekt`'i channel'sız
-> reddeder (`"dim icin value (0..100) ve channel (0..63 veya 255) gerekli"`). API
-> kontratında `channel` yokluğu hâlâ "tüm cihaz" demektir; 255'e çeviri yalnızca
-> `buildPayload`'da yapılır (`BROADCAST_CHANNEL`).
+> **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
+> "Tüm cihaz"ı, bölge, "Tüm Sistem") payload'da `channel` **bulunmaz**; cihaz
+> alanın yokluğundan tüm lambaları anlar. Bir dönem bunun için DALI broadcast
+> adresi (255) gönderiliyordu — **firmware bunu artık reddediyor**
+> (`"bilinmeyen action"`), o yüzden 255 tamamen kaldırıldı (`buildPayload`).
+> API kontratı zaten aynıydı: `channel` yokluğu = tüm cihaz. Sahada doğrulamak
+> için: `npm run watch:cmd`.
 
-**Efekt komutu:** `{ "action": "efekt", "number": 10, "channel": 255 }` — `number`
+**Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number`
 1-tabanlı efekt sıra no, donmuş katalog `src/lib/effects.ts`. `channel` ile tek
 lambaya da verilebilir. on/off/dim efekti durdurur. Bölge snapshot'ında
 `zones.active_fx`, lamba snapshot'ında `fixtures.active_fx` olarak optimistic
@@ -125,7 +127,7 @@ Katalog **iki aileye** ayrılır (tam tablo: `firmware/ESP32-ENTEGRASYON.md` §4
 > ilki doğru kalır — katalog dizisi de numara sırasında değil, aileye göre gruplu.
 
 **Çok lambalı efektler (`allLamps` + `minLamps`)**: `buildPayload` bu efektlerde
-`channel` alanını hiç koymaz (broadcast 255 bile hata döndürür),
+tek lamba seçilse bile `channel` alanını hiç koymaz,
 `DeviceControlModal` tek lamba seçili olsa da komutu cihazın tamamına gönderir,
 `EffectPicker` lambası yetmeyen efektleri pasif gösterir (`lampCount` yalnızca
 tek cihaz hedefinde bilinir; bölge/"tüm sistem"de efekt sunulur, yetersiz cihaz
@@ -133,7 +135,8 @@ kendi hatasını döner). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çal
 — dolduğunda `efekt baslatilamadi (bos slot yok…)` döner.
 
 **Mors efekti (no 22):** ek `text` alanı alır —
-`{ "action": "efekt", "number": 22, "text": "MERHABA", "channel": 255 }`.
+`{ "action": "efekt", "number": 22, "text": "MERHABA" }` (tek lambaya verilecekse
+ek olarak `"channel": 3`).
 Harf, rakam ve boşluk; en fazla 32 karakter (`MORSE_TEXT_MAX`). `text`
 gönderilmezse cihaz **son ayarlanan metni** tekrar çalar; bu yüzden boş string
 gönderilmez, alan payload'a hiç konmaz. Girdi `normalizeMorseText` ile indirgenir

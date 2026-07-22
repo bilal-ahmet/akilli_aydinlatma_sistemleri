@@ -13,11 +13,10 @@ export type Action = (typeof ACTIONS)[number];
 // 0-63 (DALI kısa adres). Komutta yoksa "tüm cihaz" (bütün lambalar) hedeflenir.
 export const MAX_CHANNEL = 63;
 
-// DALI broadcast adresi. Firmware `dim`/`efekt` komutlarında `channel`'ı ZORUNLU
-// tutar ("... ve channel (0..63 veya 255) gerekli"); tüm lambaları hedeflemek
-// için 255 gönderilir. API kontratında `channel` yokluğu = tüm cihaz demek
-// olmaya devam eder; 255'e çeviri yalnızca MQTT payload'ı üretilirken yapılır.
-export const BROADCAST_CHANNEL = 255;
+// TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME. Bir dönem broadcast için 255
+// gönderiliyordu; firmware bunu artık kabul etmiyor ("bilinmeyen action") —
+// toplu komutlarda (tüm cihaz / bölge / tüm sistem) alan payload'a konmaz.
+// API kontratı da baştan beri aynı: `channel` yokluğu = tüm cihaz.
 
 // ── DALI arc level ↔ yüzde ───────────────────────────────────
 // Cihaz parlaklığı 0-254 DALI seviyesi olarak raporlar (`status.actual_level`),
@@ -35,20 +34,15 @@ export function percentToLevel(percent: number): number {
 }
 
 // ── Command (Backend → ESP32) ────────────────────────────────
-// Yayınlanan komut payload'ı yalın: { action, value?, channel } veya
-// { action:"efekt", number, channel }. `channel` 0-63 tek lambayı, 255 tüm
-// lambaları hedefler (bkz. BROADCAST_CHANNEL).
+// Yayınlanan komut payload'ı yalın: { action, value? } veya
+// { action:"efekt", number }. `channel` VARSA tek lambayı (0-63) hedefler;
+// YOKSA cihazdaki tüm lambaları. Aradaki fark tek başına `channel` alanının
+// varlığıdır — 255 gibi bir broadcast değeri yoktur.
 export const commandPayloadSchema = z.object({
   action: z.enum(ACTIONS),
   value: z.number().int().min(0).max(100).optional(),
   number: z.number().int().min(0).max(EFFECT_MAX_NUMBER).optional(), // efekt no (0 = durdur)
-  channel: z
-    .number()
-    .int()
-    .refine((c) => (c >= 0 && c <= MAX_CHANNEL) || c === BROADCAST_CHANNEL, {
-      message: `channel 0-${MAX_CHANNEL} arası ya da ${BROADCAST_CHANNEL} (broadcast) olmalı`,
-    })
-    .optional(),
+  channel: z.number().int().min(0).max(MAX_CHANNEL).optional(),
   // Mors efektinin (no 22) çalacağı metin. Gönderilmezse cihaz son ayarlanan
   // metni tekrar çalar — bu yüzden boş metin gönderilmez, alan hiç konmaz.
   text: z.string().max(MORSE_TEXT_MAX).optional(),

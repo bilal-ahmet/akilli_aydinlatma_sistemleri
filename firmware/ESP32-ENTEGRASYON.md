@@ -47,26 +47,33 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 > Dashboard bu durumu bölge seçimi değiştiğinde uyarı olarak gösterir.
 
 ## 4) Komut payload (gelen, cmd)
-```json
-{ "action": "dim", "value": 75, "channel": 255 }
-```
+
+Tek lamba (DALI adresi 3):
 ```json
 { "action": "on", "channel": 3 }
 ```
+Cihazdaki **tüm lambalar** — `channel` alanı hiç yok:
 ```json
-{ "action": "off", "channel": 255 }
+{ "action": "dim", "value": 75 }
+```
+```json
+{ "action": "off" }
 ```
 - `action`: `"on"` | `"off"` | `"dim"` | `"efekt"`
 - `value`: 0-100 (yalnız `dim`'de).
-- `channel`: DALI adresi **0-63**, ya da **255 = broadcast** (cihazdaki tüm
-  lambalar). Backend `channel`'ı **her komutta** gönderir; dashboard'da tek lamba
-  seçilmediyse 255 yazılır. (`dim` ve `efekt` firmware'de channel olmadan
-  reddedilir.)
+- `channel`: DALI adresi **0-63**. **Alan yoksa komut cihazdaki tüm lambalara
+  uygulanır.**
+
+> **⚠ Broadcast 255 KALDIRILDI.** Eskiden "tüm lambalar" için `"channel": 255`
+> gönderiliyordu; firmware bunu artık kabul etmiyor ve `bilinmeyen action`
+> döndürüyor. Toplu komutlarda (tüm cihaz / bölge / tüm sistem) backend artık
+> `channel` alanını payload'a **hiç koymuyor** (`buildPayload`, src/lib/mqtt.ts).
 
 ### Efekt komutu
 ```json
-{ "action": "efekt", "number": 10, "channel": 255 }
+{ "action": "efekt", "number": 10 }
 ```
+(tek lambaya verilecekse ek olarak `"channel": 3`)
 - `number`: **1-tabanlı** efekt sıra numarası. Firmware bunu fonksiyon dizisine
   indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
 - `on`/`off`/`dim` komutu gelince efekt durdurulur.
@@ -75,7 +82,7 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 
 #### Mors efekti (no 22) — `text` alanı
 ```json
-{ "action": "efekt", "number": 22, "text": "MERHABA", "channel": 255 }
+{ "action": "efekt", "number": 22, "text": "MERHABA" }
 ```
 - `text`: harf, rakam ve boşluk; **en fazla 32 karakter**.
 - `text` **gönderilmezse** cihaz son ayarlanan metni tekrar çalar. Backend bu
@@ -123,7 +130,7 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 | 27 | Doldur | 2 |
 | 28 | Rastgele lamba | 2 |
 
-Bu efektlerde komuta `channel` **konmaz** (broadcast 255 dahil), yoksa cihaz
+Bu efektlerde komuta `channel` **konmaz**, yoksa cihaz
 `chase efekti tum lambalari surer, channel gondermeyin` döner. Katalogda
 `allLamps: true` + `minLamps` ile işaretlidirler; backend `channel` alanını
 payload'a hiç koymaz, dashboard tek lamba seçili olsa bile komutu cihazın
@@ -152,9 +159,9 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 | `gecersiz json` | Mesaj JSON olarak ayrıştırılamadı | `invalid-json` |
 | `action alani yok` | `action` eksik | `missing-action` |
 | `action string degil` | `action` tipi yanlış | `invalid-action-type` |
-| `bilinmeyen action` | Cihaz bu action'ı tanımıyor | `unknown-action` |
-| `dim icin value (0..100) ve channel (0..63 veya 255) gerekli` | `value`/`channel` eksik veya aralık dışı | `dim-args` |
-| `efekt icin number (0..14) ve channel (0..63 veya 255) gerekli` | `number` eksik/aralık dışı | `efekt-args` |
+| `bilinmeyen action` | Cihaz bu action'ı tanımıyor — **kaldırılmış `"channel": 255` gönderildiğinde de bu döner** | `unknown-action` |
+| `dim icin value (0..100) ve channel (0..63) gerekli` | `value` eksik ya da `channel` aralık dışı | `dim-args` |
+| `efekt icin number (0..14) ve channel (0..63) gerekli` | `number` eksik/aralık dışı | `efekt-args` |
 | `d4i_read icin channel (0..63) gerekli` | `channel` eksik | `d4i-read-args` |
 | `bu channel DALI hattinda bulunamadi` | Hatta olmayan kanal (ör. 12) | `channel-not-found` |
 | `chase efekti tum lambalari surer, channel gondermeyin` | Çok lambalı efekte kanal verildi | `effect-no-channel` |
