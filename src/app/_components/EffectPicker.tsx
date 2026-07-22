@@ -182,7 +182,8 @@ export function EffectPicker({
         </div>
       ) : (
         <>
-          <div className="max-h-[55vh] overflow-y-auto pr-1">
+          {/* Kaydırma modal gövdesinde (bkz. Modal) — burada ayrı kutu açılmaz. */}
+          <div>
             <Section
               heading="Tek lamba"
               note="Seçili lambaya uygulanır"

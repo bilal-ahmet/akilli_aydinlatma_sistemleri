@@ -265,9 +265,16 @@ DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 ```
 GET    /api/devices/:deviceId/fixtures          → cihaza bağlı lambalar
 POST   /api/devices/:deviceId/fixtures          → manuel lamba ekle { channel, name? }
+PATCH  /api/devices/:deviceId/fixtures/:channel → isim / kanal güncelle { channel?, name? }
 DELETE /api/devices/:deviceId/fixtures/:channel → lamba kaydını sil
 GET    /api/devices/:deviceId/telemetry         → kanal başına son D4i raporu
 ```
+
+> **Lamba `channel`'ı = cihazın DALI adresi**, sadece bir etiket değil. PATCH ile
+> değiştirmek yalnızca yanlış girilmiş adresi düzeltmek içindir: eski adresin
+> D4i geçmişi eski `channel` altında kalır ve cihaz o adresi raporlamayı
+> sürdürürse satır `upsertFixture` ile yeniden oluşur. İsim (`name`) cihaz
+> raporlarında hiç ezilmez — upsert patch'i `name` taşımaz.
 
 ### Durum Okuma
 

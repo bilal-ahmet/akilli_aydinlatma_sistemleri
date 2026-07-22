@@ -305,6 +305,24 @@ export const fixtureCreateSchema = z.object({
 export type FixtureCreate = z.infer<typeof fixtureCreateSchema>;
 
 /**
+ * Lamba güncelleme — isim ve/veya kanal. Boş isim ismi temizler (null'a düşer).
+ *
+ * DİKKAT: `channel` cihazın DALI adresidir, sadece bir dashboard etiketi değil.
+ * Değiştirmek lambayı fiziksel olarak başka bir adrese yönlendirir; eski adrese
+ * ait D4i geçmişi eski kanalda kalır ve cihaz o adresi raporlamaya devam
+ * ederse satır yeniden oluşur. Yalnızca yanlış girilmiş adresi düzeltmek için.
+ */
+export const fixtureUpdateSchema = z
+  .object({
+    channel: z.number().int().min(0).max(MAX_CHANNEL).optional(),
+    name: z.string().trim().max(100).optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, {
+    message: "En az bir alan güncellenmeli",
+  });
+export type FixtureUpdate = z.infer<typeof fixtureUpdateSchema>;
+
+/**
  * SSE üzerinden dashboard'a iletilen canlı olay. MQTT status mesajından veya
  * komut publish anından (optimistic) türetilir.
  */

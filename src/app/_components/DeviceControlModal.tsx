@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceView, Fixture, D4iSnapshot } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
@@ -73,11 +73,13 @@ export function DeviceControlModal({
   // Efekt hedefi: "device" (tüm ESP) veya kanal no
   const [effectTarget, setEffectTarget] = useState<"device" | number | null>(null);
 
-  // Lamba ekleme formu
-  const [addOpen, setAddOpen] = useState(false);
-  const [newChannel, setNewChannel] = useState("");
-  const [newName, setNewName] = useState("");
-  const [addError, setAddError] = useState<string | null>(null);
+  // Lamba ekleme/düzenleme formu — aynı diyalog iki modda kullanılır.
+  const [form, setForm] = useState<{ mode: "add" } | { mode: "edit"; original: Fixture } | null>(
+    null,
+  );
+  const [formChannel, setFormChannel] = useState("");
+  const [formName, setFormName] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -271,30 +273,57 @@ export function DeviceControlModal({
     setEffectTarget(null);
   }
 
-  // ── Lamba ekle / sil ──────────────────────────────────────
-  async function submitAdd(e: React.FormEvent) {
+  // ── Lamba ekle / düzenle / sil ────────────────────────────
+  function openAddForm() {
+    setForm({ mode: "add" });
+    setFormChannel("");
+    setFormName("");
+    setFormError(null);
+  }
+
+  function openEditForm(f: Fixture) {
+    setForm({ mode: "edit", original: f });
+    setFormChannel(String(f.channel));
+    setFormName(f.name ?? "");
+    setFormError(null);
+  }
+
+  async function submitForm(e: React.FormEvent) {
     e.preventDefault();
-    const ch = Number(newChannel);
+    if (!form) return;
+    const ch = Number(formChannel);
     if (!Number.isInteger(ch) || ch < 0 || ch > MAX_CHANNEL) {
-      setAddError(`Kanal 0-${MAX_CHANNEL} arası bir sayı olmalı`);
+      setFormError(`Kanal 0-${MAX_CHANNEL} arası bir sayı olmalı`);
       return;
     }
     setSubmitting(true);
-    setAddError(null);
+    setFormError(null);
     try {
-      const res = await fetch(`/api/devices/${deviceId}/fixtures`, {
-        method: "POST",
+      const url =
+        form.mode === "add"
+          ? `/api/devices/${deviceId}/fixtures`
+          : `/api/devices/${deviceId}/fixtures/${form.original.channel}`;
+      const res = await fetch(url, {
+        method: form.mode === "add" ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: ch, name: newName.trim() || undefined }),
+        body: JSON.stringify(
+          form.mode === "add"
+            ? { channel: ch, name: formName.trim() || undefined }
+            : { channel: ch, name: formName.trim() },
+        ),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? `Hata (${res.status})`);
-      setFixtures((fs) => [...fs, j.data as Fixture].sort((a, b) => a.channel - b.channel));
-      setAddOpen(false);
-      setNewChannel("");
-      setNewName("");
+      const saved = j.data as Fixture;
+      setFixtures((fs) =>
+        (form.mode === "add"
+          ? [...fs, saved]
+          : fs.map((f) => (f.channel === form.original.channel ? saved : f))
+        ).sort((a, b) => a.channel - b.channel),
+      );
+      setForm(null);
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Bilinmeyen hata");
+      setFormError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
       setSubmitting(false);
     }
@@ -304,6 +333,13 @@ export function DeviceControlModal({
     setFixtures((fs) => fs.filter((f) => f.channel !== ch));
     fetch(`/api/devices/${deviceId}/fixtures/${ch}`, { method: "DELETE" }).catch(() => {});
   }
+
+  // Telemetri kanal no ile gelir; başlıklarda dashboard'da girilen lamba adını
+  // göstermek için kanal → isim eşlemesi.
+  const fixtureNames = useMemo(
+    () => new Map(fixtures.map((f) => [f.channel, f.name] as const)),
+    [fixtures],
+  );
 
   const effectTitle =
     effectTarget === "device"
@@ -320,18 +356,24 @@ export function DeviceControlModal({
 
   return (
     <>
-      <Modal open onClose={onClose} title={device.name || formatMac(deviceId)}>
-        <p className="-mt-2 mb-4 font-mono text-xs text-muted">
-          {formatMac(deviceId)}
-          {device.zoneName ? ` · ${device.zoneName}` : ""}
-        </p>
-
+      <Modal
+        open
+        onClose={onClose}
+        size="lg"
+        title={device.name || formatMac(deviceId)}
+        subtitle={
+          <span className="font-mono text-xs">
+            {formatMac(deviceId)}
+            {device.zoneName ? ` · ${device.zoneName}` : ""}
+          </span>
+        }
+      >
         {/* Cihazın son komut yanıtı hata ise: başarılı bir yanıt gelene kadar durur */}
         {lastError ? (
           (() => {
             const info = describeDeviceError(lastError);
             return (
-              <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+              <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
                 <p className="font-semibold">{info.title}</p>
                 <p className="mt-0.5">{info.cause}</p>
                 {info.hint ? <p className="mt-1 text-muted">{info.hint}</p> : null}
@@ -341,9 +383,9 @@ export function DeviceControlModal({
         ) : null}
 
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
-        <div className="rounded-xl border border-border bg-panel-2 p-3">
+        <div className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-sm font-semibold text-text">Tüm cihaz</span>
+            <span className="text-base font-semibold text-text">Tüm cihaz</span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -368,26 +410,24 @@ export function DeviceControlModal({
         </div>
 
         {/* Lambalar (DALI kanalları) */}
-        <div className="mt-4 mb-2 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-text">
-            Lambalar <span className="text-xs font-normal text-muted">({fixtures.length})</span>
+        <div className="mt-5 mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-base font-semibold text-text">
+            Lambalar <span className="text-sm font-normal text-muted">({fixtures.length})</span>
           </h3>
           <button
             type="button"
-            onClick={() => {
-              setAddError(null);
-              setAddOpen(true);
-            }}
-            className="inline-flex items-center gap-1 rounded-lg border border-glow/40 bg-glow/20 px-2.5 py-1 text-xs font-semibold text-text transition-colors hover:bg-glow/30"
+            onClick={openAddForm}
+            className="inline-flex items-center gap-1 rounded-lg border border-glow/40 bg-glow/20 px-3 py-1.5 text-sm font-semibold text-text transition-colors hover:bg-glow/30"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
               <path d="M12 5v14M5 12h14" />
             </svg>
             Lamba ekle
           </button>
         </div>
 
-        <div className="max-h-[38vh] space-y-2 overflow-y-auto pr-1">
+        {/* Kaydırma modal gövdesinde; burada ayrı bir scroll kutusu açılmaz. */}
+        <div className="space-y-2">
           {loading ? (
             <p className="py-3 text-sm text-muted">Yükleniyor…</p>
           ) : fixtures.length === 0 ? (
@@ -399,22 +439,20 @@ export function DeviceControlModal({
             fixtures.map((f) => {
               const fx = effectByNumber(f.activeFx);
               return (
-                <div key={f.channel} className="rounded-xl border border-border bg-panel-2 p-3">
+                <div key={f.channel} className="rounded-xl border border-border bg-panel-2 p-3.5">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[11px] text-muted">
-                        ch{f.channel}
-                      </span>
-                      <span className="truncate text-sm font-medium text-text">
+                      <span className="truncate text-sm font-semibold text-text">
                         {f.name || `Lamba ${f.channel}`}
                       </span>
+                      <span className="shrink-0 font-mono text-xs text-muted">ch{f.channel}</span>
                       {fx ? (
-                        <span className="shrink-0 rounded-md bg-glow/20 px-1.5 py-0.5 text-[10px] font-semibold text-glow">
+                        <span className="shrink-0 rounded-md bg-glow/20 px-2 py-0.5 text-xs font-semibold text-glow">
                           {fx.label}
                         </span>
                       ) : null}
                       {f.status === "fault" ? (
-                        <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                        <span className="shrink-0 rounded-md bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
                           arıza
                         </span>
                       ) : null}
@@ -429,6 +467,17 @@ export function DeviceControlModal({
                       >
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                           <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(f)}
+                        aria-label={`Kanal ${f.channel} düzenle`}
+                        title="Lambayı düzenle"
+                        className={iconBtn}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
                         </svg>
                       </button>
                       <button
@@ -462,27 +511,33 @@ export function DeviceControlModal({
         </div>
 
         {/* Sürücü / LED telemetrisi (d4i_periodic raporlarından) */}
-        <D4iPanel rows={telemetry} loading={telemetryLoading} onRefresh={refreshTelemetry} />
-
-        <div className="mt-5 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-text"
-          >
-            Kapat
-          </button>
-        </div>
+        <D4iPanel
+          rows={telemetry}
+          names={fixtureNames}
+          loading={telemetryLoading}
+          onRefresh={refreshTelemetry}
+        />
       </Modal>
 
-      {/* Lamba ekle */}
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Lamba ekle">
-        {addError ? (
-          <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-            {addError}
+      {/* Lamba ekle / düzenle */}
+      <Modal
+        open={form !== null}
+        onClose={() => setForm(null)}
+        title={form?.mode === "edit" ? "Lambayı düzenle" : "Lamba ekle"}
+        subtitle={
+          form?.mode === "edit" ? (
+            <span className="font-mono text-xs">
+              {form.original.name || `Lamba ${form.original.channel}`} · ch{form.original.channel}
+            </span>
+          ) : undefined
+        }
+      >
+        {formError ? (
+          <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+            {formError}
           </p>
         ) : null}
-        <form onSubmit={submitAdd} className="flex flex-col gap-4">
+        <form onSubmit={submitForm} className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted" htmlFor="fx-ch">
               Kanal (DALI adresi) *
@@ -493,10 +548,19 @@ export function DeviceControlModal({
               min={0}
               max={MAX_CHANNEL}
               className="w-full rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm text-text outline-none focus-visible:border-accent"
-              value={newChannel}
-              onChange={(e) => setNewChannel(e.target.value)}
+              value={formChannel}
+              onChange={(e) => setFormChannel(e.target.value)}
               placeholder={`0 - ${MAX_CHANNEL}`}
             />
+            {/* Kanal = cihazın DALI adresi; değiştirmek komutu başka lambaya yollar. */}
+            {form?.mode === "edit" && formChannel !== String(form.original.channel) ? (
+              <p className="mt-1.5 rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
+                Kanal cihazın DALI adresidir; değiştirirsen komutlar artık{" "}
+                <span className="font-mono">ch{formChannel || "?"}</span> adresindeki lambaya
+                gider. Eski adresin D4i geçmişi ch{form.original.channel} altında kalır ve cihaz
+                o adresi raporlamayı sürdürürse lamba listede yeniden belirir.
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted" htmlFor="fx-name">
@@ -505,25 +569,29 @@ export function DeviceControlModal({
             <input
               id="fx-name"
               className="w-full rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm text-text outline-none focus-visible:border-accent"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
               placeholder="Örn. Sol kol"
             />
+            <p className="mt-1 text-xs text-muted">
+              Lamba listesinde ve D4i telemetrisinde bu isim görünür. Boş bırakılırsa{" "}
+              <span className="font-mono">Lamba {formChannel || "<kanal>"}</span> yazılır.
+            </p>
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setAddOpen(false)}
+              onClick={() => setForm(null)}
               className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-text"
             >
               İptal
             </button>
             <button
               type="submit"
-              disabled={submitting || newChannel === ""}
+              disabled={submitting || formChannel === ""}
               className="rounded-lg border border-glow/40 bg-glow/20 px-4 py-2 text-sm font-semibold text-text transition-colors hover:bg-glow/30 disabled:opacity-50"
             >
-              {submitting ? "Kaydediliyor…" : "Ekle"}
+              {submitting ? "Kaydediliyor…" : form?.mode === "edit" ? "Kaydet" : "Ekle"}
             </button>
           </div>
         </form>
