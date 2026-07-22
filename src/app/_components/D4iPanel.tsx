@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import type { D4iSnapshot } from "@/app/_lib/types";
 import { MAX_ARC_LEVEL, levelToPercent } from "@/types/lighting";
 import { DRIVER_FAULTS, LED_FAULTS, isFlagActive, type FaultKey } from "@/lib/faults";
@@ -58,6 +57,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 interface FaultItem {
   label: string;
+  note?: string;
   active: boolean;
   count: number | null;
 }
@@ -68,11 +68,11 @@ function faultItems(
 ): FaultItem[] {
   if (!block) return [];
   return keys
-    .map(({ key, label }) => {
+    .map(({ key, label, note }): FaultItem | null => {
       const active = block[key];
       const count = block[`${key}_count`];
       if (typeof active !== "number" && typeof count !== "number") return null;
-      return { label, active: isFlagActive(active), count: count ?? null };
+      return { label, note, active: isFlagActive(active), count: count ?? null };
     })
     .filter((x): x is FaultItem => x !== null);
 }
@@ -88,23 +88,27 @@ function isFaulty(r: D4iSnapshot): boolean {
   );
 }
 
-function Chip({ item }: { item: FaultItem }) {
+/** Etiketin yanındaki açıklama işareti — üstüne gelince `note` görünür. */
+function InfoMark({ note }: { note: string }) {
   return (
     <span
-      className={`rounded-md px-2 py-1 text-xs ${
-        item.active ? "bg-danger/15 font-semibold text-danger" : "bg-panel text-muted"
-      }`}
-      title={item.active ? `${item.label}: aktif` : `${item.label}: geçmiş sayaç`}
+      title={note}
+      aria-label={note}
+      className="ml-1 inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-border text-[9px] font-bold leading-none text-muted align-text-top"
     >
-      {item.label}
-      {item.count !== null ? ` · ${tr0.format(item.count)}` : ""}
+      i
     </span>
   );
 }
 
 /**
- * Arıza özeti: kapalıyken yalnızca genel arıza (ve varsa aktif arıza sayısı)
- * görünür; tıklanınca kalan arıza bayrakları/sayaçları açılır.
+ * Arıza sayaçları — hepsi tek ızgarada, katlama yok. Sayaçlar birbirinden
+ * BAĞIMSIZDIR: `general_failure` sürücünün ayrı tuttuğu bir sayaçtır, yanındaki
+ * özel arızaların toplamı değildir (bkz. lib/faults.ts GENERAL_NOTE), bu yüzden
+ * biri diğerlerinin "özeti" gibi sunulmaz.
+ *
+ * Karmaşayı katlayarak değil, ağırlıkla çözüyoruz: aktif arıza kırmızı, sıfır
+ * sayaç sönük, dolu sayaç normal — göz doğrudan anlamlı olana gidiyor.
  */
 function Faults({
   block,
@@ -113,67 +117,59 @@ function Faults({
   block: Record<string, number | null> | undefined;
   keys: FaultKey[];
 }) {
-  // null = kullanıcı dokunmadı; o durumda gizli kalan aktif bir arıza varsa
-  // liste kendiliğinden açılır (arıza gelir gelmez görünür olmalı).
-  const [manual, setManual] = useState<boolean | null>(null);
   const items = faultItems(block, keys);
   if (items.length === 0) return null;
 
-  const general = items[0];
-  const rest = items.slice(1);
-  const activeRest = rest.filter((i) => i.active).length;
-  const open = manual ?? activeRest > 0;
+  const activeCount = items.filter((i) => i.active).length;
 
   return (
-    <div className="mt-2">
-      <button
-        type="button"
-        onClick={() => setManual(!open)}
-        aria-expanded={open}
-        disabled={rest.length === 0}
-        className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-sm transition-colors ${
-          general.active
-            ? "border-danger/40 bg-danger/10 text-danger"
-            : "border-border bg-panel text-muted hover:text-text"
-        } disabled:cursor-default disabled:hover:text-muted`}
-      >
-        <span className={general.active ? "font-semibold" : ""}>{general.label}</span>
-        <span className="font-mono text-text">
-          {general.count !== null ? tr0.format(general.count) : general.active ? "aktif" : "—"}
-        </span>
-        {activeRest > 0 && !open ? (
+    <div className="mt-3 rounded-lg border border-border bg-panel/60 p-2.5">
+      <div className="mb-2 flex items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Arıza sayaçları
+        </p>
+        {activeCount > 0 ? (
           <span className="rounded-md bg-danger/15 px-1.5 py-0.5 text-xs font-semibold text-danger">
-            {activeRest} aktif arıza
+            {activeCount} aktif
           </span>
-        ) : null}
-        {rest.length > 0 ? (
-          <span className="ml-auto flex items-center gap-1.5 text-xs">
-            {open ? "gizle" : `+${rest.length} arıza`}
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`transition-transform ${open ? "rotate-180" : ""}`}
-              aria-hidden
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </span>
-        ) : null}
-      </button>
+        ) : (
+          <span className="text-xs text-muted">· şu an aktif arıza yok</span>
+        )}
+      </div>
 
-      {open && rest.length > 0 ? (
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {rest.map((it) => (
-            <Chip key={it.label} item={it} />
-          ))}
-        </div>
-      ) : null}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+        {items.map((it) => (
+          <div key={it.label} className="min-w-0">
+            <dt
+              className={`flex items-center text-xs ${it.active ? "text-danger" : "text-muted"}`}
+            >
+              <span className="truncate">{it.label}</span>
+              {it.note ? <InfoMark note={it.note} /> : null}
+            </dt>
+            <dd
+              className={`font-mono text-sm ${
+                it.active
+                  ? "font-semibold text-danger"
+                  : it.count
+                    ? "text-text"
+                    : "text-muted/60"
+              }`}
+            >
+              {it.count !== null ? tr0.format(it.count) : "—"}
+              {it.active ? (
+                <span className="ml-1.5 rounded bg-danger/15 px-1 py-0.5 text-[10px] font-semibold uppercase">
+                  aktif
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      <p className="mt-2 text-xs text-muted">
+        Sayaçlar sürücünün ömrü boyunca birikir ve birbirinden bağımsızdır; sıfır
+        olmayan bir sayaç geçmişte yaşanmış arızayı gösterir, aktif arızayı değil.
+      </p>
     </div>
   );
 }

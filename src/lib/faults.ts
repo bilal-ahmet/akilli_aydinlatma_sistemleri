@@ -18,12 +18,22 @@ export function isFlagActive(v: number | null | undefined): boolean {
 export interface FaultKey {
   /** D4i bloğundaki alan adı (`general_failure` …). */
   key: string;
-  /** Panelde rozet üstünde görünen kısa etiket. */
+  /** Panelde sayacın üstünde görünen kısa etiket. */
   label: string;
+  /** Etiketin yanındaki ⓘ işaretinin açıklaması (tooltip). */
+  note?: string;
 }
 
+/**
+ * `general_failure`, sürücünün TUTTUĞU AYRI bir sayaçtır; yan yana duran özel
+ * arıza sayaçlarının toplamı değildir (üstelik sayaçlar tavana ulaşınca — saha
+ * örneklerinde 253 — saymayı bırakır). UI'da toplam sanılmasın diye not düşülür.
+ */
+const GENERAL_NOTE =
+  "Sürücünün kendi genel arıza sayacı — yandaki arızaların toplamı değildir.";
+
 export const DRIVER_FAULTS: FaultKey[] = [
-  { key: "general_failure", label: "Genel arıza" },
+  { key: "general_failure", label: "Genel arıza", note: GENERAL_NOTE },
   { key: "undervoltage_failure", label: "Düşük gerilim" },
   { key: "overvoltage_failure", label: "Aşırı gerilim" },
   { key: "power_limitation", label: "Güç sınırlama" },
@@ -32,7 +42,7 @@ export const DRIVER_FAULTS: FaultKey[] = [
 ];
 
 export const LED_FAULTS: FaultKey[] = [
-  { key: "general_failure", label: "Genel arıza" },
+  { key: "general_failure", label: "Genel arıza", note: GENERAL_NOTE },
   { key: "short_circuit", label: "Kısa devre" },
   { key: "open_circuit", label: "Açık devre" },
   { key: "thermal_derating", label: "Termal kısma" },
