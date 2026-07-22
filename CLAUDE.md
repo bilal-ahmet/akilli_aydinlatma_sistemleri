@@ -268,6 +268,7 @@ POST   /api/devices/:deviceId/fixtures          → manuel lamba ekle { channel,
 PATCH  /api/devices/:deviceId/fixtures/:channel → isim / kanal güncelle { channel?, name? }
 DELETE /api/devices/:deviceId/fixtures/:channel → lamba kaydını sil
 GET    /api/devices/:deviceId/telemetry         → kanal başına son D4i raporu
+GET    /api/devices/:deviceId/faults?limit=100  → arıza geçmişi (süren + çözülen)
 ```
 
 > **Lamba `channel`'ı = cihazın DALI adresi**, sadece bir etiket değil. PATCH ile
@@ -404,6 +405,39 @@ CREATE INDEX idx_d4i_telemetry_recorded_at ON d4i_telemetry(recorded_at DESC);
 > Cihaz kanal başına ~30 sn'de bir yayın yapar; tablo sınırsız büyür. İleride
 > saklama politikası (örn. 90 günden eskiyi sil) gerekecek.
 
+### `fault_events`
+
+Arıza **geçmişi** — epizot başına tek satır (başlangıç + çözülme anı).
+`resolved_at IS NULL` → arıza sürüyor.
+
+```sql
+CREATE TABLE fault_events (
+  id         BIGSERIAL PRIMARY KEY,
+  device_id  VARCHAR(100) NOT NULL,   -- MAC
+  channel    INTEGER,                 -- DALI adresi; NULL = cihaz seviyesi (komut hatası)
+  code       VARCHAR(60) NOT NULL,    -- lamp_failure | gear_failure | offline
+                                      -- | driver.<key> | led.<key> | command.<errorCode>
+  detail     VARCHAR(300),            -- ham hata metni (komut hatası)
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX idx_fault_events_device_started ON fault_events(device_id, started_at DESC);
+CREATE INDEX idx_fault_events_open ON fault_events(device_id, channel, resolved_at);
+```
+
+> **Neden ayrı tablo?** Arıza geçmişi `d4i_telemetry`'den türetilemez: cihaz
+> kanal başına ~30 sn'de bir rapor yazdığı için 7 günlük geçmiş bile yüz
+> binlerce satır taramak demek. Bu tabloya yalnızca **durum değişiminde**
+> yazılır (`src/lib/faultLog.ts` → `syncFaultEvents`): yeni görülen kod için
+> satır açılır, artık görülmeyen açık satır kapatılır. Aynı arıza tekrar
+> raporlandığında hiçbir yazma olmaz.
+>
+> Arıza kodu kataloğu (bayrak adları + okunur başlıklar) `src/lib/faults.ts` —
+> hem D4i panelindeki rozetler hem geçmiş listesi aynı listeden okur.
+> Komut hataları cihaz seviyesine (`channel = NULL`) yazılır; yanıt hangi
+> lambaya ait olduğunu taşımaz. Sonraki `{"status":"ok"}` yanıtı açık komut
+> hatasını kapatır (`devices.last_error` ile aynı semantik).
+
 ### `commands`
 
 ```sql
@@ -511,7 +545,9 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   │   ├── page.tsx                      # dashboard (DB'den zone okur)
 │   │   ├── _components/                  # UI (DashboardClient, ZoneCard, ...)
 │   │   │   ├── ErrorToasts.tsx           # cihaz komut hatası bildirimleri (SSE)
+│   │   │   ├── DeviceControlModal.tsx    # cihaz paneli — Kontrol/Telemetri/Arıza geçmişi sekmeleri
 │   │   │   ├── D4iPanel.tsx              # sürücü/LED telemetri detayı
+│   │   │   ├── FaultHistory.tsx          # arıza geçmişi (fault_events)
 │   │   ├── _lib/
 │   │   │   ├── useLiveStatus.ts          # SSE (EventSource) hook
 │   │   │   ├── mockData.ts / types.ts / format.ts
@@ -524,6 +560,8 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   ├── lib/
 │   │   ├── mqtt.ts                       # MQTT singleton (TLS) + publishCommand
 │   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
+│   │   ├── faults.ts                     # arıza kodu kataloğu (saf; client de kullanır)
+│   │   ├── faultLog.ts                   # fault_events senkronu (yalnız değişimde yazar)
 │   │   ├── db/{schema,index,seed}.ts     # Drizzle
 │   │   ├── env.ts  adapters.ts  api/respond.ts
 │   └── types/lighting.ts                 # payload tipleri + zod kontrat

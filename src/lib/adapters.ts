@@ -1,4 +1,9 @@
-import type { ZoneRow, FixtureRow, D4iTelemetryRow } from "@/lib/db/schema";
+import type {
+  ZoneRow,
+  FixtureRow,
+  D4iTelemetryRow,
+  FaultEventRow,
+} from "@/lib/db/schema";
 import type {
   Zone,
   ZoneStatus,
@@ -6,6 +11,7 @@ import type {
   Fixture,
   D4iSnapshot,
   D4iRaw,
+  FaultEvent,
 } from "@/app/_lib/types";
 
 /**
@@ -94,5 +100,17 @@ export function toFixture(row: FixtureRow): Fixture {
     activeFx: row.activeFx ?? null,
     status: row.status,
     lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,
+  };
+}
+
+/** DB `fault_events` satırını frontend `FaultEvent` tipine çevirir. */
+export function toFaultEvent(row: FaultEventRow): FaultEvent {
+  return {
+    id: row.id,
+    channel: row.channel,
+    code: row.code,
+    detail: row.detail,
+    startedAt: row.startedAt.toISOString(),
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
   };
 }

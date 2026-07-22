@@ -70,6 +70,20 @@ export interface D4iRaw {
   };
 }
 
+/**
+ * Bir arıza epizodu: başladığı an + (çözüldüyse) çözüldüğü an. `resolvedAt`
+ * null ise arıza sürüyor. Kod → okunur başlık: `lib/faults.ts` faultLabel.
+ */
+export interface FaultEvent {
+  id: number;
+  /** DALI kanalı (lamba); null = cihaz seviyesi (komut hatası). */
+  channel: number | null;
+  code: string;
+  detail: string | null;
+  startedAt: string;
+  resolvedAt: string | null;
+}
+
 /** Bir ESP'ye bağlı tek bağımsız aydınlatma (DALI kanalı). */
 export interface Fixture {
   id: string;

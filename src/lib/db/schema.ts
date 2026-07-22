@@ -145,6 +145,33 @@ export const d4iTelemetry = pgTable(
   ],
 );
 
+/**
+ * Arıza geçmişi — bir arızanın BAŞLANGICI ve ÇÖZÜLDÜĞÜ an, epizot başına tek
+ * satır. `d4i_telemetry` her raporu (kanal başına ~30 sn) sakladığı için arıza
+ * geçmişi oradan türetilemez: 7 günlük geçmiş bile yüz binlerce satır tarar.
+ * Bu tabloya yalnızca DURUM DEĞİŞİMİNDE yazılır (bkz. lib/faultLog.ts).
+ *
+ * `resolved_at IS NULL` → arıza hâlâ sürüyor. Kod kataloğu: lib/faults.ts.
+ */
+export const faultEvents = pgTable(
+  "fault_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deviceId: varchar("device_id", { length: 100 }).notNull(), // MAC
+    // DALI adresi (lamba). NULL = cihaz seviyesi arıza (komut hatası).
+    channel: integer("channel"),
+    code: varchar("code", { length: 60 }).notNull(), // "lamp_failure", "driver.thermal_shutdown", "command.channel-not-found"…
+    detail: varchar("detail", { length: 300 }), // ham hata metni (komut hatası) vb.
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_fault_events_device_started").on(t.deviceId, t.startedAt.desc()),
+    // Açık arızaları çözmek için: her raporda (deviceId, channel, resolvedAt IS NULL) sorgulanır.
+    index("idx_fault_events_open").on(t.deviceId, t.channel, t.resolvedAt),
+  ],
+);
+
 export const commands = pgTable("commands", {
   id: uuid("id").primaryKey().defaultRandom(),
   requestId: uuid("request_id").notNull().unique(), // idempotency
@@ -163,4 +190,5 @@ export type DeviceRow = typeof devices.$inferSelect;
 export type FixtureRow = typeof fixtures.$inferSelect;
 export type DeviceStatusRow = typeof deviceStatus.$inferSelect;
 export type D4iTelemetryRow = typeof d4iTelemetry.$inferSelect;
+export type FaultEventRow = typeof faultEvents.$inferSelect;
 export type CommandRow = typeof commands.$inferSelect;

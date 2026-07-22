@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeviceView, Fixture, D4iSnapshot } from "@/app/_lib/types";
+import type { DeviceView, Fixture, D4iSnapshot, FaultEvent } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { effectByNumber } from "@/lib/effects";
@@ -12,6 +12,7 @@ import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
 import { D4iPanel } from "./D4iPanel";
+import { FaultHistory } from "./FaultHistory";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
@@ -44,6 +45,15 @@ function fetchTelemetry(deviceId: string): Promise<D4iSnapshot[]> {
     .then((j) => (j.data ?? []) as D4iSnapshot[]);
 }
 
+/** Arıza geçmişi (süren + çözülen) → GET /api/devices/:id/faults. */
+function fetchFaults(deviceId: string): Promise<FaultEvent[]> {
+  return fetch(`/api/devices/${deviceId}/faults`)
+    .then((r) => r.json())
+    .then((j) => (j.data ?? []) as FaultEvent[]);
+}
+
+type Tab = "control" | "telemetry" | "faults";
+
 const iconBtn =
   "shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text";
 
@@ -70,7 +80,13 @@ export function DeviceControlModal({
   const [telemetry, setTelemetry] = useState<D4iSnapshot[]>([]);
   const [telemetryLoading, setTelemetryLoading] = useState(true);
   const [telemetryAt, setTelemetryAt] = useState<number | null>(null);
-  const telemetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Arıza geçmişi (fault_events) — telemetri ile aynı ritimde tazelenir.
+  const [faults, setFaults] = useState<FaultEvent[]>([]);
+  const [faultsLoading, setFaultsLoading] = useState(true);
+
+  const [tab, setTab] = useState<Tab>("control");
 
   // Cihazın son komut yanıtı hatası; SSE'den gelen ack ile canlı güncellenir.
   const [lastError, setLastError] = useState<string | null>(device.lastError);
@@ -143,25 +159,37 @@ export function DeviceControlModal({
       .finally(() => setTelemetryLoading(false));
   }, [deviceId]);
 
+  /** Arıza geçmişi — arıza satırı yalnızca durum değişiminde yazılır. */
+  const loadFaults = useCallback(() => {
+    fetchFaults(deviceId)
+      .then(setFaults)
+      .catch(() => {})
+      .finally(() => setFaultsLoading(false));
+  }, [deviceId]);
+
   useEffect(() => {
     loadTelemetry();
-  }, [loadTelemetry]);
+    loadFaults();
+  }, [loadTelemetry, loadFaults]);
 
   /**
-   * Cihazdan yeni rapor geldiğinde paneli tazeler. Cihaz her DALI adresi için
-   * ayrı mesaj yayınladığından (bkz. handleD4i) art arda gelen kanal raporları
-   * tek fetch'te birleşsin diye kısa bir pencere beklenir.
+   * Cihazdan yeni rapor geldiğinde telemetriyi ve arıza geçmişini tazeler.
+   * Cihaz her DALI adresi için ayrı mesaj yayınladığından (bkz. handleD4i) art
+   * arda gelen kanal raporları tek fetch'te birleşsin diye kısa bir pencere
+   * beklenir. Aktif sekmeden bağımsız çalışır: sekme değiştirildiğinde veri
+   * hazır olsun ve arıza rozeti canlı kalsın.
    */
-  const scheduleTelemetryRefresh = useCallback(() => {
-    if (telemetryTimer.current) return; // tazeleme zaten planlı
-    telemetryTimer.current = setTimeout(() => {
-      telemetryTimer.current = null;
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) return; // tazeleme zaten planlı
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
       loadTelemetry();
+      loadFaults();
     }, TELEMETRY_REFRESH_MS);
-  }, [loadTelemetry]);
+  }, [loadTelemetry, loadFaults]);
 
   useEffect(() => {
-    const timer = telemetryTimer;
+    const timer = refreshTimer;
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
@@ -175,12 +203,13 @@ export function DeviceControlModal({
       // in-flight guard'ından ÖNCE ele alınmalı — ack tam da komut uçuştayken gelir.
       if (e.kind === "ack") {
         setLastError(e.error ?? null);
+        scheduleRefresh(); // komut hatası da arıza geçmişine yazılır
         return;
       }
-      // Cihazın periyodik raporu: D4i paneli DB'den okuduğu için event'in
-      // kendisi arıza ayrıntısını taşımaz — paneli tazele. Aşağıdaki in-flight
-      // guard'ı yalnızca optimistic UI state'i içindir, tazelemeyi kapsamaz.
-      if (e.kind === "telemetry") scheduleTelemetryRefresh();
+      // Cihazın periyodik raporu: paneller DB'den okuduğu için event'in kendisi
+      // arıza ayrıntısını taşımaz — tazele. Aşağıdaki in-flight guard'ı
+      // yalnızca optimistic UI state'i içindir, tazelemeyi kapsamaz.
+      if (e.kind === "telemetry") scheduleRefresh();
       const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
       if ((pendingRef.current.get(seqKey) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
       if (typeof e.seq === "number") {
@@ -205,7 +234,7 @@ export function DeviceControlModal({
         if (typeof e.brightness === "number") setDeviceBrightness(e.brightness);
       }
     },
-    [deviceId, scheduleTelemetryRefresh],
+    [deviceId, scheduleRefresh],
   );
   useLiveStatus(onLive);
 
@@ -391,6 +420,15 @@ export function DeviceControlModal({
         ? (fixtures.find((f) => f.channel === effectTarget)?.activeFx ?? null)
         : null;
 
+  // Süren arıza sayısı — sekme rozetinde, hangi sekmede olursak olalım görünür.
+  const ongoingFaults = faults.filter((f) => f.resolvedAt === null).length;
+
+  const TABS: Array<{ id: Tab; label: string }> = [
+    { id: "control", label: "Kontrol" },
+    { id: "telemetry", label: "Telemetri" },
+    { id: "faults", label: "Arıza geçmişi" },
+  ];
+
   return (
     <>
       <Modal
@@ -419,6 +457,58 @@ export function DeviceControlModal({
           })()
         ) : null}
 
+        {/* Sekmeler — içerik uzun; kontrol / telemetri / arıza geçmişi ayrık durur */}
+        <div
+          role="tablist"
+          aria-label="Cihaz panelleri"
+          className="mb-4 flex gap-1 rounded-xl border border-border bg-panel-2 p-1"
+        >
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                tab === t.id
+                  ? "bg-glow/20 text-text"
+                  : "text-muted hover:text-text"
+              }`}
+            >
+              {t.label}
+              {t.id === "faults" && ongoingFaults > 0 ? (
+                <span className="rounded-md bg-danger/20 px-1.5 py-0.5 text-xs font-semibold text-danger">
+                  {ongoingFaults}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+
+        {tab === "telemetry" ? (
+          <D4iPanel
+            rows={telemetry}
+            names={fixtureNames}
+            loading={telemetryLoading}
+            updatedAt={telemetryAt}
+            onRefresh={() => {
+              setTelemetryLoading(true);
+              loadTelemetry();
+            }}
+          />
+        ) : tab === "faults" ? (
+          <FaultHistory
+            rows={faults}
+            names={fixtureNames}
+            loading={faultsLoading}
+            onRefresh={() => {
+              setFaultsLoading(true);
+              loadFaults();
+            }}
+          />
+        ) : (
+          <>
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
         <div className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -547,17 +637,8 @@ export function DeviceControlModal({
           )}
         </div>
 
-        {/* Sürücü / LED telemetrisi (d4i_periodic raporlarından) */}
-        <D4iPanel
-          rows={telemetry}
-          names={fixtureNames}
-          loading={telemetryLoading}
-          updatedAt={telemetryAt}
-          onRefresh={() => {
-            setTelemetryLoading(true);
-            loadTelemetry();
-          }}
-        />
+          </>
+        )}
       </Modal>
 
       {/* Lamba ekle / düzenle */}

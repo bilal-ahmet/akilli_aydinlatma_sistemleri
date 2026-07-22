@@ -36,6 +36,13 @@
       "when": 1784708152194,
       "tag": "0004_light_makkari",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784720968836,
+      "tag": "0005_majestic_umar",
+      "breakpoints": true
     }
   ]
 }

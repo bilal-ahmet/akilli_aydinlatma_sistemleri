@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { D4iSnapshot } from "@/app/_lib/types";
 import { MAX_ARC_LEVEL, levelToPercent } from "@/types/lighting";
+import { DRIVER_FAULTS, LED_FAULTS, isFlagActive, type FaultKey } from "@/lib/faults";
 
 /**
  * Cihazın D4i periyodik raporundan gelen sürücü/LED telemetrisi. Veri
@@ -24,26 +25,9 @@ function hours(seconds: number | null | undefined): string | null {
   return `${tr0.format(Math.round(seconds / 3600))} sa`;
 }
 
-/**
- * Sürücü ve LED bloklarındaki arıza bayrağı + sayaç çiftleri. İlk sıradaki
- * `general_failure` özet olarak gösterilir, kalanı tıklanınca açılır.
- */
-const DRIVER_FAULTS: Array<[key: string, label: string]> = [
-  ["general_failure", "Genel arıza"],
-  ["undervoltage_failure", "Düşük gerilim"],
-  ["overvoltage_failure", "Aşırı gerilim"],
-  ["power_limitation", "Güç sınırlama"],
-  ["thermal_derating", "Termal kısma"],
-  ["thermal_shutdown", "Termal kapanma"],
-];
-
-const LED_FAULTS: Array<[key: string, label: string]> = [
-  ["general_failure", "Genel arıza"],
-  ["short_circuit", "Kısa devre"],
-  ["open_circuit", "Açık devre"],
-  ["thermal_derating", "Termal kısma"],
-  ["thermal_shutdown", "Termal kapanma"],
-];
+// Arıza bayrağı/etiket kataloğu lib/faults.ts'te — arıza geçmişi de aynı
+// listeden okur. Buradaki ilk sıra (`general_failure`) özet olarak gösterilir,
+// kalanı tıklanınca açılır.
 
 type Metric = [label: string, value: string | null];
 
@@ -80,15 +64,15 @@ interface FaultItem {
 
 function faultItems(
   block: Record<string, number | null> | undefined,
-  pairs: Array<[string, string]>,
+  keys: FaultKey[],
 ): FaultItem[] {
   if (!block) return [];
-  return pairs
-    .map(([key, label]) => {
+  return keys
+    .map(({ key, label }) => {
       const active = block[key];
       const count = block[`${key}_count`];
       if (typeof active !== "number" && typeof count !== "number") return null;
-      return { label, active: active === 1 || active === 255, count: count ?? null };
+      return { label, active: isFlagActive(active), count: count ?? null };
     })
     .filter((x): x is FaultItem => x !== null);
 }
@@ -124,15 +108,15 @@ function Chip({ item }: { item: FaultItem }) {
  */
 function Faults({
   block,
-  pairs,
+  keys,
 }: {
   block: Record<string, number | null> | undefined;
-  pairs: Array<[string, string]>;
+  keys: FaultKey[];
 }) {
   // null = kullanıcı dokunmadı; o durumda gizli kalan aktif bir arıza varsa
   // liste kendiliğinden açılır (arıza gelir gelmez görünür olmalı).
   const [manual, setManual] = useState<boolean | null>(null);
-  const items = faultItems(block, pairs);
+  const items = faultItems(block, keys);
   if (items.length === 0) return null;
 
   const general = items[0];
@@ -212,8 +196,8 @@ export function D4iPanel({
   const faulty = rows.filter(isFaulty).length;
 
   return (
-    <div className="mt-5">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-text">
           D4i telemetrisi{" "}
           <span className="text-sm font-normal text-muted">({rows.length} lamba)</span>
@@ -327,7 +311,7 @@ export function D4iPanel({
                         ],
                       ]}
                     />
-                    <Faults block={drv} pairs={DRIVER_FAULTS} />
+                    <Faults block={drv} keys={DRIVER_FAULTS} />
                   </Section>
 
                   <Section title="LED">
@@ -345,7 +329,7 @@ export function D4iPanel({
                         ],
                       ]}
                     />
-                    <Faults block={led} pairs={LED_FAULTS} />
+                    <Faults block={led} keys={LED_FAULTS} />
                   </Section>
 
                   <Section title="Seviye sınırları">

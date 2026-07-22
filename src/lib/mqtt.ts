@@ -6,6 +6,8 @@ import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
 import { effectByNumber } from "@/lib/effects";
 import { describeDeviceError } from "@/lib/deviceErrors";
+import { activeFaultCodes } from "@/lib/faults";
+import { syncFaultEvents } from "@/lib/faultLog";
 import {
   cmdTopic,
   zoneCmdTopic,
@@ -202,7 +204,15 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
     raw: (raw as Record<string, unknown>) ?? null,
   });
 
-  // 3) Kanal seviyesinde canlı yayın
+  // 3) Arıza geçmişi: yalnızca durum değiştiğinde satır açılır/kapanır.
+  await syncFaultEvents(
+    mac,
+    ch,
+    activeFaultCodes(d, raw).map((code) => ({ code })),
+    now,
+  );
+
+  // 4) Kanal seviyesinde canlı yayın
   emitLiveEvent({
     deviceId: mac,
     channel: ch,
@@ -213,7 +223,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
     at: now.toISOString(),
   });
 
-  // 4) Cihaz-seviyesi agregat: cihazın tüm lambalarının güncel satırları
+  // 5) Cihaz-seviyesi agregat: cihazın tüm lambalarının güncel satırları
   const rows = await db
     .select()
     .from(schema.fixtures)
@@ -233,7 +243,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
     status: aggFault ? "error" : "ok",
   });
 
-  // 5) Bölge snapshot'ı + bekleyen komutlar + cihaz seviyesi canlı yayın
+  // 6) Bölge snapshot'ı + bekleyen komutlar + cihaz seviyesi canlı yayın
   const { zone } = await touchDevice(mac, now);
   if (zone) {
     await db
@@ -268,6 +278,8 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   if (ack.status === "ok") {
     const { zone } = await touchDevice(mac, now, { lastError: null, lastErrorAt: null });
     await markDelivered(mac, zone?.slug, now);
+    // Başarılı yanıt rozeti temizler; geçmişteki açık komut hatasını da kapatır.
+    await syncFaultEvents(mac, null, [], now);
     emitLiveEvent({ deviceId: mac, status: "ok", kind: "ack", at });
     return;
   }
@@ -295,6 +307,12 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
       .set({ status: "failed" })
       .where(eq(schema.commands.id, latest.id));
   }
+
+  // Geçmişe cihaz seviyesinde (channel = null) yazılır: yanıt hangi lambaya
+  // ait olduğunu taşımıyor, kanal yalnızca "en iyi tahmin". Aynı anda tek bir
+  // komut hatası açık kalır — farklı bir hata gelirse öncekini kapatır
+  // (devices.last_error ile aynı semantik).
+  await syncFaultEvents(mac, null, [{ code: `command.${info.code}`, detail: message }], now);
 
   // Hangi lambanın komutu reddedildiğini yanıt taşımıyor; başarısız sayılan
   // komutun kanalı en iyi tahmin ("bu channel DALI hattinda bulunamadi" gibi
