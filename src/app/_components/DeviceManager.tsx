@@ -44,6 +44,11 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
   const [deleting, setDeleting] = useState<DeviceView | null>(null);
   const [controlling, setControlling] = useState<DeviceView | null>(null);
 
+  // Düzenleme (bölge / isim) — MAC değiştirilemez.
+  const [editing, setEditing] = useState<DeviceView | null>(null);
+  const [editZoneSlug, setEditZoneSlug] = useState("");
+  const [editName, setEditName] = useState("");
+
   useEffect(() => {
     fetch("/api/devices")
       .then((r) => r.json())
@@ -94,6 +99,45 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
       if (!res.ok) throw new Error(j.error ?? `Hata (${res.status})`);
       setDevices((ds) => [...ds, j.data].sort((a, b) => a.deviceId.localeCompare(b.deviceId)));
       setAddOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function openEdit(d: DeviceView) {
+    setEditing(d);
+    setEditZoneSlug(d.zoneSlug ?? zones[0]?.id ?? "");
+    setEditName(d.name ?? "");
+    setError(null);
+  }
+
+  async function submitEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing || !editZoneSlug) return;
+    const target = editing;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/devices/${target.deviceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zoneSlug: editZoneSlug, name: editName.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? `Hata (${res.status})`);
+      // Yanıt yalnızca kayıt alanlarını taşır; telemetri satırını korumak için
+      // mevcut satırın üzerine yalnızca değişenleri yaz.
+      const patch = j.data as DeviceView;
+      setDevices((ds) =>
+        ds.map((d) =>
+          d.deviceId === target.deviceId
+            ? { ...d, name: patch.name, zoneSlug: patch.zoneSlug, zoneName: patch.zoneName }
+            : d,
+        ),
+      );
+      setEditing(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bilinmeyen hata");
     } finally {
@@ -178,6 +222,17 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                   </button>
                   <button
                     type="button"
+                    onClick={() => openEdit(d)}
+                    aria-label={`${d.deviceId} düzenle`}
+                    title="Bölge / isim düzenle"
+                    className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setDeleting(d)}
                     aria-label={`${d.deviceId} sil`}
                     title="Sil"
@@ -229,6 +284,60 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
             <button type="button" onClick={() => setAddOpen(false)} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-text">İptal</button>
             <button type="submit" disabled={submitting || !mac.trim()} className="rounded-lg border border-glow/40 bg-glow/20 px-4 py-2 text-sm font-semibold text-text transition-colors hover:bg-glow/30 disabled:opacity-50">
               {submitting ? "Kaydediliyor…" : "Ekle"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Cihaz düzenle (bölge / isim) */}
+      <Modal open={editing !== null} onClose={() => setEditing(null)} title="Cihazı düzenle">
+        {error ? (
+          <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>
+        ) : null}
+        <p className="-mt-2 mb-4 font-mono text-xs text-muted">
+          {editing ? formatMac(editing.deviceId) : ""}
+        </p>
+        <form onSubmit={submitEdit} className="flex flex-col gap-4">
+          <div>
+            <label className={labelCls} htmlFor="dv-edit-zone">Bölge *</label>
+            <select
+              id="dv-edit-zone"
+              className={inputCls}
+              value={editZoneSlug}
+              onChange={(e) => setEditZoneSlug(e.target.value)}
+            >
+              {zones.map((z) => (
+                <option key={z.id} value={z.id}>{z.name}</option>
+              ))}
+            </select>
+            {editing && editZoneSlug !== editing.zoneSlug ? (
+              <p className="mt-2 rounded-lg border border-accent/40 bg-glow/10 px-3 py-2 text-[11px] leading-relaxed text-text">
+                <span className="font-semibold text-accent">
+                  Cihazın yeniden flaşlanması gerekir.
+                </span>{" "}
+                Cihaz hangi bölge komutlarını dinleyeceğini firmware&apos;deki{" "}
+                <code className="font-mono">ZONE_SLUG</code>&apos;tan bilir. Bu değişiklik
+                yalnızca dashboard kaydını taşır: cihaz flaşlanana kadar{" "}
+                <span className="font-mono">{editing.zoneSlug ?? "eski bölge"}</span> komutlarını
+                almaya devam eder, <span className="font-mono">{editZoneSlug}</span> komutlarını
+                almaz. Tekil ve &quot;Tüm Sistem&quot; komutları etkilenmez.
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <label className={labelCls} htmlFor="dv-edit-name">İsim (opsiyonel)</label>
+            <input
+              id="dv-edit-name"
+              className={inputCls}
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="Örn. Köşe direği"
+            />
+          </div>
+          <div className="mt-1 flex justify-end gap-2">
+            <button type="button" onClick={() => setEditing(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-text">İptal</button>
+            <button type="submit" disabled={submitting || !editZoneSlug} className="rounded-lg border border-glow/40 bg-glow/20 px-4 py-2 text-sm font-semibold text-text transition-colors hover:bg-glow/30 disabled:opacity-50">
+              {submitting ? "Kaydediliyor…" : "Kaydet"}
             </button>
           </div>
         </form>

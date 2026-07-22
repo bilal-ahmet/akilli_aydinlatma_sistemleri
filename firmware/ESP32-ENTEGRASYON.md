@@ -41,6 +41,11 @@ Bu değer dashboard'daki bölge slug'ı (`zones.slug`) ile **birebir** aynı olm
 bölge komutlarını almaz (tekil ve toplu komutlar çalışmaya devam eder).
 Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 
+> **Cihaz başka bir bölgeye taşınırsa yeniden flaşlanmalıdır.** Dashboard'dan
+> bölge değiştirmek (`PATCH /api/devices/:mac`) yalnızca kaydı taşır; cihaz
+> `ZONE_SLUG` güncellenene kadar eski bölgenin komutlarını dinlemeye devam eder.
+> Dashboard bu durumu bölge seçimi değiştiğinde uyarı olarak gösterir.
+
 ## 4) Komut payload (gelen, cmd)
 ```json
 { "action": "dim", "value": 75, "channel": 255 }

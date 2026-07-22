@@ -55,6 +55,14 @@ export async function DELETE(
         await tx
           .delete(schema.deviceStatus)
           .where(inArray(schema.deviceStatus.deviceId, deviceIds));
+        // Lamba ve D4i kayıtları da device_id ile mantıksal bağlı (FK yok) —
+        // temizlenmezse aynı MAC yeniden eklendiğinde eski veri geri gelir.
+        await tx
+          .delete(schema.d4iTelemetry)
+          .where(inArray(schema.d4iTelemetry.deviceId, deviceIds));
+        await tx
+          .delete(schema.fixtures)
+          .where(inArray(schema.fixtures.deviceId, deviceIds));
         await tx
           .delete(schema.devices)
           .where(eq(schema.devices.zoneId, zone.id));

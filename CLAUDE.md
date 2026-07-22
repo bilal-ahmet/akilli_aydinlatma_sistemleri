@@ -245,6 +245,21 @@ Body:
 
 Backend bu endpoint'leri aldığında ilgili MQTT topic'ine publish eder.
 
+**Cihaz yönetimi:**
+
+```
+POST   /api/devices              → cihaz ekle { mac, zoneSlug, name? }
+PATCH  /api/devices/:deviceId    → bölge / isim güncelle { zoneSlug?, name? }
+DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
+```
+
+> **Bölge değişikliği yalnızca dashboard kaydını taşır.** Cihazın hangi
+> `Meven:<slug>/cmd` topic'ini dinlediği firmware'deki `ZONE_SLUG`'tan gelir
+> (Kural #3); cihaz yeniden flaşlanana kadar **eski** bölgenin toplu komutlarını
+> almaya devam eder, yeninin komutlarını almaz. Tekil (MAC) ve `Meven:all/cmd`
+> komutları etkilenmez. Dashboard bölge seçimi değiştiğinde bu uyarıyı gösterir.
+> MAC değiştirilemez: cihazın kimliği odur, tüm telemetri/lamba kayıtları ona bağlı.
+
 **Lamba (DALI kanal) yönetimi:**
 
 ```
