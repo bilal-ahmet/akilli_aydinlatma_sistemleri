@@ -318,7 +318,15 @@ GET /api/zones/:zoneId/status        → Son bilinen zone durumu (DB'den)
 GET /api/devices/:deviceId/status    → Cihaz son durumu
 GET /api/zones                       → Tüm zone listesi
 GET /api/devices                     → Tüm cihaz listesi
+GET /api/summary                     → Dashboard üst şeridi: ölçülmüş sistem özeti
 ```
+
+`/api/summary`, her lambanın **son** D4i raporundan (kanal başına `DISTINCT ON`,
+son 10 dakika) toplar: çekilen güç, yük gücü, ortalama LED gerilimi (**gerilim
+toplanmaz**) ve `fault_events`'ten açık arızası olan **farklı lamba** sayısı.
+Ölçüm yoksa `powerW: null` döner ve dashboard direk sayısına dayalı tahmine
+düşer. Değerler ham `raw` bloğundan `lib/d4i.ts` ile okunur — panelle aynı
+doğrulanmış → tahmini → ham kuralı.
 
 ### Dashboard Real-time (SSE)
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import type { Zone, ZoneStatus } from "@/app/_lib/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LiveSummary, Zone, ZoneStatus } from "@/app/_lib/types";
 import { summarize } from "@/app/_lib/mockData";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
@@ -17,6 +17,9 @@ import { ZoneForm, type ZoneFormValues } from "./ZoneForm";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
+
+/** Cihaz raporu gelince ölçüm özetinin tazelenmesi bu kadar geciktirilir. */
+const LIVE_REFRESH_MS = 1500;
 
 async function sendCommand(
   zoneId: string,
@@ -61,6 +64,10 @@ function deriveMaster(zones: Zone[]): number {
 
 export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   const [zones, setZones] = useState<Zone[]>(initialZones);
+
+  // Cihazlardan ölçülmüş özet — yüklenene kadar null (üst şerit tahmine düşer).
+  const [live, setLive] = useState<LiveSummary | null>(null);
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [masterBrightness, setMasterBrightness] = useState(() =>
     deriveMaster(initialZones),
   );
@@ -115,12 +122,30 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   const summary = useMemo(() => summarize(zones), [zones]);
   const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
 
+  /** Cihazlardan ölçülmüş özet (güç, gerilim, arızalı lamba sayısı). */
+  const loadLive = useCallback(() => {
+    fetch("/api/summary")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.data) setLive(j.data as LiveSummary);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadLive();
+  }, [loadLive]);
+
   /**
-   * SSE kaçarsa bölge kartları bayat kalmasın. Uçuşta komut varken ya da az
-   * önce komut gönderildiyse atlanır — yoksa henüz DB'ye yazılmamış optimistic
+   * SSE kaçarsa üst şerit ve bölge kartları bayat kalmasın.
+   *
+   * Ölçüm özeti HER ZAMAN tazelenir (cihazdan gelen gerçek veri, optimistic
+   * durumla çakışmaz). Bölge kartları ise uçuşta komut varken ya da az önce
+   * komut gönderildiyse atlanır — yoksa henüz DB'ye yazılmamış optimistic
    * durumun üstüne eski değer biner.
    */
-  const reconcileZones = useCallback(() => {
+  const reconcile = useCallback(() => {
+    loadLive();
     if (pendingRef.current.size > 0) return;
     if (Date.now() - lastCommandAtRef.current < 5_000) return;
     fetch("/api/zones")
@@ -129,11 +154,35 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         if (Array.isArray(j.data)) setZones(j.data as Zone[]);
       })
       .catch(() => {});
+  }, [loadLive]);
+  useReconcile(reconcile);
+
+  /**
+   * Cihaz raporu gelince özeti tazele. Her lamba ayrı mesaj yayınladığından
+   * (bkz. handleD4i) art arda gelen raporlar tek fetch'te birleşsin diye kısa
+   * bir pencere beklenir.
+   */
+  const scheduleLiveRefresh = useCallback(() => {
+    if (liveTimer.current) return;
+    liveTimer.current = setTimeout(() => {
+      liveTimer.current = null;
+      loadLive();
+    }, LIVE_REFRESH_MS);
+  }, [loadLive]);
+
+  useEffect(() => {
+    const timer = liveTimer;
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
   }, []);
-  useReconcile(reconcileZones);
 
   // ── Canlı durum (SSE) ──────────────────────────────────────
-  const onLive = useCallback((e: LiveEvent) => {
+  const onLive = useCallback(
+    (e: LiveEvent) => {
+    // Ölçüm özeti (güç/gerilim/arıza) cihaz raporundan sonra DB'den okunur;
+    // olayın kendisi bu değerleri taşımaz. Bölge filtresinden ÖNCE ele alınır.
+    if (e.kind === "telemetry" || e.kind === "ack") scheduleLiveRefresh();
     if (!e.zoneSlug) return;
     if ((pendingRef.current.get(e.zoneSlug) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
     if (typeof e.seq === "number") {
@@ -152,7 +201,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         return next;
       }),
     );
-  }, []);
+    },
+    [scheduleLiveRefresh],
+  );
 
   useLiveStatus(onLive);
 
@@ -316,7 +367,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <StatusOverview summary={summary} />
+      <StatusOverview summary={summary} live={live} />
       <MasterControl
         anyOn={anyOn}
         masterBrightness={masterBrightness}

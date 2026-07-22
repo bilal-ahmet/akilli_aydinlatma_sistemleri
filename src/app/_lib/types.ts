@@ -114,6 +114,28 @@ export interface Fixture {
   lastSeen: string | null;
 }
 
+/**
+ * `GET /api/summary` — cihazlardan ÖLÇÜLMÜŞ sistem özeti. Zone snapshot'ından
+ * türetilen `SystemSummary`'den farkı: buradaki değerler gerçek D4i
+ * raporlarından gelir, ölçüm yoksa `null`'dur (dashboard tahmine düşer).
+ */
+export interface LiveSummary {
+  /** Şebekeden çekilen toplam güç (W); hiç ölçüm yoksa null. */
+  powerW: number | null;
+  /** Toplama katkı veren lamba sayısı — D4i'siz sürücüler sayılmaz. */
+  powerLamps: number;
+  /** LED'e giden toplam yük gücü (W). */
+  loadPowerW: number | null;
+  /** Lamba başına ORTALAMA LED gerilimi (V) — gerilim toplanmaz. */
+  ledVoltageV: number | null;
+  /** Ortalamaya giren lamba sayısı. */
+  ledVoltageLamps: number;
+  /** Ortalamaya en az bir tahmini/doğrulanmamış ölçüm girdi mi? */
+  ledVoltageEstimated: boolean;
+  /** Açık arızası olan farklı lamba sayısı (cihaz seviyesi kayıtlar hariç). */
+  faultyLamps: number;
+}
+
 export interface SystemSummary {
   totalPoles: number;
   polesOn: number;
