@@ -1,5 +1,12 @@
-import type { ZoneRow, FixtureRow } from "@/lib/db/schema";
-import type { Zone, ZoneStatus, DeviceView, Fixture } from "@/app/_lib/types";
+import type { ZoneRow, FixtureRow, D4iTelemetryRow } from "@/lib/db/schema";
+import type {
+  Zone,
+  ZoneStatus,
+  DeviceView,
+  Fixture,
+  D4iSnapshot,
+  D4iRaw,
+} from "@/app/_lib/types";
 
 /**
  * DB `zones` satırını frontend `Zone` tipine çevirir. Frontend stabil public
@@ -30,6 +37,8 @@ export function toDeviceView(row: {
   relayStatus?: string | null;
   temperature?: number | null;
   rssi?: number | null;
+  lastError?: string | null;
+  lastErrorAt?: Date | null;
 }): DeviceView {
   return {
     id: row.id,
@@ -42,6 +51,34 @@ export function toDeviceView(row: {
     relayStatus: row.relayStatus ?? null,
     temperature: row.temperature ?? null,
     rssi: row.rssi ?? null,
+    lastError: row.lastError ?? null,
+    lastErrorAt: row.lastErrorAt ? row.lastErrorAt.toISOString() : null,
+  };
+}
+
+/** DB `d4i_telemetry` satırını cihaz modalindeki detay görünümüne çevirir. */
+export function toD4iSnapshot(row: D4iTelemetryRow): D4iSnapshot {
+  return {
+    channel: row.channel,
+    online: row.online,
+    d4iSupported: row.d4iSupported,
+    actualLevel: row.actualLevel,
+    minLevel: row.minLevel,
+    maxLevel: row.maxLevel,
+    physicalMinLevel: row.physicalMinLevel,
+    lampFailure: row.lampFailure,
+    lampPowerOn: row.lampPowerOn,
+    controlGearPresent: row.controlGearPresent,
+    energyWh: row.energyWh,
+    powerW: row.powerW,
+    driverTemperatureC: row.driverTemperatureC,
+    driverVoltageV: row.driverVoltageV,
+    driverOperatingTimeS: row.driverOperatingTimeS,
+    ledTemperatureC: row.ledTemperatureC,
+    ledVoltageV: row.ledVoltageV,
+    ledCurrentA: row.ledCurrentA,
+    raw: (row.raw as D4iRaw | null) ?? null,
+    recordedAt: row.recordedAt ? row.recordedAt.toISOString() : null,
   };
 }
 

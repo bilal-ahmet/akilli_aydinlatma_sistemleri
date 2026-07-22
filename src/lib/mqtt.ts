@@ -1,14 +1,28 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
-import { cmdTopic, zoneCmdTopic, ALL_CMD, DATA_WILDCARD } from "@/lib/topics";
 import {
-  dataPayloadSchema,
+  cmdTopic,
+  zoneCmdTopic,
+  macFromDataTopic,
+  ALL_CMD,
+  DATA_WILDCARD,
+} from "@/lib/topics";
+import {
+  parseUplink,
+  levelToPercent,
+  flagToBool,
+  d4iIsOn,
+  d4iHasFault,
+  BROADCAST_CHANNEL,
   type Action,
+  type CommandAck,
   type CommandPayload,
+  type D4iPeriodic,
+  type DataPayload,
 } from "@/types/lighting";
 
 /**
@@ -51,7 +65,7 @@ export function getMqttClient(): MqttClient {
   client.on("reconnect", () => console.log("[mqtt] reconnecting…"));
 
   client.on("message", (topic, payload) => {
-    void handleData(topic, payload).catch((err) =>
+    void handleUplink(topic, payload).catch((err) =>
       console.error("[mqtt] message handler error:", err),
     );
   });
@@ -60,15 +74,230 @@ export function getMqttClient(): MqttClient {
   return client;
 }
 
-/** Meven:<MAC>/data mesajını işle: DB'ye yaz + bölge snapshot'ı + canlı event. */
-async function handleData(topic: string, raw: Buffer): Promise<void> {
-  const parsed = dataPayloadSchema.safeParse(JSON.parse(raw.toString()));
-  if (!parsed.success) {
-    console.warn(`[mqtt] geçersiz data payload (${topic})`);
+/**
+ * Meven:<MAC>/data mesajını işle. Topic'te üç ayrı kontrat akıyor (bkz.
+ * types/lighting.ts parseUplink):
+ *   - `{"type":"d4i_periodic", ...}` → DALI adresi başına durum + D4i telemetrisi
+ *   - `{"status":"ok"|"error", ...}` → komutun cihazda işlenme sonucu
+ *   - `{"deviceId": ...}`           → ilk kontrattaki tek/çok-lamba raporu
+ * İlk iki formatta payload'da MAC yok; kimlik topic'ten okunur.
+ */
+async function handleUplink(topic: string, raw: Buffer): Promise<void> {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw.toString());
+  } catch {
+    console.warn(`[mqtt] JSON çözülemedi (${topic})`);
     return;
   }
-  const d = parsed.data;
-  const mac = d.deviceId;
+
+  const uplink = parseUplink(json);
+  if (!uplink) {
+    console.warn(`[mqtt] bilinmeyen payload (${topic})`);
+    return;
+  }
+
+  // Eski kontratta MAC payload'da, yenilerde yalnızca topic'te.
+  const mac =
+    uplink.kind === "legacy" ? uplink.data.deviceId : macFromDataTopic(topic);
+  if (!mac) {
+    console.warn(`[mqtt] MAC çözülemedi (${topic})`);
+    return;
+  }
+
+  if (uplink.kind === "d4i") return handleD4i(mac, uplink.data, json);
+  if (uplink.kind === "ack") return handleAck(mac, uplink.data);
+  return handleLegacyData(mac, uplink.data);
+}
+
+/**
+ * Cihazın son görülme zamanını tazeler ve bölgesini çözer. Cihaz kayıtlı
+ * değilse (dashboard'a eklenmemiş MAC) zoneSlug undefined döner — veri yine
+ * loglanır, sadece bölgeyle eşleşmez.
+ */
+async function touchDevice(
+  mac: string,
+  now: Date,
+  patch?: { lastError?: string | null; lastErrorAt?: Date | null },
+) {
+  const [device] = await db
+    .update(schema.devices)
+    .set({ lastSeen: now, ...patch })
+    .where(eq(schema.devices.deviceId, mac))
+    .returning();
+
+  if (!device?.zoneId) return { device, zone: undefined };
+
+  const [zone] = await db
+    .select()
+    .from(schema.zones)
+    .where(eq(schema.zones.id, device.zoneId))
+    .limit(1);
+  return { device, zone };
+}
+
+/** Cihazdan haber gelince o cihaza/bölgesine ait bekleyen komutları kapat. */
+async function markDelivered(mac: string, zoneSlug: string | undefined, now: Date) {
+  const targets = [mac, "all", ...(zoneSlug ? [zoneSlug] : [])];
+  await db
+    .update(schema.commands)
+    .set({ status: "delivered", deliveredAt: now })
+    .where(
+      and(
+        inArray(schema.commands.targetId, targets),
+        eq(schema.commands.status, "pending"),
+      ),
+    );
+}
+
+/**
+ * D4i periyodik raporu: bir DALI adresinin (lambanın) durumu + sürücü/LED
+ * telemetrisi. Cihaz-seviyesi (bölge snapshot'ı, device_status) değerler tek
+ * mesajdan değil, cihazın TÜM lambalarının güncel satırlarından türetilir —
+ * her mesaj yalnızca bir adresi taşıdığı için.
+ */
+async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<void> {
+  const now = new Date();
+  const ch = d.address;
+  const level = d.status?.actual_level;
+  const isOn = d4iIsOn(d);
+  const fault = d4iHasFault(d);
+  const brightness = typeof level === "number" ? levelToPercent(level) : undefined;
+
+  // 1) Lamba (fixture) snapshot'ı
+  const fxPatch: StatePatch & { status?: string; lastSeen?: Date } = {
+    status: fault ? "fault" : "ok",
+    lastSeen: now,
+  };
+  if (typeof isOn === "boolean") fxPatch.isOn = isOn;
+  if (typeof brightness === "number") fxPatch.brightness = brightness;
+  await upsertFixture(mac, ch, fxPatch);
+
+  // 2) Ham D4i telemetrisi (detay paneli + ileride grafikler)
+  const drv = d.d4i?.driver;
+  const led = d.d4i?.led;
+  await db.insert(schema.d4iTelemetry).values({
+    deviceId: mac,
+    channel: ch,
+    online: d.online ?? null,
+    d4iSupported: d.d4i_supported ?? false,
+    statusByte: d.status?.status ?? null,
+    actualLevel: level ?? null,
+    minLevel: d.status?.min_level ?? null,
+    maxLevel: d.status?.max_level ?? null,
+    physicalMinLevel: d.status?.physical_min_level ?? null,
+    lampFailure: flagToBool(d.status?.lamp_failure) ?? null,
+    lampPowerOn: flagToBool(d.status?.lamp_power_on) ?? null,
+    controlGearPresent: flagToBool(d.status?.control_gear_present) ?? null,
+    energyWh: d.d4i?.energy?.value ?? null,
+    powerW: d.d4i?.power?.value ?? null,
+    driverTemperatureC: drv?.temperature_c ?? null,
+    driverVoltageV: drv?.input_voltage_v ?? null,
+    driverOperatingTimeS: drv?.operating_time_s ?? null,
+    ledTemperatureC: led?.temperature_c ?? null,
+    ledVoltageV: led?.voltage_v ?? null,
+    ledCurrentA: led?.current_a ?? null,
+    raw: (raw as Record<string, unknown>) ?? null,
+  });
+
+  // 3) Kanal seviyesinde canlı yayın
+  emitLiveEvent({
+    deviceId: mac,
+    channel: ch,
+    isOn,
+    brightness,
+    status: fault ? "error" : "ok",
+    kind: "telemetry",
+    at: now.toISOString(),
+  });
+
+  // 4) Cihaz-seviyesi agregat: cihazın tüm lambalarının güncel satırları
+  const rows = await db
+    .select()
+    .from(schema.fixtures)
+    .where(eq(schema.fixtures.deviceId, mac));
+  const onRows = rows.filter((f) => f.isOn);
+  const aggIsOn = onRows.length > 0;
+  const aggBrightness = onRows.length
+    ? Math.round(onRows.reduce((a, f) => a + f.brightness, 0) / onRows.length)
+    : 0;
+  const aggFault = rows.some((f) => f.status === "fault");
+
+  await db.insert(schema.deviceStatus).values({
+    deviceId: mac,
+    brightness: aggBrightness,
+    relayStatus: aggIsOn ? "on" : "off",
+    temperature: drv?.temperature_c ?? null,
+    status: aggFault ? "error" : "ok",
+  });
+
+  // 5) Bölge snapshot'ı + bekleyen komutlar + cihaz seviyesi canlı yayın
+  const { zone } = await touchDevice(mac, now);
+  if (zone) {
+    await db
+      .update(schema.zones)
+      .set({ isOn: aggIsOn, brightness: aggBrightness, status: aggFault ? "fault" : "ok" })
+      .where(eq(schema.zones.id, zone.id));
+  }
+  await markDelivered(mac, zone?.slug, now);
+
+  emitLiveEvent({
+    zoneSlug: zone?.slug,
+    deviceId: mac,
+    isOn: aggIsOn,
+    brightness: aggBrightness,
+    status: aggFault ? "error" : "ok",
+    kind: "telemetry",
+    at: now.toISOString(),
+  });
+}
+
+/**
+ * Komut yanıtı: `{"status":"ok"}` ya da `{"status":"error","error":"..."}`.
+ * Payload'da korelasyon alanı yok — hata, o cihaza (ya da bölgesine) giden EN
+ * SON bekleyen komuta yazılır ve `devices.last_error`'da rozet için saklanır.
+ * Olaya bilerek `zoneSlug` konmaz: geçici bir komut hatası bölgeyi arızalı
+ * göstermemeli (bölge durumu telemetriden gelir).
+ */
+async function handleAck(mac: string, ack: CommandAck): Promise<void> {
+  const now = new Date();
+  const at = now.toISOString();
+
+  if (ack.status === "ok") {
+    const { zone } = await touchDevice(mac, now, { lastError: null, lastErrorAt: null });
+    await markDelivered(mac, zone?.slug, now);
+    emitLiveEvent({ deviceId: mac, status: "ok", kind: "ack", at });
+    return;
+  }
+
+  const message = (ack.error ?? "cihaz komutu işleyemedi").slice(0, 200);
+  console.warn(`[mqtt] komut hatası (${mac}): ${message}`);
+
+  const { zone } = await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
+  const targets = [mac, "all", ...(zone ? [zone.slug] : [])];
+  const [latest] = await db
+    .select({ id: schema.commands.id })
+    .from(schema.commands)
+    .where(
+      and(
+        inArray(schema.commands.targetId, targets),
+        eq(schema.commands.status, "pending"),
+      ),
+    )
+    .orderBy(desc(schema.commands.createdAt))
+    .limit(1);
+  if (latest) {
+    await db
+      .update(schema.commands)
+      .set({ status: "failed" })
+      .where(eq(schema.commands.id, latest.id));
+  }
+
+  emitLiveEvent({ deviceId: mac, status: "error", error: message, kind: "ack", at });
+}
+
+/** İlk kontrat (deviceId + brightness/relayStatus/channels): DB + bölge snapshot'ı + canlı event. */
+async function handleLegacyData(mac: string, d: DataPayload): Promise<void> {
   const now = new Date();
 
   // 0) Çok-lamba ise kanallardan cihaz-seviyesi agregat türet (bölge snapshot'ı
@@ -113,57 +342,36 @@ async function handleData(topic: string, raw: Buffer): Promise<void> {
         isOn: c.relayStatus ? c.relayStatus === "on" : undefined,
         brightness: c.brightness,
         status: c.status ?? d.status,
+        kind: "telemetry",
         at: now.toISOString(),
       });
     }
   }
 
   // 2) Cihazı bul, last_seen güncelle, bölgeyi çöz
-  const [device] = await db
-    .update(schema.devices)
-    .set({ lastSeen: now })
-    .where(eq(schema.devices.deviceId, mac))
-    .returning();
+  const { zone } = await touchDevice(mac, now);
 
-  let zoneSlug: string | undefined;
-  if (device?.zoneId) {
-    const [zone] = await db
-      .select()
-      .from(schema.zones)
-      .where(eq(schema.zones.id, device.zoneId))
-      .limit(1);
-    zoneSlug = zone?.slug;
-
-    // 3) Bölge snapshot'ını cihaz-seviyesi agregata göre rafine et
-    if (zone) {
-      const patch: StatePatch & { status?: string } = {
-        status: d.status === "error" ? "fault" : "ok",
-      };
-      if (typeof aggIsOn === "boolean") patch.isOn = aggIsOn;
-      if (typeof aggBrightness === "number") patch.brightness = aggBrightness;
-      await db.update(schema.zones).set(patch).where(eq(schema.zones.id, zone.id));
-    }
+  // 3) Bölge snapshot'ını cihaz-seviyesi agregata göre rafine et
+  if (zone) {
+    const patch: StatePatch & { status?: string } = {
+      status: d.status === "error" ? "fault" : "ok",
+    };
+    if (typeof aggIsOn === "boolean") patch.isOn = aggIsOn;
+    if (typeof aggBrightness === "number") patch.brightness = aggBrightness;
+    await db.update(schema.zones).set(patch).where(eq(schema.zones.id, zone.id));
   }
 
   // 4) Bekleyen komutları teslim edildi yap (device + bölge hedefi + all)
-  const targets = [mac, "all", ...(zoneSlug ? [zoneSlug] : [])];
-  await db
-    .update(schema.commands)
-    .set({ status: "delivered", deliveredAt: now })
-    .where(
-      and(
-        inArray(schema.commands.targetId, targets),
-        eq(schema.commands.status, "pending"),
-      ),
-    );
+  await markDelivered(mac, zone?.slug, now);
 
   // 5) Dashboard'a canlı yayınla (cihaz-seviyesi agregat)
   emitLiveEvent({
-    zoneSlug,
+    zoneSlug: zone?.slug,
     deviceId: mac,
     isOn: aggIsOn,
     brightness: aggBrightness,
     status: d.status,
+    kind: "telemetry",
     at: now.toISOString(),
   });
 }
@@ -208,13 +416,20 @@ async function upsertFixture(
   return row;
 }
 
-/** ESP'ye giden komut payload'ı — minimal tutulur (LoRa'da binary olacak). `channel` opsiyonel: tek lamba hedefi. */
+/**
+ * ESP'ye giden komut payload'ı — minimal tutulur (LoRa'da binary olacak).
+ *
+ * `channel` HER komutta gönderilir: firmware `dim` ve `efekt` için zorunlu
+ * tutuyor ("... ve channel (0..63 veya 255) gerekli"). Tek lamba hedefi yoksa
+ * DALI broadcast adresi (255) yazılır — API kontratında `channel` yokluğu
+ * "tüm cihaz" demeye devam eder, çeviri yalnızca burada yapılır.
+ */
 function buildPayload(action: Action, value?: number, number?: number, channel?: number): string {
   const payload: CommandPayload = {
     action,
     ...(value != null ? { value } : {}),
     ...(number != null ? { number } : {}),
-    ...(channel != null ? { channel } : {}),
+    channel: channel ?? BROADCAST_CHANNEL,
   };
   return JSON.stringify(payload);
 }
@@ -291,6 +506,7 @@ export async function recordCommand(
           brightness: fx.brightness,
           activeFx: fx.activeFx,
           status: "ok",
+          kind: "command",
           at,
           seq,
         });
@@ -309,6 +525,7 @@ export async function recordCommand(
           brightness: f.brightness,
           activeFx: f.activeFx,
           status: "ok",
+          kind: "command",
           at,
           seq,
         });
@@ -333,6 +550,7 @@ export async function recordCommand(
       brightness: zone.brightness,
       activeFx: zone.activeFx,
       status: "ok",
+      kind: "command",
       at,
       seq,
     });
@@ -351,6 +569,7 @@ export async function recordCommand(
       brightness: z.brightness,
       activeFx: z.activeFx,
       status: "ok",
+      kind: "command",
       at,
       seq,
     });

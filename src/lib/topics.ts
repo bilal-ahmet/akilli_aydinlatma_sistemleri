@@ -11,7 +11,7 @@
  *
  * Not: MQTT '+' joker'i bir seviyenin tamamını kapsar; "Meven:" bir seviyenin
  * parçası olduğundan "Meven:+/data" GEÇERSİZdir. Bu yüzden veri aboneliği
- * "+/data" olur; handler MAC'i payload'daki deviceId'den okur.
+ * "+/data" olur; MAC topic'in kendisinden çözülür (macFromDataTopic).
  */
 const PREFIX = "Meven";
 
@@ -20,3 +20,13 @@ export const zoneCmdTopic = (slug: string) => `${PREFIX}:${slug}/cmd`;
 export const dataTopic = (mac: string) => `${PREFIX}:${mac}/data`;
 export const ALL_CMD = `${PREFIX}:all/cmd`;
 export const DATA_WILDCARD = "+/data";
+
+/**
+ * "Meven:A842E3123456/data" → "A842E3123456". Cihazın yayınladığı yeni
+ * payload'larda (d4i_periodic, komut yanıtı) `deviceId` alanı yok; kimlik
+ * yalnızca topic'te taşınıyor. Eşleşmezse null.
+ */
+export function macFromDataTopic(topic: string): string | null {
+  const m = /^Meven:([0-9A-Fa-f]{12})\/data$/.exec(topic);
+  return m ? m[1].toUpperCase() : null;
+}

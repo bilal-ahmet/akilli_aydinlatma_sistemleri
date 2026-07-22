@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DeviceView, Fixture } from "@/app/_lib/types";
+import type { DeviceView, Fixture, D4iSnapshot } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { effectByNumber } from "@/lib/effects";
@@ -10,6 +10,7 @@ import { Modal } from "./Modal";
 import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
+import { D4iPanel } from "./D4iPanel";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
@@ -27,6 +28,13 @@ async function sendDeviceCommand(
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
   const json = await res.json().catch(() => null);
   return json?.data?.seq;
+}
+
+/** Kanal başına son D4i raporu → GET /api/devices/:id/telemetry. */
+function fetchTelemetry(deviceId: string): Promise<D4iSnapshot[]> {
+  return fetch(`/api/devices/${deviceId}/telemetry`)
+    .then((r) => r.json())
+    .then((j) => (j.data ?? []) as D4iSnapshot[]);
 }
 
 const iconBtn =
@@ -49,6 +57,13 @@ export function DeviceControlModal({
 
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // D4i telemetrisi (kanal başına son rapor) — açılışta ve "Yenile" ile çekilir.
+  const [telemetry, setTelemetry] = useState<D4iSnapshot[]>([]);
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
+
+  // Cihazın son komut yanıtı hatası; SSE'den gelen ack ile canlı güncellenir.
+  const [lastError, setLastError] = useState<string | null>(device.lastError);
 
   // Cihaz-seviyesi optimistic durum — son telemetriden başlar.
   const [deviceOn, setDeviceOn] = useState(device.relayStatus === "on");
@@ -101,10 +116,31 @@ export function DeviceControlModal({
       .finally(() => setLoading(false));
   }, [deviceId]);
 
+  useEffect(() => {
+    fetchTelemetry(deviceId)
+      .then(setTelemetry)
+      .catch(() => {})
+      .finally(() => setTelemetryLoading(false));
+  }, [deviceId]);
+
+  function refreshTelemetry() {
+    setTelemetryLoading(true);
+    fetchTelemetry(deviceId)
+      .then(setTelemetry)
+      .catch(() => {})
+      .finally(() => setTelemetryLoading(false));
+  }
+
   // ── Canlı durum (SSE): bu cihaza ait event'leri rafine et ──
   const onLive = useCallback(
     (e: LiveEvent) => {
       if (e.deviceId !== deviceId) return;
+      // Komut yanıtı: durum taşımaz, yalnızca hata bandını günceller. Aşağıdaki
+      // in-flight guard'ından ÖNCE ele alınmalı — ack tam da komut uçuştayken gelir.
+      if (e.kind === "ack") {
+        setLastError(e.error ?? null);
+        return;
+      }
       const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
       if ((pendingRef.current.get(seqKey) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
       if (typeof e.seq === "number") {
@@ -286,6 +322,13 @@ export function DeviceControlModal({
           {device.zoneName ? ` · ${device.zoneName}` : ""}
         </p>
 
+        {/* Cihazın son komut yanıtı hata ise: başarılı bir yanıt gelene kadar durur */}
+        {lastError ? (
+          <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <span className="font-semibold">Cihaz son komutu reddetti:</span> {lastError}
+          </p>
+        ) : null}
+
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
         <div className="rounded-xl border border-border bg-panel-2 p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -406,6 +449,9 @@ export function DeviceControlModal({
             })
           )}
         </div>
+
+        {/* Sürücü / LED telemetrisi (d4i_periodic raporlarından) */}
+        <D4iPanel rows={telemetry} loading={telemetryLoading} onRefresh={refreshTelemetry} />
 
         <div className="mt-5 flex justify-end">
           <button

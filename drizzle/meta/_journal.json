@@ -29,6 +29,13 @@
       "when": 1784529612124,
       "tag": "0003_outstanding_wither",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784708152194,
+      "tag": "0004_light_makkari",
+      "breakpoints": true
     }
   ]
 }

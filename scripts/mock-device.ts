@@ -1,42 +1,42 @@
 /*
- * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin Meven/MAC
- * kontratını birebir taklit eder:
- *   - subscribe Meven:<MAC>/cmd  ve  Meven:all/cmd
- *   - gelen { action, value, number, channel } komutunu uygular
- *   - Meven:<MAC>/data'ya durum yayınlar (tek-lamba veya çok-lamba channels[])
- *   - 30 sn'de bir heartbeat
+ * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin güncel kontratını
+ * birebir taklit eder:
+ *   - subscribe Meven:<MAC>/cmd , Meven:<ZONE>/cmd , Meven:all/cmd
+ *   - gelen { action, value, number, channel } komutunu DOĞRULAR ve sonucu
+ *     Meven:<MAC>/data'ya {"status":"ok"} / {"status":"error","error":"..."}
+ *     olarak yayınlar (hata metinleri firmware'dekiyle aynı)
+ *   - her DALI adresi için periyodik {"type":"d4i_periodic", ...} raporu
  *
  * Çalıştır:
- *   npm run mock:device                       # tek lamba, varsayılan MAC A842E3123456
- *   npm run mock:device A8:42:E3:12:34:56      # iki noktalı da olur (normalize edilir)
- *   npm run mock:device A842E3123456 3         # 3 DALI kanallı (çok-lamba) cihaz
+ *   npm run mock:device                              # 2 kanal, MAC A842E3123456
+ *   npm run mock:device A8:42:E3:12:34:56            # iki noktalı da olur
+ *   npm run mock:device A842E3123456 4               # 4 DALI kanalı (adres 0..3)
+ *   npm run mock:device A842E3123456 2 ataturk-bulvari   # bölge topic'ini de dinle
+ *
+ * Not: adres 0 bilerek `d4i_supported:false` raporlar (sahadaki örnekle aynı) —
+ * dashboard'un D4i'siz sürücüyü de doğru gösterdiğini test etmek için.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
-import { effectByNumber } from "@/lib/effects";
+import { effectByNumber, EFFECT_COUNT } from "@/lib/effects";
+import { BROADCAST_CHANNEL, MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
 
 const MAC = (process.argv[2] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
   .toUpperCase();
-
-// argv[3] > 0 ise çok-lamba (kanal) modu; kanallar 0..N-1.
-const CH_COUNT = Math.max(0, Math.min(64, Number(process.argv[3] ?? 0) || 0));
-const MULTI = CH_COUNT > 0;
+const CH_COUNT = Math.max(1, Math.min(64, Number(process.argv[3] ?? 2) || 2));
+const ZONE_SLUG = process.argv[4];
 
 const T_CMD = `Meven:${MAC}/cmd`;
 const T_ALL = "Meven:all/cmd";
 const T_DATA = `Meven:${MAC}/data`;
+const TOPICS = [T_CMD, T_ALL, ...(ZONE_SLUG ? [`Meven:${ZONE_SLUG}/cmd`] : [])];
 
-// Tek-lamba durumu (legacy)
-let relayStatus: "on" | "off" = "off";
-let brightness = 0;
-
-// Çok-lamba durumu: kanal → { isOn, brightness }
-const channels = new Map<number, { isOn: boolean; brightness: number }>();
-if (MULTI) {
-  for (let i = 0; i < CH_COUNT; i++) channels.set(i, { isOn: false, brightness: 0 });
-}
+/** Kanal durumu — firmware gibi 0-254 DALI arc level tutulur. */
+type ChannelState = { level: number; on: boolean; fx: number | null };
+const channels = new Map<number, ChannelState>();
+for (let i = 0; i < CH_COUNT; i++) channels.set(i, { level: 0, on: false, fx: null });
 
 const client = mqtt.connect({
   protocol: "mqtts",
@@ -48,52 +48,107 @@ const client = mqtt.connect({
   clientId: `mock-${MAC}-${Math.random().toString(16).slice(2, 8)}`,
 });
 
-function publishData(status: "ok" | "error" = "ok") {
-  const base = {
-    deviceId: MAC,
-    temperature: 38 + Math.floor(Math.random() * 8), // 38-45°C
-    rssi: -50 - Math.floor(Math.random() * 30),
-    status,
-  };
-  if (MULTI) {
-    const chArr = [...channels.entries()].map(([ch, s]) => ({
-      ch,
-      brightness: s.isOn ? s.brightness : 0,
-      relayStatus: s.isOn ? ("on" as const) : ("off" as const),
-    }));
-    client.publish(T_DATA, JSON.stringify({ ...base, channels: chArr }), { qos: 0 });
-    console.log(`  → data: ${chArr.map((c) => `ch${c.ch}=${c.relayStatus}%${c.brightness}`).join(" ")} (${status})`);
-  } else {
-    const payload = { ...base, brightness: relayStatus === "on" ? brightness : 0, relayStatus };
-    client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
-    console.log(`  → data: röle=${relayStatus} %${payload.brightness} ${base.temperature}°C (${status})`);
-  }
+function ack(error?: string) {
+  const payload = error ? { status: "error", error } : { status: "ok" };
+  client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
+  console.log(error ? `  → ack: HATA "${error}"` : "  → ack: ok");
 }
 
-/** Tek kanal (veya çok-lamba modunda tüm kanallar) durumunu uygular. */
-function applyToChannel(
-  s: { isOn: boolean; brightness: number },
-  action: string,
-  value?: number,
-) {
-  if (action === "on") {
-    s.isOn = true;
-    if (s.brightness === 0) s.brightness = 100;
-  } else if (action === "off") {
-    s.isOn = false;
-  } else if (action === "dim" && typeof value === "number") {
-    s.brightness = value;
-    s.isOn = true;
+/** Sürücü/LED sayaçlarıyla birlikte tek adresin D4i raporu. */
+function publishD4i(address: number) {
+  const s = channels.get(address);
+  if (!s) return;
+  const supported = address !== 0; // adres 0 → D4i'siz sürücü senaryosu
+
+  const payload: Record<string, unknown> = {
+    type: "d4i_periodic",
+    address,
+    online: true,
+    status: {
+      status: s.on ? 4 : 0, // bit2 = lamba yanıyor
+      control_gear_present: 255,
+      lamp_failure: null,
+      lamp_power_on: s.on ? 255 : 0,
+      actual_level: s.on ? s.level : 0,
+      max_level: MAX_ARC_LEVEL,
+      physical_min_level: 157,
+      min_level: 157,
+    },
+    d4i_supported: supported,
+  };
+
+  if (supported) {
+    const powerW = s.on ? Math.round((s.level / MAX_ARC_LEVEL) * 473) / 10 : 0;
+    payload.d4i = {
+      energy: { raw_integer: "9820154", scale_exponent: -3, value: 9820.154, unit: "Wh" },
+      power: { raw_integer: Math.round(powerW * 10), scale_exponent: -1, value: powerW, unit: "W" },
+      driver: {
+        operating_time_s: 1685203,
+        startup_count: 85,
+        input_voltage_v: 230 + Math.floor(Math.random() * 5),
+        mains_frequency_hz: 49,
+        power_factor: 1,
+        temperature_c: 45 + Math.floor(Math.random() * 10),
+        output_current_percent: Math.round((s.level / MAX_ARC_LEVEL) * 100),
+        general_failure: 0,
+        general_failure_count: 5,
+        undervoltage_failure: 0,
+        undervoltage_failure_count: 4,
+        overvoltage_failure: 0,
+        overvoltage_failure_count: 1,
+        power_limitation: 0,
+        power_limitation_count: 0,
+        thermal_derating: 0,
+        thermal_derating_count: 0,
+        thermal_shutdown: 0,
+        thermal_shutdown_count: 0,
+      },
+      led: {
+        startup_count: 11792,
+        operating_time_s: 747782,
+        voltage_v: 1.7,
+        current_a: 0.592,
+        general_failure: 0,
+        general_failure_count: 253,
+        short_circuit: 0,
+        short_circuit_count: 6,
+        open_circuit: 0,
+        open_circuit_count: 253,
+        thermal_derating: 0,
+        thermal_derating_count: 1,
+        thermal_shutdown: 0,
+        thermal_shutdown_count: 5,
+        temperature_c: 40 + Math.floor(Math.random() * 10),
+      },
+    };
   }
+
+  client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
+  console.log(
+    `  → d4i_periodic ch${address}: ${s.on ? "açık" : "kapalı"} level=${s.on ? s.level : 0}${supported ? "" : " (D4i yok)"}`,
+  );
+}
+
+/** Komutun hedeflediği adresler: 255 = broadcast, aksi halde tek adres. */
+function targets(channel: number): number[] {
+  return channel === BROADCAST_CHANNEL ? [...channels.keys()] : [channel];
+}
+
+function validChannel(c: unknown): c is number {
+  return (
+    typeof c === "number" &&
+    Number.isInteger(c) &&
+    ((c >= 0 && c <= MAX_CHANNEL) || c === BROADCAST_CHANNEL)
+  );
 }
 
 client.on("connect", () => {
-  console.log(`✓ HiveMQ bağlandı — sanal cihaz MAC: ${MAC}${MULTI ? ` (${CH_COUNT} kanal)` : ""}`);
-  client.subscribe([T_CMD, T_ALL], { qos: 1 }, (err) => {
+  console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)`);
+  client.subscribe(TOPICS, { qos: 1 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
-    console.log(`  dinleniyor:\n    ${T_CMD}\n    ${T_ALL}`);
-    console.log("\nDashboard'dan bu cihazı (veya lambalarını / bölgesini / 'Tüm Sistem'i) kullan → komutlar burada görünecek.\n");
-    publishData();
+    console.log(`  dinleniyor:\n    ${TOPICS.join("\n    ")}`);
+    console.log("\nDashboard'dan komut gönder → burada görünecek, yanıtı dashboard'a dönecek.\n");
+    for (const ch of channels.keys()) publishD4i(ch);
   });
 });
 
@@ -102,58 +157,90 @@ client.on("message", (topic, raw) => {
   try {
     cmd = JSON.parse(raw.toString());
   } catch {
-    console.warn("geçersiz komut payload");
-    return publishData("error");
+    console.warn("◀ geçersiz JSON");
+    return ack("gecersiz json");
   }
 
-  const via = topic === T_ALL ? "all" : "MAC";
-  const action = cmd.action ?? "";
-  const hasCh = typeof cmd.channel === "number";
+  const via = topic === T_ALL ? "all" : topic === T_CMD ? "MAC" : "bölge";
+  const { action, value, number, channel } = cmd;
+  const scope = channel === BROADCAST_CHANNEL ? "tüm kanallar" : `ch${channel}`;
 
-  // Efekt — sadece logla, durumu değiştirme (firmware efekt motoru sürer).
+  if (action === "on" || action === "off") {
+    if (!validChannel(channel)) return ack("bilinmeyen action");
+    for (const a of targets(channel)) {
+      const s = channels.get(a);
+      if (!s) continue;
+      s.on = action === "on";
+      s.fx = null;
+      if (s.on && s.level === 0) s.level = MAX_ARC_LEVEL;
+    }
+    console.log(`◀ ${action} (${via}, ${scope})`);
+    ack();
+    for (const a of targets(channel)) publishD4i(a);
+    return;
+  }
+
+  if (action === "dim") {
+    if (typeof value !== "number" || value < 0 || value > 100 || !validChannel(channel)) {
+      console.warn(`◀ dim reddedildi (value=${value} channel=${channel})`);
+      return ack("dim icin value (0..100) ve channel (0..63 veya 255) gerekli");
+    }
+    for (const a of targets(channel)) {
+      const s = channels.get(a);
+      if (!s) continue;
+      s.level = Math.round((value / 100) * MAX_ARC_LEVEL);
+      s.on = true;
+      s.fx = null;
+    }
+    console.log(`◀ dim ${value} (${via}, ${scope})`);
+    ack();
+    for (const a of targets(channel)) publishD4i(a);
+    return;
+  }
+
   if (action === "efekt") {
-    const fx = effectByNumber(cmd.number);
-    const scope = hasCh ? `ch${cmd.channel}` : MULTI ? "tüm kanallar" : "cihaz";
-    if (MULTI) {
-      const list = hasCh ? [channels.get(cmd.channel!)!].filter(Boolean) : [...channels.values()];
-      for (const s of list) s.isOn = true;
-    } else {
-      relayStatus = "on";
+    if (
+      typeof number !== "number" ||
+      number < 0 ||
+      number > EFFECT_COUNT ||
+      !validChannel(channel)
+    ) {
+      console.warn(`◀ efekt reddedildi (number=${number} channel=${channel})`);
+      return ack("efekt icin number (0..14) ve channel (0..63 veya 255) gerekli");
     }
-    console.log(`◀ efekt (${via}, ${scope}): #${cmd.number} ${fx?.label ?? "?"}`);
-    return publishData();
+    for (const a of targets(channel)) {
+      const s = channels.get(a);
+      if (!s) continue;
+      s.fx = number === 0 ? null : number;
+      if (number > 0) s.on = true;
+    }
+    console.log(`◀ efekt #${number} ${effectByNumber(number)?.label ?? "durdur"} (${via}, ${scope})`);
+    ack();
+    for (const a of targets(channel)) publishD4i(a);
+    return;
   }
 
-  if (!["on", "off", "dim"].includes(action)) {
-    console.warn(`bilinmeyen action: ${action}`);
-    return publishData("error");
+  if (action === "d4i_read") {
+    if (typeof channel !== "number" || channel < 0 || channel > MAX_CHANNEL) {
+      console.warn(`◀ d4i_read reddedildi (channel=${channel})`);
+      return ack("d4i_read icin channel (0..63) gerekli");
+    }
+    console.log(`◀ d4i_read (${via}, ch${channel})`);
+    ack();
+    publishD4i(channel);
+    return;
   }
 
-  if (MULTI) {
-    if (hasCh) {
-      const s = channels.get(cmd.channel!);
-      if (!s) {
-        console.warn(`tanımsız kanal: ${cmd.channel}`);
-        return publishData("error");
-      }
-      applyToChannel(s, action, cmd.value);
-    } else {
-      for (const s of channels.values()) applyToChannel(s, action, cmd.value);
-    }
-    console.log(`◀ komut (${via}, ${hasCh ? `ch${cmd.channel}` : "tüm kanallar"}): ${action}${cmd.value != null ? ` ${cmd.value}` : ""}`);
-  } else {
-    const s = { isOn: relayStatus === "on", brightness };
-    applyToChannel(s, action, cmd.value);
-    relayStatus = s.isOn ? "on" : "off";
-    brightness = s.brightness;
-    console.log(`◀ komut (${via}): ${action}${cmd.value != null ? ` ${cmd.value}` : ""}  →  röle=${relayStatus} brightness=${brightness}`);
-  }
-  publishData();
+  console.warn(`◀ bilinmeyen action: ${action}`);
+  ack("bilinmeyen action");
 });
 
 client.on("error", (e) => console.error("MQTT hata:", e.message));
 
-setInterval(() => publishData(), 30000);
+// Periyodik rapor — her adres için sırayla.
+setInterval(() => {
+  for (const ch of channels.keys()) publishD4i(ch);
+}, 30000);
 
 process.on("SIGINT", () => {
   console.log("\nkapatılıyor…");

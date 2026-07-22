@@ -7,6 +7,8 @@ import {
   boolean,
   timestamp,
   bigserial,
+  doublePrecision,
+  jsonb,
   index,
   unique,
 } from "drizzle-orm/pg-core";
@@ -42,6 +44,10 @@ export const devices = pgTable("devices", {
   zoneId: uuid("zone_id").references(() => zones.id),
   name: varchar("name", { length: 100 }),
   lastSeen: timestamp("last_seen", { withTimezone: true }),
+  // Cihazın son komut yanıtı hata ise metni burada durur (dashboard rozeti).
+  // Sonraki `{"status":"ok"}` yanıtında temizlenir.
+  lastError: varchar("last_error", { length: 200 }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -94,6 +100,51 @@ export const deviceStatus = pgTable(
   ],
 );
 
+/**
+ * D4i periyodik raporu (`{"type":"d4i_periodic", ...}`) — DALI adresi (lamba)
+ * başına bir satır, append-only geçmiş. Sık okunan/grafiğe girecek büyüklükler
+ * ayrı sütunda; sürücü ve LED'in tüm arıza sayaçları dahil ham `d4i` bloğu
+ * `raw` içinde saklanır (kontrat büyüdükçe migration gerekmesin diye).
+ *
+ * Not: cihaz ~30 sn'de bir kanal başına yayın yapar; uzun vadede saklama
+ * politikası (örn. 90 günden eskiyi sil) gerekecek.
+ */
+export const d4iTelemetry = pgTable(
+  "d4i_telemetry",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deviceId: varchar("device_id", { length: 100 }).notNull(), // MAC (topic'ten)
+    channel: integer("channel").notNull(), // payload'daki `address`
+    online: boolean("online"),
+    d4iSupported: boolean("d4i_supported").notNull().default(false),
+    // DALI durum bloğu
+    statusByte: integer("status_byte"),
+    actualLevel: integer("actual_level"), // 0-254 arc level
+    minLevel: integer("min_level"),
+    maxLevel: integer("max_level"),
+    physicalMinLevel: integer("physical_min_level"),
+    lampFailure: boolean("lamp_failure"),
+    lampPowerOn: boolean("lamp_power_on"),
+    controlGearPresent: boolean("control_gear_present"),
+    // D4i başlık metrikleri
+    energyWh: doublePrecision("energy_wh"),
+    powerW: doublePrecision("power_w"),
+    driverTemperatureC: integer("driver_temperature_c"),
+    driverVoltageV: integer("driver_voltage_v"),
+    driverOperatingTimeS: integer("driver_operating_time_s"),
+    ledTemperatureC: integer("led_temperature_c"),
+    ledVoltageV: doublePrecision("led_voltage_v"),
+    ledCurrentA: doublePrecision("led_current_a"),
+    // Ham `d4i` bloğunun tamamı (sürücü/LED arıza sayaçları vb.)
+    raw: jsonb("raw"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    index("idx_d4i_telemetry_device_channel").on(t.deviceId, t.channel),
+    index("idx_d4i_telemetry_recorded_at").on(t.recordedAt.desc()),
+  ],
+);
+
 export const commands = pgTable("commands", {
   id: uuid("id").primaryKey().defaultRandom(),
   requestId: uuid("request_id").notNull().unique(), // idempotency
@@ -111,4 +162,5 @@ export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;
 export type FixtureRow = typeof fixtures.$inferSelect;
 export type DeviceStatusRow = typeof deviceStatus.$inferSelect;
+export type D4iTelemetryRow = typeof d4iTelemetry.$inferSelect;
 export type CommandRow = typeof commands.$inferSelect;

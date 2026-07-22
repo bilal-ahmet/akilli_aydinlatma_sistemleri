@@ -99,9 +99,14 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 
 `action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"`
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
-`channel`: 0–63 arası integer (opsiyonel) — hedef **DALI kanalı (lamba)**. Yoksa
-komut tüm cihazı (bütün lambaları) etkiler. Bir ESP'ye birden çok bağımsız
-aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür.
+`channel`: hedef **DALI kanalı (lamba)** — 0–63, ya da **255 = broadcast**
+(cihazdaki tüm lambalar). Bir ESP'ye birden çok bağımsız aydınlatma bağlanabilir;
+her biri bu kanal no ile ayrı sürülür.
+
+> **`channel` her komutta gönderilir.** Firmware `dim` ve `efekt`'i channel'sız
+> reddeder (`"dim icin value (0..100) ve channel (0..63 veya 255) gerekli"`). API
+> kontratında `channel` yokluğu hâlâ "tüm cihaz" demektir; 255'e çeviri yalnızca
+> `buildPayload`'da yapılır (`BROADCAST_CHANNEL`).
 
 **Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number` 1-tabanlı efekt
 sıra no (1-14, donmuş katalog `src/lib/effects.ts`). `channel` ile tek lambaya da
@@ -110,7 +115,46 @@ lamba snapshot'ında `fixtures.active_fx` olarak optimistic tutulur.
 
 ### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
 
-Tek lamba (geriye uyum):
+Bu topic'te **üç kontrat** akar; ayrım `src/types/lighting.ts` → `parseUplink`
+içinde yapılır. Yeni iki formatta payload'da `deviceId` **yoktur** — MAC
+topic'ten çözülür (`macFromDataTopic`).
+
+**1. Komut yanıtı** — cihaz her komuttan sonra sonucu yayınlar:
+
+```json
+{ "status": "ok" }
+{ "status": "error", "error": "bilinmeyen action" }
+```
+
+Hata metni SSE ile dashboard'a gider: sağ altta bildirim + cihaz kartında rozet
+(`devices.last_error`, sonraki `ok` yanıtında temizlenir). En son bekleyen komut
+`commands.status='failed'` olur. Bilinen hata metinleri için bkz.
+`firmware/ESP32-ENTEGRASYON.md` §5.1.
+
+**2. D4i periyodik rapor** — DALI adresi (lamba) başına bir mesaj:
+
+```json
+{
+  "type": "d4i_periodic", "address": 1, "online": true,
+  "status": { "status": 4, "lamp_power_on": 255, "actual_level": 254,
+              "max_level": 254, "min_level": 157, "lamp_failure": null },
+  "d4i_supported": true,
+  "d4i": { "energy": {...}, "power": {...}, "driver": {...}, "led": {...} }
+}
+```
+
+- `address` → `fixtures.channel`. Her mesaj **tek** adres taşır; bölge/cihaz
+  agregatı bu yüzden tek mesajdan değil, cihazın tüm `fixtures` satırlarından
+  türetilir.
+- `actual_level` 0–254 DALI arc level → yüzdeye **doğrusal** çevrilir
+  (`levelToPercent`, tek dönüşüm noktası).
+- DALI sorgu yanıtları üç durumlu: `255` evet, `0` hayır, `null` yanıt yok
+  (`flagToBool`).
+- Raporun tamamı `d4i_telemetry`'ye yazılır (ham `d4i` bloğu `raw` JSONB'de);
+  cihaz modalindeki "D4i telemetrisi" paneli `GET /api/devices/:id/telemetry`
+  ile bunu okur.
+
+**3. Eski rapor (geriye uyum)** — `deviceId` alanı olan ilk kontrat:
 
 ```json
 {
@@ -172,6 +216,7 @@ Backend bu endpoint'leri aldığında ilgili MQTT topic'ine publish eder.
 GET    /api/devices/:deviceId/fixtures          → cihaza bağlı lambalar
 POST   /api/devices/:deviceId/fixtures          → manuel lamba ekle { channel, name? }
 DELETE /api/devices/:deviceId/fixtures/:channel → lamba kaydını sil
+GET    /api/devices/:deviceId/telemetry         → kanal başına son D4i raporu
 ```
 
 ### Durum Okuma
@@ -221,12 +266,14 @@ CREATE TABLE zones (
 
 ```sql
 CREATE TABLE devices (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  device_id   VARCHAR(100) UNIQUE NOT NULL,  -- ESP32 tanımlayıcısı
-  zone_id     UUID REFERENCES zones(id),
-  name        VARCHAR(100),
-  last_seen   TIMESTAMPTZ,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id     VARCHAR(100) UNIQUE NOT NULL,  -- ESP32 tanımlayıcısı (MAC)
+  zone_id       UUID REFERENCES zones(id),
+  name          VARCHAR(100),
+  last_seen     TIMESTAMPTZ,
+  last_error    VARCHAR(200),   -- son komut yanıtı hatası (ok gelince NULL'lanır)
+  last_error_at TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
@@ -270,6 +317,35 @@ CREATE TABLE device_status (
 CREATE INDEX idx_device_status_device_id ON device_status(device_id);
 CREATE INDEX idx_device_status_recorded_at ON device_status(recorded_at DESC);
 ```
+
+### `d4i_telemetry`
+
+`d4i_periodic` raporlarının append-only geçmişi — DALI adresi başına bir satır.
+Sık okunan büyüklükler ayrı sütunda, raporun ham `d4i` bloğu (sürücü/LED arıza
+sayaçları dahil) `raw` JSONB'de.
+
+```sql
+CREATE TABLE d4i_telemetry (
+  id            BIGSERIAL PRIMARY KEY,
+  device_id     VARCHAR(100) NOT NULL,   -- MAC (topic'ten)
+  channel       INTEGER NOT NULL,        -- payload'daki `address`
+  online        BOOLEAN,
+  d4i_supported BOOLEAN NOT NULL DEFAULT FALSE,
+  status_byte   INTEGER,  actual_level INTEGER,      -- 0-254 arc level
+  min_level     INTEGER,  max_level    INTEGER,  physical_min_level INTEGER,
+  lamp_failure  BOOLEAN,  lamp_power_on BOOLEAN, control_gear_present BOOLEAN,
+  energy_wh     DOUBLE PRECISION, power_w DOUBLE PRECISION,
+  driver_temperature_c INTEGER, driver_voltage_v INTEGER, driver_operating_time_s INTEGER,
+  led_temperature_c INTEGER, led_voltage_v DOUBLE PRECISION, led_current_a DOUBLE PRECISION,
+  raw           JSONB,                   -- `d4i` bloğunun tamamı
+  recorded_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_d4i_telemetry_device_channel ON d4i_telemetry(device_id, channel);
+CREATE INDEX idx_d4i_telemetry_recorded_at ON d4i_telemetry(recorded_at DESC);
+```
+
+> Cihaz kanal başına ~30 sn'de bir yayın yapar; tablo sınırsız büyür. İleride
+> saklama politikası (örn. 90 günden eskiyi sil) gerekecek.
 
 ### `commands`
 
@@ -377,6 +453,8 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   ├── app/
 │   │   ├── page.tsx                      # dashboard (DB'den zone okur)
 │   │   ├── _components/                  # UI (DashboardClient, ZoneCard, ...)
+│   │   │   ├── ErrorToasts.tsx           # cihaz komut hatası bildirimleri (SSE)
+│   │   │   ├── D4iPanel.tsx              # sürücü/LED telemetri detayı
 │   │   ├── _lib/
 │   │   │   ├── useLiveStatus.ts          # SSE (EventSource) hook
 │   │   │   ├── mockData.ts / types.ts / format.ts
@@ -384,7 +462,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   │       ├── zones/route.ts            # GET /api/zones
 │   │       ├── zones/[zoneId]/command|status/route.ts
 │   │       ├── devices/route.ts
-│   │       ├── devices/[deviceId]/command|status/route.ts
+│   │       ├── devices/[deviceId]/command|status|fixtures|telemetry/route.ts
 │   │       └── events/route.ts           # SSE (/api/events)
 │   ├── lib/
 │   │   ├── mqtt.ts                       # MQTT singleton (TLS) + publishCommand

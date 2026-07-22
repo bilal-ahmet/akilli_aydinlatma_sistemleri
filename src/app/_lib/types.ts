@@ -27,6 +27,47 @@ export interface DeviceView {
   relayStatus: string | null; // on | off
   temperature: number | null;
   rssi: number | null;
+  /** Cihazın son komut yanıtı hataysa metni; sonraki başarılı yanıtta temizlenir. */
+  lastError: string | null;
+  lastErrorAt: string | null;
+}
+
+/**
+ * Bir DALI adresinin (lambanın) son D4i raporu — cihaz modalindeki detay
+ * paneli bunu gösterir. `raw`, cihazın gönderdiği `d4i` bloğunun tamamıdır
+ * (sürücü/LED arıza sayaçları dahil).
+ */
+export interface D4iSnapshot {
+  channel: number;
+  online: boolean | null;
+  d4iSupported: boolean;
+  actualLevel: number | null;
+  minLevel: number | null;
+  maxLevel: number | null;
+  physicalMinLevel: number | null;
+  lampFailure: boolean | null;
+  lampPowerOn: boolean | null;
+  controlGearPresent: boolean | null;
+  energyWh: number | null;
+  powerW: number | null;
+  driverTemperatureC: number | null;
+  driverVoltageV: number | null;
+  driverOperatingTimeS: number | null;
+  ledTemperatureC: number | null;
+  ledVoltageV: number | null;
+  ledCurrentA: number | null;
+  raw: D4iRaw | null;
+  recordedAt: string | null;
+}
+
+/** `d4i_periodic` payload'ının ham gövdesi (yalnızca okunan alanlar tiplenir). */
+export interface D4iRaw {
+  d4i?: {
+    driver?: Record<string, number | null>;
+    led?: Record<string, number | null>;
+    energy?: { value?: number | null; unit?: string | null };
+    power?: { value?: number | null; unit?: string | null };
+  };
 }
 
 /** Bir ESP'ye bağlı tek bağımsız aydınlatma (DALI kanalı). */

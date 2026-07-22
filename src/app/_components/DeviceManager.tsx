@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Zone, DeviceView } from "@/app/_lib/types";
+import type { LiveEvent } from "@/types/lighting";
+import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 import { DeviceControlModal } from "./DeviceControlModal";
@@ -48,6 +50,25 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  // Komut yanıtı (ack) geldiğinde hata rozetini canlı güncelle: hata metnini
+  // yaz, başarılı yanıtta temizle. Kalıcı değer devices.last_error'da.
+  const onLive = useCallback((e: LiveEvent) => {
+    if (e.kind !== "ack" || !e.deviceId) return;
+    setDevices((ds) =>
+      ds.map((d) =>
+        d.deviceId === e.deviceId
+          ? {
+              ...d,
+              lastError: e.error ?? null,
+              lastErrorAt: e.error ? e.at : null,
+              lastSeen: e.at,
+            }
+          : d,
+      ),
+    );
+  }, []);
+  useLiveStatus(onLive);
 
   function openAdd() {
     setZoneSlug(zones[0]?.id ?? "");
@@ -134,12 +155,25 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                     title="Cihazı kontrol et"
                     className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-2 py-2 text-left transition-colors hover:bg-glow/10"
                   >
-                    <span className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</span>
+                      {d.lastError ? (
+                        <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                          komut hatası
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="mt-0.5 text-xs text-muted">
                       {d.zoneName ?? "bölge yok"}
                       {d.name ? ` · ${d.name}` : ""} · son görülme: {formatSeen(d.lastSeen)}
                     </span>
                     {tel ? <span className="mt-0.5 font-mono text-[11px] text-accent">{tel}</span> : null}
+                    {d.lastError ? (
+                      <span className="mt-0.5 text-[11px] text-danger">
+                        {d.lastError}
+                        {d.lastErrorAt ? ` · ${formatSeen(d.lastErrorAt)}` : ""}
+                      </span>
+                    ) : null}
                   </button>
                   <button
                     type="button"

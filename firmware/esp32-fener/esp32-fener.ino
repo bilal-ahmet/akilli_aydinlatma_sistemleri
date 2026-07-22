@@ -1,6 +1,17 @@
 /*
  * Fener — Akıllı Sokak Aydınlatma · ESP32 firmware (MAC tabanlı, Meven şeması)
  * ------------------------------------------------------------------
+ * ⚠️  GÜNCEL DEĞİL — sahadaki firmware ile aynı değildir.
+ *
+ * Bu sketch ilk kontratı uygular (channel doğrulaması yok, komut yanıtı yok,
+ * D4i raporu yok). Cihazlar artık:
+ *   - dim/efekt komutlarında `channel` (0-63 ya da 255) ZORUNLU tutuyor,
+ *   - her komuttan sonra {"status":"ok"} / {"status":"error","error":"..."} dönüyor,
+ *   - durum raporunu {"type":"d4i_periodic", "address": N, ...} olarak yayınlıyor.
+ *
+ * Geçerli kontrat: ../ESP32-ENTEGRASYON.md
+ * Donanımsız uçtan uca test: `npm run mock:device` (kontratın tamamını taklit eder).
+ * ------------------------------------------------------------------
  * Cihaz açılışta kendi MAC'ini okur (iki noktasız), HiveMQ Cloud'a TLS (8883)
  * ile bağlanır ve şu topic'leri kullanır:
  *   subscribe: Meven:<MAC>/cmd , Meven:<ZONE_SLUG>/cmd , Meven:all/cmd

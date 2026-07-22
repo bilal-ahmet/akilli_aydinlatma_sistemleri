@@ -9,6 +9,7 @@ import { StatusOverview } from "./StatusOverview";
 import { MasterControl } from "./MasterControl";
 import { ZoneGrid } from "./ZoneGrid";
 import { DeviceManager } from "./DeviceManager";
+import { ErrorToasts } from "./ErrorToasts";
 import { EffectPicker } from "./EffectPicker";
 import { Modal } from "./Modal";
 import { ZoneForm, type ZoneFormValues } from "./ZoneForm";
@@ -306,6 +307,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         onDelete={(z) => setDeleting(z)}
       />
       <DeviceManager zones={zones} />
+
+      {/* Cihazın reddettiği komutların hata bildirimleri */}
+      <ErrorToasts />
 
       {/* Efekt seçici */}
       <EffectPicker

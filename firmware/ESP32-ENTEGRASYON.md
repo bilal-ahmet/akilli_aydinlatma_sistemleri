@@ -43,20 +43,24 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 
 ## 4) Komut payload (gelen, cmd)
 ```json
-{ "action": "dim", "value": 75 }
+{ "action": "dim", "value": 75, "channel": 255 }
 ```
 ```json
-{ "action": "on" }
+{ "action": "on", "channel": 3 }
 ```
 ```json
-{ "action": "off" }
+{ "action": "off", "channel": 255 }
 ```
 - `action`: `"on"` | `"off"` | `"dim"` | `"efekt"`
 - `value`: 0-100 (yalnız `dim`'de).
+- `channel`: DALI adresi **0-63**, ya da **255 = broadcast** (cihazdaki tüm
+  lambalar). Backend `channel`'ı **her komutta** gönderir; dashboard'da tek lamba
+  seçilmediyse 255 yazılır. (`dim` ve `efekt` firmware'de channel olmadan
+  reddedilir.)
 
 ### Efekt komutu
 ```json
-{ "action": "efekt", "number": 10 }
+{ "action": "efekt", "number": 10, "channel": 255 }
 ```
 - `number`: **1-tabanlı** efekt sıra numarası (1-14). Firmware bunu fonksiyon
   dizisine indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
@@ -81,27 +85,75 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 | 14 | dali_fx_chase | Lambaları sırayla yakma (0..count-1) |
 
 ## 5) Veri payload (giden, data)
+
+`Meven:<MAC>/data` üzerinde **üç ayrı mesaj tipi** akar. Yeni tiplerde payload'da
+`deviceId` **yoktur** — backend MAC'i topic'ten okur (`macFromDataTopic`).
+
+### 5.1) Komut yanıtı (her komuttan sonra)
+```json
+{ "status": "ok" }
+{ "status": "error", "error": "gecersiz json" }
+{ "status": "error", "error": "dim icin value (0..100) ve channel (0..63 veya 255) gerekli" }
+{ "status": "error", "error": "efekt icin number (0..14) ve channel (0..63 veya 255) gerekli" }
+{ "status": "error", "error": "bilinmeyen action" }
+{ "status": "error", "error": "d4i_read icin channel (0..63) gerekli" }
+```
+Hata metni dashboard'da bildirim olarak gösterilir ve cihaz kartında rozet olarak
+kalır (`devices.last_error`); sonraki `{"status":"ok"}` yanıtı rozeti temizler.
+Payload'da korelasyon alanı olmadığından hata, o cihaza giden **en son bekleyen**
+komuta yazılır.
+
+### 5.2) D4i periyodik rapor (adres başına, ~30 sn)
 ```json
 {
-  "deviceId": "A842E3123456",
-  "brightness": 75,
-  "relayStatus": "on",
-  "temperature": 42,
-  "rssi": -67,
-  "status": "ok"
+  "type": "d4i_periodic",
+  "address": 1,
+  "online": true,
+  "status": {
+    "status": 4, "control_gear_present": 255, "lamp_failure": null,
+    "lamp_power_on": 255, "actual_level": 254, "max_level": 254,
+    "physical_min_level": 157, "min_level": 157
+  },
+  "d4i_supported": true,
+  "d4i": {
+    "energy": { "value": 9820.154, "unit": "Wh" },
+    "power":  { "value": 47.3, "unit": "W" },
+    "driver": { "temperature_c": 52, "input_voltage_v": 232, "operating_time_s": 1685203, "…": "arıza sayaçları" },
+    "led":    { "voltage_v": 1.7, "current_a": 0.592, "temperature_c": -7, "…": "arıza sayaçları" }
+  }
 }
 ```
-- `relayStatus`: `"on"` | `"off"` (röle durumu → dashboard'da bölge açık/kapalı)
-- `brightness`: 0-100 · `temperature`: °C · `rssi`: dBm · `status`: `"ok"` | `"error"`
-- Her komut sonrası ve periyodik (~30 sn) bir kez yayınla (last-seen güncel kalsın).
+- `address`: DALI kısa adres (0-63) = dashboard'daki **kanal/lamba**. Her mesaj
+  **tek** adresi taşır.
+- `actual_level`: 0-254 DALI arc level. Backend yüzdeye **doğrusal** çevirir
+  (`level/254×100`) — firmware `dim` değerini de doğrusal ölçeklediği için.
+- DALI sorgu yanıtları üç durumlu: `255` (evet), `0` (hayır), `null` (yanıt yok).
+- `d4i_supported: false` ise `d4i` bloğu gönderilmez; `status` bloğu yine gelir.
+- Raporun tamamı `d4i_telemetry` tablosunda saklanır (ham `d4i` bloğu dahil) ve
+  cihaz modalindeki "D4i telemetrisi" panelinde gösterilir.
+
+### 5.3) Eski (ilk kontrat) rapor — hâlâ destekleniyor
+```json
+{ "deviceId": "A842E3123456", "brightness": 75, "relayStatus": "on",
+  "temperature": 42, "rssi": -67, "status": "ok" }
+```
+- `relayStatus`: `"on"` | `"off"` · `brightness`: 0-100 · `status`: `"ok"` | `"error"`
+- Backend bu formatı `deviceId` alanının varlığından tanır; yeni cihazlarda
+  kullanılmaz.
 
 ## 6) Akış özeti
 - Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
 - Dashboard bölge komutu → `Meven:<slug>/cmd`'e **tek publish** (o bölgedeki her cihaz alır).
 - Dashboard "Tüm Sistem" → `Meven:all/cmd`'e tek publish (her cihaz alır).
-- Cihaz durum bildirir → `Meven:<MAC>/data`'ya publish → backend `deviceId`(MAC) ile
-  cihazı bulup dashboard'ı günceller. (Cihazın MAC'i önceden dashboard'dan `devices`
-  tablosuna kayıtlı olmalı; aksi halde veri loglanır ama bölgeyle eşleşmez.)
+- Cihaz komutu işler → `{"status":...}` yanıtını `Meven:<MAC>/data`'ya publish →
+  backend hatayı dashboard'a bildirim + rozet olarak yansıtır.
+- Cihaz durum bildirir → `Meven:<MAC>/data`'ya `d4i_periodic` publish → backend
+  MAC'i **topic'ten** çözüp lamba/bölge snapshot'ını ve telemetriyi günceller.
+  (Cihazın MAC'i önceden dashboard'dan `devices` tablosuna kayıtlı olmalı; aksi
+  halde veri loglanır ama bölgeyle eşleşmez.)
+
+Donanımsız uçtan uca test: `npm run mock:device <MAC> <kanal sayısı> <bölge slug>`
+— sanal cihaz bu sözleşmenin tamamını (doğrulama hataları dahil) taklit eder.
 
 ## 7) Kütüphaneler / notlar (Arduino)
 - **PubSubClient** + **ArduinoJson v7** + `WiFiClientSecure` (ESP32 core'da).
