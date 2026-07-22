@@ -5,6 +5,7 @@ import type { DeviceView, Fixture, D4iSnapshot } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { effectByNumber } from "@/lib/effects";
+import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 import { Toggle } from "./Toggle";
@@ -18,7 +19,7 @@ const DIM_DEBOUNCE_MS = 150;
 /** Cihaz bazlı komut → POST /api/devices/:id/command. channel yoksa tüm cihaz. */
 async function sendDeviceCommand(
   deviceId: string,
-  body: { action: Action; value?: number; number?: number; channel?: number },
+  body: { action: Action; value?: number; number?: number; channel?: number; text?: string },
 ): Promise<number | undefined> {
   const res = await fetch(`/api/devices/${deviceId}/command`, {
     method: "POST",
@@ -221,14 +222,17 @@ export function DeviceControlModal({
   }
 
   // ── Efektler ──────────────────────────────────────────────
-  function pickEffect(number: number) {
-    const t = effectTarget;
+  function pickEffect(number: number, text?: string) {
+    // Tüm hattı süren efektler (Chase) kanal kabul etmiyor — tek lamba seçilmiş
+    // olsa bile komut cihazın tamamına gider, yoksa cihaz reddederdi
+    // ("chase efekti tum lambalari surer, channel gondermeyin").
+    const t = effectByNumber(number)?.allLamps ? "device" : effectTarget;
     if (t === null) return;
     if (t === "device") {
       setDeviceOn(true);
       setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, activeFx: number })));
       beginPending("__device__");
-      sendDeviceCommand(deviceId, { action: "efekt", number })
+      sendDeviceCommand(deviceId, { action: "efekt", number, text })
         .then((seq) => applySeq("__device__", seq))
         .catch(() => {})
         .finally(() => endPending("__device__"));
@@ -236,7 +240,7 @@ export function DeviceControlModal({
       setFixtures((fs) => fs.map((f) => (f.channel === t ? { ...f, isOn: true, activeFx: number } : f)));
       const key = `ch-${t}`;
       beginPending(key);
-      sendDeviceCommand(deviceId, { action: "efekt", number, channel: t })
+      sendDeviceCommand(deviceId, { action: "efekt", number, channel: t, text })
         .then((seq) => applySeq(key, seq))
         .catch(() => {})
         .finally(() => endPending(key));
@@ -324,9 +328,16 @@ export function DeviceControlModal({
 
         {/* Cihazın son komut yanıtı hata ise: başarılı bir yanıt gelene kadar durur */}
         {lastError ? (
-          <p className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-            <span className="font-semibold">Cihaz son komutu reddetti:</span> {lastError}
-          </p>
+          (() => {
+            const info = describeDeviceError(lastError);
+            return (
+              <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+                <p className="font-semibold">{info.title}</p>
+                <p className="mt-0.5">{info.cause}</p>
+                {info.hint ? <p className="mt-1 text-muted">{info.hint}</p> : null}
+              </div>
+            );
+          })()
         ) : null}
 
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}

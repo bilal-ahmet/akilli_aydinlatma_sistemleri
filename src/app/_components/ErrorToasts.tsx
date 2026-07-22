@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
+import { describeDeviceError, type DeviceErrorInfo } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
 
 /** Bildirim ekranda bu kadar kalır. */
@@ -10,7 +11,12 @@ const TOAST_TTL_MS = 8000;
 /** Aynı anda gösterilen en fazla bildirim (eskiler düşer). */
 const MAX_TOASTS = 4;
 
-type Toast = { id: number; deviceId?: string; message: string };
+type Toast = {
+  id: number;
+  deviceId?: string;
+  channel?: number;
+  info: DeviceErrorInfo;
+};
 
 /**
  * Cihazın komut yanıtından (`{"status":"error","error":"..."}`) gelen hataları
@@ -30,7 +36,13 @@ export function ErrorToasts() {
     (e: LiveEvent) => {
       if (!e.error) return;
       const id = nextId.current++;
-      setToasts((ts) => [...ts, { id, deviceId: e.deviceId, message: e.error! }].slice(-MAX_TOASTS));
+      const toast: Toast = {
+        id,
+        deviceId: e.deviceId,
+        channel: e.channel,
+        info: describeDeviceError(e.error),
+      };
+      setToasts((ts) => [...ts, toast].slice(-MAX_TOASTS));
       setTimeout(() => dismiss(id), TOAST_TTL_MS);
     },
     [dismiss],
@@ -65,11 +77,17 @@ export function ErrorToasts() {
             <path d="M12 8v5M12 16h.01" />
           </svg>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-danger">Cihaz komutu reddetti</p>
-            <p className="mt-0.5 text-sm break-words text-text">{t.message}</p>
-            {t.deviceId ? (
-              <p className="mt-0.5 font-mono text-[11px] text-muted">{formatMac(t.deviceId)}</p>
+            <p className="text-xs font-semibold text-danger">{t.info.title}</p>
+            <p className="mt-0.5 text-sm break-words text-text">{t.info.cause}</p>
+            {t.info.hint ? (
+              <p className="mt-1 text-[11px] break-words text-muted">{t.info.hint}</p>
             ) : null}
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-muted">
+              {t.deviceId ? <span>{formatMac(t.deviceId)}</span> : null}
+              {typeof t.channel === "number" ? <span>· ch{t.channel}</span> : null}
+              {/* Katalogda olmayan hatada ham metin zaten sebep satırında. */}
+              {t.info.known ? <span className="opacity-70">· {t.info.raw}</span> : null}
+            </p>
           </div>
           <button
             type="button"

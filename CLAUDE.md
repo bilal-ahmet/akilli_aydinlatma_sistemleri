@@ -108,10 +108,30 @@ her biri bu kanal no ile ayrı sürülür.
 > kontratında `channel` yokluğu hâlâ "tüm cihaz" demektir; 255'e çeviri yalnızca
 > `buildPayload`'da yapılır (`BROADCAST_CHANNEL`).
 
-**Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number` 1-tabanlı efekt
-sıra no (1-14, donmuş katalog `src/lib/effects.ts`). `channel` ile tek lambaya da
-verilebilir. on/off/dim efekti durdurur. Bölge snapshot'ında `zones.active_fx`,
-lamba snapshot'ında `fixtures.active_fx` olarak optimistic tutulur.
+**Efekt komutu:** `{ "action": "efekt", "number": 10, "channel": 255 }` — `number`
+1-tabanlı efekt sıra no, donmuş katalog `src/lib/effects.ts`. `channel` ile tek
+lambaya da verilebilir. on/off/dim efekti durdurur. Bölge snapshot'ında
+`zones.active_fx`, lamba snapshot'ında `fixtures.active_fx` olarak optimistic
+tutulur.
+
+> **Numaralar bitişik değil:** katalog 1-14 ve **22** (Mors). 15-21 arası ESP
+> tarafında ne olduğu henüz bildirilmedi; katalogda olmadıkları için dashboard'da
+> da görünmezler. Doğrulama sınırı `EFFECT_MAX_NUMBER` (katalogun en büyük
+> numarası), **`EFFECT_COUNT` değil** — uzunluk artık numara aralığı demek değil.
+
+**Çok lambalı efektler (`allLamps`)**: Chase (#14) tüm hattı birlikte sürer ve
+`channel` KABUL ETMEZ — `buildPayload` bu efektlerde alanı hiç koymaz (broadcast
+255 bile hata döndürür), `DeviceControlModal` tek lamba seçili olsa da komutu
+cihazın tamamına gönderir. Cihaz ayrıca asgari lamba sayısı arar ve aynı anda en
+fazla 4 kanalda efekt çalıştırır; ikisi de hata metniyle bildirilir.
+
+**Mors efekti (no 22):** ek `text` alanı alır —
+`{ "action": "efekt", "number": 22, "text": "MERHABA", "channel": 255 }`.
+Harf, rakam ve boşluk; en fazla 32 karakter (`MORSE_TEXT_MAX`). `text`
+gönderilmezse cihaz **son ayarlanan metni** tekrar çalar; bu yüzden boş string
+gönderilmez, alan payload'a hiç konmaz. Girdi `normalizeMorseText` ile indirgenir
+(Türkçe harfler ASCII'ye: Ş→S, desteklenmeyen karakterler atılır) — hem
+dashboard'da anlık, hem `commandRequestSchema`'da sunucu tarafında.
 
 ### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
 
@@ -128,7 +148,14 @@ topic'ten çözülür (`macFromDataTopic`).
 
 Hata metni SSE ile dashboard'a gider: sağ altta bildirim + cihaz kartında rozet
 (`devices.last_error`, sonraki `ok` yanıtında temizlenir). En son bekleyen komut
-`commands.status='failed'` olur. Bilinen hata metinleri için bkz.
+`commands.status='failed'` olur ve o komutun `channel`'ı olaya eklenir (yanıt
+kanal taşımıyor; kanala özgü hatalarda hangi lamba olduğunu göstermek için).
+
+Ham metinler `src/lib/deviceErrors.ts` kataloğunda okunur başlık + sebep +
+ipucuna çevrilir (`describeDeviceError`); UI ham metin yerine bunu gösterir.
+Sayı taşıyan metinler (`bu efekt en az N lamba ister…`, efekt aralığı) regex ile
+eşleşir, böylece firmware sınırları değişince katalog bozulmaz. **Tanınmayan
+metin yutulmaz**, `known:false` ile ham haliyle gösterilir. Tam tablo:
 `firmware/ESP32-ENTEGRASYON.md` §5.1.
 
 **2. D4i periyodik rapor** — DALI adresi (lamba) başına bir mesaj:
@@ -203,7 +230,8 @@ Body:
 {
   "action": "dim" | "on" | "off" | "efekt",
   "value": 0-100,          # dim için
-  "number": 1-14,          # efekt için
+  "number": 1-14 | 22,     # efekt için (katalog: src/lib/effects.ts)
+  "text": "MERHABA",       # (opsiyonel) yalnızca Mors efektinde (no 22), ≤32 karakter
   "channel": 0-63          # (opsiyonel) tek DALI kanalı (lamba); cihaz komutunda
 }
 ```

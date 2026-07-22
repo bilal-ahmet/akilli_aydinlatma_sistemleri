@@ -62,9 +62,21 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 ```json
 { "action": "efekt", "number": 10, "channel": 255 }
 ```
-- `number`: **1-tabanlı** efekt sıra numarası (1-14). Firmware bunu fonksiyon
-  dizisine indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
+- `number`: **1-tabanlı** efekt sıra numarası. Firmware bunu fonksiyon dizisine
+  indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
 - `on`/`off`/`dim` komutu gelince efekt durdurulur.
+- **Numaralar bitişik değil:** 1-14 ve **22 (Mors)**. 15-21 arası tanımlı olup
+  olmadığı bildirilmedi; dashboard kataloğunda yer almıyorlar.
+
+#### Mors efekti (no 22) — `text` alanı
+```json
+{ "action": "efekt", "number": 22, "text": "MERHABA", "channel": 255 }
+```
+- `text`: harf, rakam ve boşluk; **en fazla 32 karakter**.
+- `text` **gönderilmezse** cihaz son ayarlanan metni tekrar çalar. Backend bu
+  yüzden boş metni alan olarak koymaz, alanı payload'dan tamamen çıkarır.
+- Dashboard girişi normalize eder: Türkçe harfler ASCII karşılığına düşer
+  (Ş→S, Ğ→G, İ→I…), desteklenmeyen karakterler atılır, 32'ye kırpılır.
 - **Numara tablosu (DONMUŞ KONTRAT — sıra değişmez):**
 
 | # | Fonksiyon | Açıklama |
@@ -83,6 +95,16 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 | 12 | dali_fx_lightning | Karanlık + ani şimşek |
 | 13 | dali_fx_disco | Rastgele efekt zinciri |
 | 14 | dali_fx_chase | Lambaları sırayla yakma (0..count-1) |
+| 22 | dali_fx_mors | `text` alanındaki metni Mors alfabesiyle çalar |
+
+**Çok lambalı efektler:** Chase (#14) tüm hattı birlikte sürer — komuta
+`channel` **konmaz** (broadcast 255 dahil), yoksa cihaz
+`chase efekti tum lambalari surer, channel gondermeyin` döner. Katalogda
+`allLamps: true` ile işaretlidir; backend bu efektlerde `channel` alanını
+payload'a hiç koymaz, dashboard tek lamba seçili olsa bile komutu cihazın
+tamamına gönderir. Bu efektler asgari lamba sayısı da ister
+(`bu efekt en az N lamba ister…`). Aynı anda en fazla **4 kanalda** efekt
+çalışabilir.
 
 ## 5) Veri payload (giden, data)
 
@@ -92,16 +114,34 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 ### 5.1) Komut yanıtı (her komuttan sonra)
 ```json
 { "status": "ok" }
-{ "status": "error", "error": "gecersiz json" }
-{ "status": "error", "error": "dim icin value (0..100) ve channel (0..63 veya 255) gerekli" }
-{ "status": "error", "error": "efekt icin number (0..14) ve channel (0..63 veya 255) gerekli" }
 { "status": "error", "error": "bilinmeyen action" }
-{ "status": "error", "error": "d4i_read icin channel (0..63) gerekli" }
 ```
-Hata metni dashboard'da bildirim olarak gösterilir ve cihaz kartında rozet olarak
-kalır (`devices.last_error`); sonraki `{"status":"ok"}` yanıtı rozeti temizler.
+
+**Hata metinleri (ESP ekibinin tablosu):**
+
+| Mesaj | Sebep | Kod |
+|---|---|---|
+| `gecersiz json` | Mesaj JSON olarak ayrıştırılamadı | `invalid-json` |
+| `action alani yok` | `action` eksik | `missing-action` |
+| `action string degil` | `action` tipi yanlış | `invalid-action-type` |
+| `bilinmeyen action` | Cihaz bu action'ı tanımıyor | `unknown-action` |
+| `dim icin value (0..100) ve channel (0..63 veya 255) gerekli` | `value`/`channel` eksik veya aralık dışı | `dim-args` |
+| `efekt icin number (0..14) ve channel (0..63 veya 255) gerekli` | `number` eksik/aralık dışı | `efekt-args` |
+| `d4i_read icin channel (0..63) gerekli` | `channel` eksik | `d4i-read-args` |
+| `bu channel DALI hattinda bulunamadi` | Hatta olmayan kanal (ör. 12) | `channel-not-found` |
+| `chase efekti tum lambalari surer, channel gondermeyin` | Çok lambalı efekte kanal verildi | `effect-no-channel` |
+| `bu efekt en az N lamba ister, hatta M lamba var` | Yetersiz lamba | `not-enough-lamps` |
+| `efekt baslatilamadi (bos slot yok veya bellek yetersiz)` | 4 kanal efekt sınırı doldu | `effect-slots-full` |
+
+Kod sütunu `src/lib/deviceErrors.ts` kataloğundan gelir: her metin okunur bir
+başlık + sebep + ipucuna çevrilir, dashboard bunu gösterir. **Tanınmayan metin
+yutulmaz**, olduğu gibi gösterilir — firmware yeni bir hata eklerse görürsünüz.
+
+Hata dashboard'da bildirim olarak çıkar ve cihaz kartında rozet olarak kalır
+(`devices.last_error`); sonraki `{"status":"ok"}` yanıtı rozeti temizler.
 Payload'da korelasyon alanı olmadığından hata, o cihaza giden **en son bekleyen**
-komuta yazılır.
+komuta yazılır; o komutun `channel`'ı da bildirime eklenir (kanala özgü
+hatalarda hangi lamba olduğunu göstermek için).
 
 ### 5.2) D4i periyodik rapor (adres başına, ~30 sn)
 ```json

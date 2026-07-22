@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Zone, DeviceView } from "@/app/_lib/types";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
+import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 import { DeviceControlModal } from "./DeviceControlModal";
@@ -170,7 +171,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                     {tel ? <span className="mt-0.5 font-mono text-[11px] text-accent">{tel}</span> : null}
                     {d.lastError ? (
                       <span className="mt-0.5 text-[11px] text-danger">
-                        {d.lastError}
+                        {describeDeviceError(d.lastError).cause}
                         {d.lastErrorAt ? ` · ${formatSeen(d.lastErrorAt)}` : ""}
                       </span>
                     ) : null}

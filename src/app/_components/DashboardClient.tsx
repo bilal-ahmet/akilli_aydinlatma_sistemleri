@@ -22,11 +22,12 @@ async function sendCommand(
   action: Action,
   value?: number,
   number?: number,
+  text?: string,
 ): Promise<number | undefined> {
   const res = await fetch(`/api/zones/${zoneId}/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, value, number }),
+    body: JSON.stringify({ action, value, number, text }),
   });
   if (!res.ok) throw new Error(`Komut başarısız (${res.status})`);
   const json = await res.json().catch(() => null);
@@ -38,11 +39,12 @@ async function sendAll(
   action: Action,
   value?: number,
   number?: number,
+  text?: string,
 ): Promise<number | undefined> {
   const res = await fetch(`/api/command/all`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, value, number }),
+    body: JSON.stringify({ action, value, number, text }),
   });
   if (!res.ok) throw new Error(`Toplu komut başarısız (${res.status})`);
   const json = await res.json().catch(() => null);
@@ -182,21 +184,21 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   // ── Efektler ───────────────────────────────────────────────
-  function pickEffect(number: number) {
+  function pickEffect(number: number, text?: string) {
     const t = effectTarget;
     if (!t) return;
     if (t === "all") {
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
       const ids = zones.map((z) => z.id);
       ids.forEach(beginPending);
-      sendAll("efekt", undefined, number)
+      sendAll("efekt", undefined, number, text)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
         .catch(() => {})
         .finally(() => ids.forEach(endPending));
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, isOn: true, activeFx: number } : z)));
       beginPending(t.id);
-      sendCommand(t.id, "efekt", undefined, number)
+      sendCommand(t.id, "efekt", undefined, number, text)
         .then((seq) => applySeq(t.id, seq))
         .catch(() => {})
         .finally(() => endPending(t.id));

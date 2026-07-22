@@ -18,19 +18,19 @@ export async function POST(
     return fail("Geçersiz komut gövdesi", 422, parsed.error.flatten());
   }
 
-  const { action, value, number } = parsed.data;
+  const cmd = parsed.data;
 
   let requestId: string;
   let seq: number;
   try {
     // MQTT client kurulamazsa (örn. env eksik) burada fırlar → 502.
-    ({ requestId, seq } = publishCommand("zone", zoneId, action, value, number));
+    ({ requestId, seq } = publishCommand("zone", zoneId, cmd));
   } catch (err) {
     return fail("Komut yayınlanamadı", 502, String(err));
   }
 
   after(() =>
-    recordCommand("zone", zoneId, requestId, seq, action, value, number).catch((err) =>
+    recordCommand("zone", zoneId, requestId, seq, cmd).catch((err) =>
       console.error("[cmd] zone kaydı başarısız:", err),
     ),
   );

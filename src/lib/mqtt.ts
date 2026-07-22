@@ -4,6 +4,8 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
+import { effectByNumber } from "@/lib/effects";
+import { describeDeviceError } from "@/lib/deviceErrors";
 import {
   cmdTopic,
   zoneCmdTopic,
@@ -271,12 +273,13 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   }
 
   const message = (ack.error ?? "cihaz komutu işleyemedi").slice(0, 200);
-  console.warn(`[mqtt] komut hatası (${mac}): ${message}`);
+  const info = describeDeviceError(message);
+  console.warn(`[mqtt] komut hatası (${mac}) [${info.code}]: ${message}`);
 
   const { zone } = await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
   const targets = [mac, "all", ...(zone ? [zone.slug] : [])];
   const [latest] = await db
-    .select({ id: schema.commands.id })
+    .select({ id: schema.commands.id, channel: schema.commands.channel })
     .from(schema.commands)
     .where(
       and(
@@ -293,7 +296,18 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
       .where(eq(schema.commands.id, latest.id));
   }
 
-  emitLiveEvent({ deviceId: mac, status: "error", error: message, kind: "ack", at });
+  // Hangi lambanın komutu reddedildiğini yanıt taşımıyor; başarısız sayılan
+  // komutun kanalı en iyi tahmin ("bu channel DALI hattinda bulunamadi" gibi
+  // kanala özgü hatalarda kullanıcıya hangi kanal olduğunu göstermek için).
+  emitLiveEvent({
+    deviceId: mac,
+    channel: latest?.channel ?? undefined,
+    status: "error",
+    error: message,
+    errorCode: info.code,
+    kind: "ack",
+    at,
+  });
 }
 
 /** İlk kontrat (deviceId + brightness/relayStatus/channels): DB + bölge snapshot'ı + canlı event. */
@@ -417,19 +431,41 @@ async function upsertFixture(
 }
 
 /**
+ * Bir komutun tüm parametreleri. API gövdesiyle (commandRequestSchema) aynı
+ * şekle sahip; route'lar `parsed.data`'yı doğrudan geçirebilir.
+ */
+export type CommandInput = {
+  action: Action;
+  value?: number;
+  number?: number; // efekt no
+  channel?: number; // tek lamba (DALI kanalı); yoksa tüm cihaz
+  text?: string; // Mors metni (efekt 22)
+};
+
+/**
  * ESP'ye giden komut payload'ı — minimal tutulur (LoRa'da binary olacak).
  *
  * `channel` HER komutta gönderilir: firmware `dim` ve `efekt` için zorunlu
  * tutuyor ("... ve channel (0..63 veya 255) gerekli"). Tek lamba hedefi yoksa
  * DALI broadcast adresi (255) yazılır — API kontratında `channel` yokluğu
  * "tüm cihaz" demeye devam eder, çeviri yalnızca burada yapılır.
+ *
+ * `text` yalnızca doluysa eklenir: alan hiç gönderilmediğinde cihaz son
+ * ayarlanan Mors metnini tekrar çalar, boş string göndermek bunu bozardı.
+ *
+ * İSTİSNA: tüm hattı birlikte süren efektlerde (`allLamps`, örn. Chase)
+ * `channel` HİÇ konmaz — broadcast 255 bile gönderilse cihaz
+ * "chase efekti tum lambalari surer, channel gondermeyin" ile reddeder.
  */
-function buildPayload(action: Action, value?: number, number?: number, channel?: number): string {
+function buildPayload({ action, value, number, channel, text }: CommandInput): string {
+  const fx = action === "efekt" && number != null ? effectByNumber(number) : undefined;
+
   const payload: CommandPayload = {
     action,
     ...(value != null ? { value } : {}),
     ...(number != null ? { number } : {}),
-    channel: channel ?? BROADCAST_CHANNEL,
+    ...(text ? { text } : {}),
+    ...(fx?.allLamps ? {} : { channel: channel ?? BROADCAST_CHANNEL }),
   };
   return JSON.stringify(payload);
 }
@@ -453,15 +489,12 @@ let cmdSeq = 0;
 export function publishCommand(
   target: "device" | "zone" | "all",
   id: string,
-  action: Action,
-  value?: number,
-  number?: number,
-  channel?: number,
+  cmd: CommandInput,
 ): { requestId: string; seq: number } {
   const topic =
     target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
 
-  getMqttClient().publish(topic, buildPayload(action, value, number, channel), { qos: 1 });
+  getMqttClient().publish(topic, buildPayload(cmd), { qos: 1 });
 
   return { requestId: randomUUID(), seq: ++cmdSeq };
 }
@@ -476,11 +509,9 @@ export async function recordCommand(
   id: string,
   requestId: string,
   seq: number,
-  action: Action,
-  value?: number,
-  number?: number,
-  channel?: number,
+  cmd: CommandInput,
 ): Promise<void> {
+  const { action, value, number, channel } = cmd;
   const at = new Date().toISOString();
 
   await db.insert(schema.commands).values({

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EFFECT_COUNT } from "@/lib/effects";
+import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/effects";
 
 /**
  * MQTT payload kontratı — CLAUDE.md "Payload Formatları" bölümünün tek
@@ -41,7 +41,7 @@ export function percentToLevel(percent: number): number {
 export const commandPayloadSchema = z.object({
   action: z.enum(ACTIONS),
   value: z.number().int().min(0).max(100).optional(),
-  number: z.number().int().min(0).max(EFFECT_COUNT).optional(), // efekt sıra no (0 = durdur)
+  number: z.number().int().min(0).max(EFFECT_MAX_NUMBER).optional(), // efekt no (0 = durdur)
   channel: z
     .number()
     .int()
@@ -49,6 +49,9 @@ export const commandPayloadSchema = z.object({
       message: `channel 0-${MAX_CHANNEL} arası ya da ${BROADCAST_CHANNEL} (broadcast) olmalı`,
     })
     .optional(),
+  // Mors efektinin (no 22) çalacağı metin. Gönderilmezse cihaz son ayarlanan
+  // metni tekrar çalar — bu yüzden boş metin gönderilmez, alan hiç konmaz.
+  text: z.string().max(MORSE_TEXT_MAX).optional(),
 });
 export type CommandPayload = z.infer<typeof commandPayloadSchema>;
 
@@ -217,15 +220,24 @@ export const commandRequestSchema = z
   .object({
     action: z.enum(ACTIONS),
     value: z.number().int().min(0).max(100).optional(),
-    number: z.number().int().min(1).max(EFFECT_COUNT).optional(),
+    number: z.number().int().min(1).max(EFFECT_MAX_NUMBER).optional(),
     channel: z.number().int().min(0).max(MAX_CHANNEL).optional(), // tek lamba hedefi
+    // Mors metni. Firmware yalnızca harf/rakam/boşluk kabul ettiği için
+    // normalize edilir (Türkçe harfler ASCII'ye düşer, gerisi atılır).
+    text: z
+      .string()
+      .transform(normalizeMorseText)
+      .refine((t) => t.length <= MORSE_TEXT_MAX, {
+        message: `Metin en fazla ${MORSE_TEXT_MAX} karakter olabilir`,
+      })
+      .optional(),
   })
   .refine((d) => d.action !== "dim" || typeof d.value === "number", {
     message: '"dim" aksiyonu için value (0-100) zorunludur',
     path: ["value"],
   })
   .refine((d) => d.action !== "efekt" || typeof d.number === "number", {
-    message: '"efekt" aksiyonu için number (1-14) zorunludur',
+    message: `"efekt" aksiyonu için number (1-${EFFECT_MAX_NUMBER}) zorunludur`,
     path: ["number"],
   });
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
@@ -291,6 +303,8 @@ export type LiveEvent = {
    * olarak gösterir. `status:"ok"` gelen ack rozeti temizler.
    */
   error?: string;
+  /** `describeDeviceError` kodu (örn. "channel-not-found") — UI dallanması için. */
+  errorCode?: string;
   /** Olayın kaynağı: cihaz komut yanıtı mı, telemetri mi, komut echo'su mu. */
   kind?: "ack" | "telemetry" | "command";
   brightness?: number;

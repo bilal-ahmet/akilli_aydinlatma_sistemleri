@@ -13,19 +13,19 @@ export async function POST(req: Request) {
     return fail("Geçersiz komut gövdesi", 422, parsed.error.flatten());
   }
 
-  const { action, value, number } = parsed.data;
+  const cmd = parsed.data;
 
   let requestId: string;
   let seq: number;
   try {
     // MQTT client kurulamazsa (örn. env eksik) burada fırlar → 502.
-    ({ requestId, seq } = publishCommand("all", "all", action, value, number));
+    ({ requestId, seq } = publishCommand("all", "all", cmd));
   } catch (err) {
     return fail("Toplu komut yayınlanamadı", 502, String(err));
   }
 
   after(() =>
-    recordCommand("all", "all", requestId, seq, action, value, number).catch((err) =>
+    recordCommand("all", "all", requestId, seq, cmd).catch((err) =>
       console.error("[cmd] toplu komut kaydı başarısız:", err),
     ),
   );

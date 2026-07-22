@@ -19,7 +19,7 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
-import { effectByNumber, EFFECT_COUNT } from "@/lib/effects";
+import { effectByNumber, EFFECT_MAX_NUMBER, MORSE_TEXT_MAX } from "@/lib/effects";
 import { BROADCAST_CHANNEL, MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
 
 const MAC = (process.argv[2] ?? "A842E3123456")
@@ -37,6 +37,9 @@ const TOPICS = [T_CMD, T_ALL, ...(ZONE_SLUG ? [`Meven:${ZONE_SLUG}/cmd`] : [])];
 type ChannelState = { level: number; on: boolean; fx: number | null };
 const channels = new Map<number, ChannelState>();
 for (let i = 0; i < CH_COUNT; i++) channels.set(i, { level: 0, on: false, fx: null });
+
+/** Mors efektinin son ayarlanan metni — komutta `text` yoksa bu tekrar çalınır. */
+let morseText = "";
 
 const client = mqtt.connect({
   protocol: "mqtts",
@@ -129,9 +132,24 @@ function publishD4i(address: number) {
   );
 }
 
+/** Firmware sınırı: aynı anda en fazla bu kadar kanalda efekt çalışabilir. */
+const EFFECT_SLOTS = 4;
+/** Tüm hattı süren efektlerin (Chase) istediği asgari lamba sayısı. */
+const MIN_LAMPS_FOR_ALL_LAMPS_FX = 2;
+
 /** Komutun hedeflediği adresler: 255 = broadcast, aksi halde tek adres. */
 function targets(channel: number): number[] {
   return channel === BROADCAST_CHANNEL ? [...channels.keys()] : [channel];
+}
+
+/** Efekt hedefi: `channel` yoksa (tüm hattı süren efekt) bütün adresler. */
+function effectTargets(channel?: number): number[] {
+  return channel === undefined ? [...channels.keys()] : targets(channel);
+}
+
+/** Komut var olmayan bir DALI adresini hedefliyorsa hata metnini döner. */
+function channelMissing(channel: number): boolean {
+  return channel !== BROADCAST_CHANNEL && !channels.has(channel);
 }
 
 function validChannel(c: unknown): c is number {
@@ -153,7 +171,13 @@ client.on("connect", () => {
 });
 
 client.on("message", (topic, raw) => {
-  let cmd: { action?: string; value?: number; number?: number; channel?: number };
+  let cmd: {
+    action?: string;
+    value?: number;
+    number?: number;
+    channel?: number;
+    text?: string;
+  };
   try {
     cmd = JSON.parse(raw.toString());
   } catch {
@@ -162,11 +186,17 @@ client.on("message", (topic, raw) => {
   }
 
   const via = topic === T_ALL ? "all" : topic === T_CMD ? "MAC" : "bölge";
-  const { action, value, number, channel } = cmd;
+  const { action, value, number, channel, text } = cmd;
+  if (action === undefined) return ack("action alani yok");
+  if (typeof action !== "string") return ack("action string degil");
   const scope = channel === BROADCAST_CHANNEL ? "tüm kanallar" : `ch${channel}`;
 
   if (action === "on" || action === "off") {
     if (!validChannel(channel)) return ack("bilinmeyen action");
+    if (channelMissing(channel)) {
+      console.warn(`◀ ${action} reddedildi: ch${channel} hatta yok`);
+      return ack("bu channel DALI hattinda bulunamadi");
+    }
     for (const a of targets(channel)) {
       const s = channels.get(a);
       if (!s) continue;
@@ -185,6 +215,10 @@ client.on("message", (topic, raw) => {
       console.warn(`◀ dim reddedildi (value=${value} channel=${channel})`);
       return ack("dim icin value (0..100) ve channel (0..63 veya 255) gerekli");
     }
+    if (channelMissing(channel)) {
+      console.warn(`◀ dim reddedildi: ch${channel} hatta yok`);
+      return ack("bu channel DALI hattinda bulunamadi");
+    }
     for (const a of targets(channel)) {
       const s = channels.get(a);
       if (!s) continue;
@@ -199,24 +233,62 @@ client.on("message", (topic, raw) => {
   }
 
   if (action === "efekt") {
-    if (
-      typeof number !== "number" ||
-      number < 0 ||
-      number > EFFECT_COUNT ||
-      !validChannel(channel)
-    ) {
-      console.warn(`◀ efekt reddedildi (number=${number} channel=${channel})`);
+    if (typeof number !== "number" || number < 0 || number > EFFECT_MAX_NUMBER) {
+      console.warn(`◀ efekt reddedildi (number=${number})`);
       return ack("efekt icin number (0..14) ve channel (0..63 veya 255) gerekli");
     }
-    for (const a of targets(channel)) {
+
+    const fx = effectByNumber(number);
+
+    // Tüm hattı süren efektler (Chase) kanal KABUL ETMEZ ve asgari lamba ister.
+    if (fx?.allLamps) {
+      if (channel !== undefined) {
+        console.warn(`◀ ${fx.id} reddedildi: channel gönderildi (${channel})`);
+        return ack("chase efekti tum lambalari surer, channel gondermeyin");
+      }
+      if (channels.size < MIN_LAMPS_FOR_ALL_LAMPS_FX) {
+        console.warn(`◀ ${fx.id} reddedildi: ${channels.size} lamba yetersiz`);
+        return ack(
+          `bu efekt en az ${MIN_LAMPS_FOR_ALL_LAMPS_FX} lamba ister, hatta ${channels.size} lamba var`,
+        );
+      }
+    } else if (!validChannel(channel)) {
+      console.warn(`◀ efekt reddedildi (channel=${channel})`);
+      return ack("efekt icin number (0..14) ve channel (0..63 veya 255) gerekli");
+    }
+
+    // Hattaki gerçek adres mi? (broadcast hariç)
+    if (channel !== undefined && channelMissing(channel)) {
+      console.warn(`◀ efekt reddedildi: ch${channel} hatta yok`);
+      return ack("bu channel DALI hattinda bulunamadi");
+    }
+
+    // Aynı anda en fazla 4 kanalda efekt çalışabilir (firmware slot sınırı).
+    const wouldRun = new Set([...channels.entries()].filter(([, s]) => s.fx).map(([a]) => a));
+    if (number > 0) for (const a of effectTargets(channel)) wouldRun.add(a);
+    if (wouldRun.size > EFFECT_SLOTS) {
+      console.warn(`◀ efekt reddedildi: slot dolu (${wouldRun.size}/${EFFECT_SLOTS})`);
+      return ack("efekt baslatilamadi (bos slot yok veya bellek yetersiz)");
+    }
+
+    // Mors: `text` opsiyonel — gelmezse son ayarlanan metin çalınır.
+    if (fx?.needsText && text !== undefined) {
+      if (typeof text !== "string" || text.length > MORSE_TEXT_MAX || !/^[A-Z0-9 ]*$/.test(text)) {
+        console.warn(`◀ mors metni reddedildi: ${JSON.stringify(text)}`);
+        return ack("mors icin text (harf/rakam/bosluk, en fazla 32 karakter) gerekli");
+      }
+      morseText = text;
+    }
+    for (const a of effectTargets(channel)) {
       const s = channels.get(a);
       if (!s) continue;
       s.fx = number === 0 ? null : number;
       if (number > 0) s.on = true;
     }
-    console.log(`◀ efekt #${number} ${effectByNumber(number)?.label ?? "durdur"} (${via}, ${scope})`);
+    const suffix = fx?.needsText ? ` "${morseText || "(metin ayarlanmadı)"}"` : "";
+    console.log(`◀ efekt #${number} ${fx?.label ?? "durdur"}${suffix} (${via}, ${scope})`);
     ack();
-    for (const a of targets(channel)) publishD4i(a);
+    for (const a of effectTargets(channel)) publishD4i(a);
     return;
   }
 
