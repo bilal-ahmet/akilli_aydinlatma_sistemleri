@@ -59,7 +59,6 @@ export function ZoneCard({ zone, onToggle, onBrightness, onEffect, onEdit, onDel
         <BrightnessSlider
           value={zone.brightness}
           onChange={onBrightness}
-          disabled={!zone.isOn}
           label={`${zone.name} ışık şiddeti`}
         />
       </div>

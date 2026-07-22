@@ -139,7 +139,23 @@ export function DeviceControlModal({
     // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
     fetch(`/api/devices/${deviceId}/fixtures`)
       .then((r) => r.json())
-      .then((j) => setFixtures(j.data ?? []))
+      .then((j) => {
+        const rows = (j.data ?? []) as Fixture[];
+        setFixtures(rows);
+        // "Tüm cihaz" durumunu KALICI lamba kayıtlarından türet — prop'tan
+        // gelen device_status anlık görüntüsü yalnızca cihaz telemetri
+        // yayınladığında yazılıyor, bölge/toplu komutlardan sonra bayat
+        // kalıyor. Agregasyon backend'deki handleD4i ile aynı.
+        if (rows.length > 0) {
+          const on = rows.filter((f) => f.isOn);
+          setDeviceOn(on.length > 0);
+          setDeviceBrightness(
+            on.length > 0
+              ? Math.round(on.reduce((a, f) => a + f.brightness, 0) / on.length)
+              : 0,
+          );
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [deviceId]);
@@ -531,7 +547,6 @@ export function DeviceControlModal({
           <BrightnessSlider
             value={deviceBrightness}
             onChange={setDeviceDim}
-            disabled={!deviceOn}
             label="Cihaz parlaklığı"
           />
         </div>
@@ -628,7 +643,6 @@ export function DeviceControlModal({
                   <BrightnessSlider
                     value={f.brightness}
                     onChange={(v) => setFixtureDim(f.channel, v)}
-                    disabled={!f.isOn}
                     label={`Kanal ${f.channel} parlaklığı`}
                   />
                 </div>

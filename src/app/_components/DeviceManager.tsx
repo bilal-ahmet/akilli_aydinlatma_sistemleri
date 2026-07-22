@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Zone, DeviceView } from "@/app/_lib/types";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
+import { useReconcile } from "@/app/_lib/useReconcile";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
@@ -49,7 +50,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
   const [editZoneSlug, setEditZoneSlug] = useState("");
   const [editName, setEditName] = useState("");
 
-  useEffect(() => {
+  const loadDevices = useCallback(() => {
     fetch("/api/devices")
       .then((r) => r.json())
       .then((j) => setDevices(j.data ?? []))
@@ -57,21 +58,40 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
       .finally(() => setLoading(false));
   }, []);
 
-  // Komut yanıtı (ack) geldiğinde hata rozetini canlı güncelle: hata metnini
-  // yaz, başarılı yanıtta temizle. Kalıcı değer devices.last_error'da.
+  useEffect(() => {
+    loadDevices();
+  }, [loadDevices]);
+
+  // SSE kaçarsa liste bayat kalmasın (bu bileşen komut göndermiyor, bu yüzden
+  // taze veriyi ezme riski yok).
+  useReconcile(loadDevices);
+
+  /**
+   * Cihaz listesini SSE ile canlı tut — sayfa yenilemeden:
+   *  - `ack`       → hata rozeti (hata metnini yaz, başarılı yanıtta temizle;
+   *                  kalıcı değer devices.last_error'da) + son görülme
+   *  - `telemetry` → cihaz-seviyesi durum (açık/kapalı, %, son görülme).
+   *                  Kanal bazlı olaylar atlanır: satırda cihaz agregatı var,
+   *                  onu backend zaten cihaz-seviyesi olayda gönderiyor.
+   */
   const onLive = useCallback((e: LiveEvent) => {
-    if (e.kind !== "ack" || !e.deviceId) return;
+    if (!e.deviceId) return;
+    if (e.kind !== "ack" && e.kind !== "telemetry") return;
+    if (e.kind === "telemetry" && typeof e.channel === "number") return;
+
     setDevices((ds) =>
-      ds.map((d) =>
-        d.deviceId === e.deviceId
-          ? {
-              ...d,
-              lastError: e.error ?? null,
-              lastErrorAt: e.error ? e.at : null,
-              lastSeen: e.at,
-            }
-          : d,
-      ),
+      ds.map((d) => {
+        if (d.deviceId !== e.deviceId) return d;
+        const next = { ...d, lastSeen: e.at };
+        if (e.kind === "ack") {
+          next.lastError = e.error ?? null;
+          next.lastErrorAt = e.error ? e.at : null;
+          return next;
+        }
+        if (typeof e.isOn === "boolean") next.relayStatus = e.isOn ? "on" : "off";
+        if (typeof e.brightness === "number") next.brightness = e.brightness;
+        return next;
+      }),
     );
   }, []);
   useLiveStatus(onLive);

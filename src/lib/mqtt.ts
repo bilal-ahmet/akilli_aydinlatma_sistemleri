@@ -522,6 +522,47 @@ export function publishCommand(
 }
 
 /**
+ * Bölge/toplu komutta lamba (fixture) snapshot'larını da günceller.
+ *
+ * Bu olmadan `zones` "açık" görünürken cihazların `fixtures` satırları kapalı
+ * kalıyordu: kullanıcı ana sayfadan bölgeyi/tüm sistemi açıyor, cihaz modalini
+ * açtığında lambaları KAPALI görüyor ve tekrar "aç"a basıyordu — broker'da
+ * beklenmedik `{"action":"on","channel":N}` komutlarının kaynağı buydu. Cihaz
+ * kendi `d4i_periodic` raporunu yollayana kadar (kanal başına ~30 sn) yanlış
+ * durum ekranda kalıyordu; cihaz hiç raporlamıyorsa hiç düzelmiyordu.
+ *
+ * `macs === null` → tüm cihazlar ("all" komutu).
+ */
+async function patchFixtures(
+  macs: string[] | null,
+  patch: StatePatch,
+  at: string,
+  seq: number,
+): Promise<void> {
+  if (macs?.length === 0) return;
+
+  const q = db.update(schema.fixtures).set(patch);
+  const rows = await (macs === null
+    ? q.returning()
+    : q.where(inArray(schema.fixtures.deviceId, macs)).returning());
+
+  // Açık cihaz modali lambaları anında güncellesin diye kanal bazlı yayın.
+  for (const f of rows) {
+    emitLiveEvent({
+      deviceId: f.deviceId,
+      channel: f.channel,
+      isOn: f.isOn,
+      brightness: f.brightness,
+      activeFx: f.activeFx,
+      status: "ok",
+      kind: "command",
+      at,
+      seq,
+    });
+  }
+}
+
+/**
  * publishCommand sonrası DB kaydı + snapshot (bölge veya lamba) + canlı event.
  * Publish yolundan çıkarıldığı için gecikmesi kullanıcıya yansımaz; route'lar
  * bunu `after()` içinde çağırır.
@@ -597,6 +638,16 @@ export async function recordCommand(
       console.warn(`[mqtt] bilinmeyen zone slug'ı: ${id} (publish yine de gitti)`);
       return;
     }
+    const macs = await db
+      .select({ mac: schema.devices.deviceId })
+      .from(schema.devices)
+      .where(eq(schema.devices.zoneId, zone.id));
+    await patchFixtures(
+      macs.map((d) => d.mac),
+      patchFor(action, value, number),
+      at,
+      seq,
+    );
     emitLiveEvent({
       zoneSlug: zone.slug,
       isOn: zone.isOn,
@@ -615,6 +666,7 @@ export async function recordCommand(
     .update(schema.zones)
     .set(patchFor(action, value, number))
     .returning();
+  await patchFixtures(null, patchFor(action, value, number), at, seq);
   for (const z of updated) {
     emitLiveEvent({
       zoneSlug: z.slug,

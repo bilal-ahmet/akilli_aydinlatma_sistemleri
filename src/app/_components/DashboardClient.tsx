@@ -5,6 +5,7 @@ import type { Zone, ZoneStatus } from "@/app/_lib/types";
 import { summarize } from "@/app/_lib/mockData";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
+import { useReconcile } from "@/app/_lib/useReconcile";
 import { StatusOverview } from "./StatusOverview";
 import { MasterControl } from "./MasterControl";
 import { ZoneGrid } from "./ZoneGrid";
@@ -95,7 +96,14 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     if (cur === undefined || seq > cur) lastSeqRef.current.set(target, seq);
   }
 
+  // Son komutun gönderilme anı — mutabakat (useReconcile) bunun hemen ardından
+  // çalışırsa optimistic durumu bayat DB verisiyle ezebilir: `recordCommand`
+  // arka planda (`after()`) yazdığı için publish ile DB arasında kısa bir
+  // pencere var (bkz. Kural #10).
+  const lastCommandAtRef = useRef(0);
+
   function beginPending(target: string) {
+    lastCommandAtRef.current = Date.now();
     pendingRef.current.set(target, (pendingRef.current.get(target) ?? 0) + 1);
   }
   function endPending(target: string) {
@@ -106,6 +114,23 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   const summary = useMemo(() => summarize(zones), [zones]);
   const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
+
+  /**
+   * SSE kaçarsa bölge kartları bayat kalmasın. Uçuşta komut varken ya da az
+   * önce komut gönderildiyse atlanır — yoksa henüz DB'ye yazılmamış optimistic
+   * durumun üstüne eski değer biner.
+   */
+  const reconcileZones = useCallback(() => {
+    if (pendingRef.current.size > 0) return;
+    if (Date.now() - lastCommandAtRef.current < 5_000) return;
+    fetch("/api/zones")
+      .then((r) => r.json())
+      .then((j) => {
+        if (Array.isArray(j.data)) setZones(j.data as Zone[]);
+      })
+      .catch(() => {});
+  }, []);
+  useReconcile(reconcileZones);
 
   // ── Canlı durum (SSE) ──────────────────────────────────────
   const onLive = useCallback((e: LiveEvent) => {

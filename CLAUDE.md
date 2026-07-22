@@ -299,6 +299,13 @@ GET /api/events      → Backend'in MQTT'den aldığı status mesajlarını push
 
 Frontend tarafı: `src/app/_lib/useLiveStatus.ts` (`EventSource`). Backend köprüsü: `src/lib/events.ts` (in-memory EventEmitter). **Bu yüzden backend tek instance çalışmalı** (bkz. Kurallar #8).
 
+> **SSE tek başına yetmez.** Akış koptuğunda (proxy zaman aşımı, uyuyan sekme)
+> EventSource yeniden bağlanır ama **kaçırdığı olayları tekrar oynatmaz**. Bu
+> yüzden ana sayfadaki bölge kartları ve cihaz listesi `useReconcile` ile
+> periyodik (30 sn) ve sekme öne gelince DB'den yeniden okunur. Mutabakat,
+> uçuşta komut varken ya da son komuttan sonraki 5 sn içinde atlanır — yoksa
+> `recordCommand` daha DB'ye yazmadan optimistic durum eski veriyle ezilir.
+
 ---
 
 ## Veritabanı Şeması
@@ -531,6 +538,12 @@ NEXT_PUBLIC_SSE_URL=/api/events
 4. **Payload minimal tutulur.** LoRa geçişinde binary encode edilecek, semantik değişmeyecek.
 5. **Command tablosunda requestId ile idempotency** sağlanır; aynı komut iki kez uygulanmaz.
 6. **Cihaz durumu DB'de son snapshot olarak tutulur.** Dashboard her zaman DB'den okur, MQTT'den değil. Zone snapshot'ı `zones` tablosunda; komut publish'inde optimistic güncellenir, cihaz status'u gelince rafine edilir.
+   **Bölge/toplu komut `fixtures`'ı da günceller** (`patchFixtures`): yalnızca
+   `zones` güncellenirse lamba kayıtları kapalı kalır, cihaz modali lambaları
+   yanlış gösterir ve kullanıcı gereksiz yere tekrar "aç" komutu gönderir.
+   Cihaz-seviyesi görünümler (modaldeki "Tüm cihaz") `device_status` yerine
+   **`fixtures`'tan türetilir** — `device_status` yalnızca cihaz telemetri
+   yayınladığında yazılır, komuttan sonra bayattır.
 7. **LoRa geçişinde** transport katmanı değişir (Chirpstack → MQTT → Backend), API kontratı aynı kalır.
 8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
 9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.

@@ -74,7 +74,6 @@ export function MasterControl({
         <BrightnessSlider
           value={masterBrightness}
           onChange={onSetAllBrightness}
-          disabled={!anyOn}
           label="Genel ışık şiddeti"
           size="lg"
         />
