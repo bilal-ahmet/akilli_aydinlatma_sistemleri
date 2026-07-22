@@ -114,16 +114,23 @@ lambaya da verilebilir. on/off/dim efekti durdurur. Bölge snapshot'ında
 `zones.active_fx`, lamba snapshot'ında `fixtures.active_fx` olarak optimistic
 tutulur.
 
-> **Numaralar bitişik değil:** katalog 1-14 ve **22** (Mors). 15-21 arası ESP
-> tarafında ne olduğu henüz bildirilmedi; katalogda olmadıkları için dashboard'da
-> da görünmezler. Doğrulama sınırı `EFFECT_MAX_NUMBER` (katalogun en büyük
-> numarası), **`EFFECT_COUNT` değil** — uzunluk artık numara aralığı demek değil.
+Katalog **iki aileye** ayrılır (tam tablo: `firmware/ESP32-ENTEGRASYON.md` §4):
 
-**Çok lambalı efektler (`allLamps`)**: Chase (#14) tüm hattı birlikte sürer ve
-`channel` KABUL ETMEZ — `buildPayload` bu efektlerde alanı hiç koymaz (broadcast
-255 bile hata döndürür), `DeviceControlModal` tek lamba seçili olsa da komutu
-cihazın tamamına gönderir. Cihaz ayrıca asgari lamba sayısı arar ve aynı anda en
-fazla 4 kanalda efekt çalıştırır; ikisi de hata metniyle bildirilir.
+- **Tek lamba (1-13, 15-22)** — `channel` ile tek DALI adresine verilebilir.
+- **Çok lambalı (14, 23-28)** — hattın tamamını birlikte sürer, **`channel`
+  KABUL ETMEZ** ve `minLamps` kadar lamba ister.
+
+> Doğrulama sınırı `EFFECT_MAX_NUMBER` (katalogun en büyük numarası),
+> **`EFFECT_COUNT` değil**. Şu an ikisi de 28, ama bir numara atlanırsa yalnızca
+> ilki doğru kalır — katalog dizisi de numara sırasında değil, aileye göre gruplu.
+
+**Çok lambalı efektler (`allLamps` + `minLamps`)**: `buildPayload` bu efektlerde
+`channel` alanını hiç koymaz (broadcast 255 bile hata döndürür),
+`DeviceControlModal` tek lamba seçili olsa da komutu cihazın tamamına gönderir,
+`EffectPicker` lambası yetmeyen efektleri pasif gösterir (`lampCount` yalnızca
+tek cihaz hedefinde bilinir; bölge/"tüm sistem"de efekt sunulur, yetersiz cihaz
+kendi hatasını döner). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
+— dolduğunda `efekt baslatilamadi (bos slot yok…)` döner.
 
 **Mors efekti (no 22):** ek `text` alanı alır —
 `{ "action": "efekt", "number": 22, "text": "MERHABA", "channel": 255 }`.

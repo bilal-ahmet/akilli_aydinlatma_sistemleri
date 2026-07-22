@@ -1,16 +1,24 @@
 /**
  * Işık efekti kataloğu — dashboard ↔ firmware ortak kontratı.
  * Komut: { "action": "efekt", "number": <no> }. `number` 1-tabanlıdır ve
- * bu tablodaki sıraya KİLİTLİDİR; ESP firmware dizisi de bu numaralara hizalı
- * olmalı. Sıra/numara DEĞİŞTİRİLMEMELİ (kontrat).
+ * bu tablodaki numaralara KİLİTLİDİR; ESP firmware dizisi de bu numaralara
+ * hizalı olmalı. Numaralar DEĞİŞTİRİLMEMELİ (kontrat).
  *
- * Numaralar bitişik DEĞİL: firmware 1-14'ten sonra 22'yi (Mors) tanımlıyor.
- * 15-21 arası ESP tarafında ne olduğu henüz bildirilmedi; katalogda yer
- * almadıkları için dashboard'da da görünmezler.
+ * İki aile var:
+ *  - 1-22  : tek lamba efektleri — `channel` ile tek DALI adresine verilebilir.
+ *  - 14, 23-28 : çok lambalı efektler (`allLamps`) — hattın tamamını birlikte
+ *    sürerler, `channel` KABUL ETMEZLER ve asgari lamba sayısı isterler.
+ *
+ * Numaralar 1-28 arasını kesintisiz kapsar; katalog DİZİSİ ise numara sırasında
+ * değil, aileye göre gruplu (14, çok lambalı grubun içinde).
  */
 export interface Effect {
   number: number; // 1-tabanlı
-  id: string; // dali_fx_*
+  /**
+   * Firmware fonksiyon adı (`dali_fx_*`). 15+ numaralı efektler için ESP
+   * ekibi fonksiyon adı bildirmedi; yalnızca belge amaçlı, kodda kullanılmıyor.
+   */
+  id?: string;
   label: string;
   desc: string;
   /** Efekt `text` parametresi bekliyorsa true (şu an yalnızca Mors). */
@@ -19,14 +27,24 @@ export interface Effect {
    * Efekt doğası gereği hattaki TÜM lambaları birlikte sürüyorsa true.
    * Bu efektlerde komuta `channel` KONMAZ — cihaz aksi halde
    * "chase efekti tum lambalari surer, channel gondermeyin" hatası döner.
-   * Ayrıca hatta yeterli lamba yoksa
-   * "bu efekt en az N lamba ister, hatta M lamba var" ile reddedilir.
    */
   allLamps?: boolean;
+  /**
+   * Efektin çalışması için hatta olması gereken en az lamba sayısı. Yetersizse
+   * cihaz "bu efekt en az N lamba ister, hatta M lamba var" ile reddeder;
+   * dashboard bu efektleri baştan pasif gösterir.
+   */
+  minLamps?: number;
 }
 
+/*
+ * Not: 15-21 ve 23-28 için ESP ekibi yalnızca NUMARA + AD (+ asgari lamba)
+ * bildirdi. `desc` metinleri addan çıkarılmış açıklamalardır — efektin gerçek
+ * davranışı farklıysa yalnızca bu satırlar düzeltilir, numaralar sabit kalır.
+ */
 export const EFFECTS: readonly Effect[] = [
-  { number: 1, id: "dali_fx_fade", label: "Nefes / Fade", desc: "Doğrusal yavaş açılıp kapanma" },
+  // ── Tek lamba efektleri (channel ile tek adrese verilebilir) ──
+  { number: 1, id: "dali_fx_fade", label: "Fade", desc: "Doğrusal yavaş açılıp kapanma" },
   { number: 2, id: "dali_fx_blink", label: "Blink", desc: "Tam aç/kapa, ~yarım saniye" },
   { number: 3, id: "dali_fx_strobe", label: "Strobe", desc: "Kısa parlak flaşlar" },
   { number: 4, id: "dali_fx_random", label: "Random", desc: "Rastgele parlaklık (titreme)" },
@@ -39,13 +57,13 @@ export const EFFECTS: readonly Effect[] = [
   { number: 11, id: "dali_fx_twinkle", label: "Twinkle", desc: "Loş zemin + parıltılar" },
   { number: 12, id: "dali_fx_lightning", label: "Lightning", desc: "Karanlık + ani şimşek" },
   { number: 13, id: "dali_fx_disco", label: "Disco", desc: "Rastgele efekt zinciri" },
-  {
-    number: 14,
-    id: "dali_fx_chase",
-    label: "Chase",
-    desc: "Lambaları sırayla yakma (tüm hattı sürer)",
-    allLamps: true,
-  },
+  { number: 15, label: "Nefes", desc: "Yumuşak nefes alıp verme" },
+  { number: 16, label: "Deniz feneri", desc: "Fener gibi tarayan düzenli parlama" },
+  { number: 17, label: "Gün doğumu", desc: "Karanlıktan tam parlaklığa yavaş yükseliş" },
+  { number: 18, label: "Alarm", desc: "Hızlı, kesik uyarı flaşları" },
+  { number: 19, label: "Sekme", desc: "Seviyeler arasında sekerek gidiş geliş" },
+  { number: 20, label: "Rastgele yürüyüş", desc: "Parlaklık rastgele adımlarla gezinir" },
+  { number: 21, label: "Hızlanan", desc: "Giderek hızlanan yanıp sönme" },
   {
     number: 22,
     id: "dali_fx_mors",
@@ -53,13 +71,66 @@ export const EFFECTS: readonly Effect[] = [
     desc: "Yazdığın metni Mors alfabesiyle yakıp söndürür",
     needsText: true,
   },
+
+  // ── Çok lambalı efektler: channel KABUL ETMEZ, asgari lamba ister ──
+  {
+    number: 14,
+    id: "dali_fx_chase",
+    label: "Chase",
+    desc: "Lambaları sırayla yakar",
+    allLamps: true,
+    minLamps: 2,
+  },
+  {
+    number: 23,
+    label: "Karşılıklı",
+    desc: "Lambalar dönüşümlü olarak karşılıklı yanar",
+    allLamps: true,
+    minLamps: 2,
+  },
+  {
+    number: 24,
+    label: "Dalga",
+    desc: "Parlaklık hat boyunca dalga gibi ilerler",
+    allLamps: true,
+    minLamps: 2,
+  },
+  {
+    number: 25,
+    label: "Meteor",
+    desc: "Kayan ışık, arkasında sönen kuyruk bırakır",
+    allLamps: true,
+    minLamps: 3,
+  },
+  {
+    number: 26,
+    label: "PingPong",
+    desc: "Işık hat üzerinde gidip gelir",
+    allLamps: true,
+    minLamps: 3,
+  },
+  {
+    number: 27,
+    label: "Doldur",
+    desc: "Lambalar sırayla yanıp hattı doldurur",
+    allLamps: true,
+    minLamps: 2,
+  },
+  {
+    number: 28,
+    label: "Rastgele lamba",
+    desc: "Rastgele seçilen lamba yanar",
+    allLamps: true,
+    minLamps: 2,
+  },
 ] as const;
 
 export const EFFECT_COUNT = EFFECTS.length;
 
 /**
  * Kontrattaki en büyük efekt numarası — doğrulama sınırı BUDUR, katalog
- * uzunluğu değil (numaralar bitişik değil: 1-14 ve 22).
+ * uzunluğu (`EFFECT_COUNT`) değil. Şu an ikisi de 28; ama numara atlanırsa ya
+ * da katalogdan bir efekt çıkarılırsa yalnızca bu değer doğru kalır.
  */
 export const EFFECT_MAX_NUMBER = EFFECTS.reduce((m, e) => Math.max(m, e.number), 0);
 

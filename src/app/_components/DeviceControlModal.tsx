@@ -534,6 +534,7 @@ export function DeviceControlModal({
         open={effectTarget !== null}
         title={effectTitle}
         activeFx={effectActiveFx}
+        lampCount={fixtures.length}
         onClose={() => setEffectTarget(null)}
         onPick={pickEffect}
         onStop={stopEffect}

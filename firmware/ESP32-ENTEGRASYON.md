@@ -65,8 +65,8 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 - `number`: **1-tabanlı** efekt sıra numarası. Firmware bunu fonksiyon dizisine
   indeks olarak kullanır (`fx[number-1]()` veya `dali_fx_*`).
 - `on`/`off`/`dim` komutu gelince efekt durdurulur.
-- **Numaralar bitişik değil:** 1-14 ve **22 (Mors)**. 15-21 arası tanımlı olup
-  olmadığı bildirilmedi; dashboard kataloğunda yer almıyorlar.
+- **Aralık: 1-28** (kesintisiz). İki aile var — tek lamba ve çok lambalı; bkz.
+  aşağıdaki tablolar. `0` efekti durdurur.
 
 #### Mors efekti (no 22) — `text` alanı
 ```json
@@ -77,11 +77,13 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
   yüzden boş metni alan olarak koymaz, alanı payload'dan tamamen çıkarır.
 - Dashboard girişi normalize eder: Türkçe harfler ASCII karşılığına düşer
   (Ş→S, Ğ→G, İ→I…), desteklenmeyen karakterler atılır, 32'ye kırpılır.
-- **Numara tablosu (DONMUŞ KONTRAT — sıra değişmez):**
+- **Numara tablosu (DONMUŞ KONTRAT — numaralar değişmez):**
+
+**Tek lamba efektleri** — `channel` ile tek DALI adresine verilebilir:
 
 | # | Fonksiyon | Açıklama |
 |---|-----------|----------|
-| 1 | dali_fx_fade | Breathe / Fade — yavaş açılıp kapanma |
+| 1 | dali_fx_fade | Fade — yavaş açılıp kapanma |
 | 2 | dali_fx_blink | Tam aç/kapa ~0.5 sn |
 | 3 | dali_fx_strobe | Kısa parlak flaşlar |
 | 4 | dali_fx_random | Rastgele parlaklık (titreme) |
@@ -94,17 +96,38 @@ Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
 | 11 | dali_fx_twinkle | Loş zemin + parıltılar |
 | 12 | dali_fx_lightning | Karanlık + ani şimşek |
 | 13 | dali_fx_disco | Rastgele efekt zinciri |
-| 14 | dali_fx_chase | Lambaları sırayla yakma (0..count-1) |
-| 22 | dali_fx_mors | `text` alanındaki metni Mors alfabesiyle çalar |
+| 15 | — | Nefes |
+| 16 | — | Deniz feneri |
+| 17 | — | Gün doğumu |
+| 18 | — | Alarm |
+| 19 | — | Sekme |
+| 20 | — | Rastgele yürüyüş |
+| 21 | — | Hızlanan |
+| 22 | dali_fx_mors | Mors — `text` alanındaki metni çalar |
 
-**Çok lambalı efektler:** Chase (#14) tüm hattı birlikte sürer — komuta
-`channel` **konmaz** (broadcast 255 dahil), yoksa cihaz
+**Çok lambalı efektler** — hattın tamamını birlikte sürerler, `channel`
+**KABUL ETMEZLER** ve asgari lamba sayısı isterler:
+
+| # | Ad | Min. lamba |
+|---|-----|---|
+| 14 | Chase | 2 |
+| 23 | Karşılıklı | 2 |
+| 24 | Dalga | 2 |
+| 25 | Meteor | 3 |
+| 26 | PingPong | 3 |
+| 27 | Doldur | 2 |
+| 28 | Rastgele lamba | 2 |
+
+Bu efektlerde komuta `channel` **konmaz** (broadcast 255 dahil), yoksa cihaz
 `chase efekti tum lambalari surer, channel gondermeyin` döner. Katalogda
-`allLamps: true` ile işaretlidir; backend bu efektlerde `channel` alanını
+`allLamps: true` + `minLamps` ile işaretlidirler; backend `channel` alanını
 payload'a hiç koymaz, dashboard tek lamba seçili olsa bile komutu cihazın
-tamamına gönderir. Bu efektler asgari lamba sayısı da ister
-(`bu efekt en az N lamba ister…`). Aynı anda en fazla **4 kanalda** efekt
-çalışabilir.
+tamamına gönderir ve lambası yetmeyen efektleri baştan pasif gösterir.
+Aynı anda en fazla **4 kanalda** efekt çalışabilir.
+
+> 15-21 ve 23-28 için firmware fonksiyon adları bildirilmedi (tabloda `—`);
+> `src/lib/effects.ts`'teki açıklamaları da addan çıkarıldı. Efektin gerçek
+> davranışı farklıysa yalnızca açıklama düzeltilir, numara sabit kalır.
 
 ## 5) Veri payload (giden, data)
 

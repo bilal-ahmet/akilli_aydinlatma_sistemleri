@@ -134,8 +134,6 @@ function publishD4i(address: number) {
 
 /** Firmware sınırı: aynı anda en fazla bu kadar kanalda efekt çalışabilir. */
 const EFFECT_SLOTS = 4;
-/** Tüm hattı süren efektlerin (Chase) istediği asgari lamba sayısı. */
-const MIN_LAMPS_FOR_ALL_LAMPS_FX = 2;
 
 /** Komutun hedeflediği adresler: 255 = broadcast, aksi halde tek adres. */
 function targets(channel: number): number[] {
@@ -243,14 +241,13 @@ client.on("message", (topic, raw) => {
     // Tüm hattı süren efektler (Chase) kanal KABUL ETMEZ ve asgari lamba ister.
     if (fx?.allLamps) {
       if (channel !== undefined) {
-        console.warn(`◀ ${fx.id} reddedildi: channel gönderildi (${channel})`);
+        console.warn(`◀ ${fx.label} reddedildi: channel gönderildi (${channel})`);
         return ack("chase efekti tum lambalari surer, channel gondermeyin");
       }
-      if (channels.size < MIN_LAMPS_FOR_ALL_LAMPS_FX) {
-        console.warn(`◀ ${fx.id} reddedildi: ${channels.size} lamba yetersiz`);
-        return ack(
-          `bu efekt en az ${MIN_LAMPS_FOR_ALL_LAMPS_FX} lamba ister, hatta ${channels.size} lamba var`,
-        );
+      const min = fx.minLamps ?? 2;
+      if (channels.size < min) {
+        console.warn(`◀ ${fx.label} reddedildi: ${channels.size} lamba yetersiz`);
+        return ack(`bu efekt en az ${min} lamba ister, hatta ${channels.size} lamba var`);
       }
     } else if (!validChannel(channel)) {
       console.warn(`◀ efekt reddedildi (channel=${channel})`);
