@@ -493,13 +493,14 @@ function buildPayload({ action, value, number, channel, text }: CommandInput): s
 }
 
 /**
- * Cihaz komutunda `on`/`off` action'ı ESP tarafından işlenmiyor — firmware
- * yalnızca `dim`'i (0-100) tanıyor. Bu yüzden cihaz hedefli aç/kapa komutları
- * kabloda `dim`'e çevrilir: `on → dim 100`, `off → dim 0`. `channel` ve diğer
- * alanlar korunur; yalnızca kablo payload'ı değişir — `recordCommand` orijinal
- * `on`/`off` action'ıyla çağrıldığından snapshot/log (patchFor) aynı kalır ve
- * optimistic UI bozulmaz. Bölge/"Tüm Sistem" (`target !== "device"`) bu
- * dönüşümden etkilenmez.
+ * `on`/`off` action'ı ESP tarafından işlenmiyor — firmware yalnızca `dim`'i
+ * (0-100) tanıyor. Bu yüzden aç/kapa komutları kabloda `dim`'e çevrilir:
+ * `on → dim 100`, `off → dim 0`. `channel` ve diğer alanlar korunur; yalnızca
+ * kablo payload'ı değişir — `recordCommand` orijinal `on`/`off` action'ıyla
+ * çağrıldığından snapshot/log (patchFor) aynı kalır ve optimistic UI bozulmaz.
+ *
+ * TÜM hedeflere uygulanır (cihaz, bölge, "Tüm Sistem"); firmware hiçbirinde
+ * `on`/`off` kabul etmiyor.
  */
 function toWireCmd(cmd: CommandInput): CommandInput {
   if (cmd.action === "on") return { ...cmd, action: "dim", value: 100 };
@@ -513,9 +514,10 @@ function toWireCmd(cmd: CommandInput): CommandInput {
  * ayrıca recordCommand'ı çağır (bkz. route'lardaki `after()`); böylece Neon
  * round-trip'i komutun ESP'ye ulaşmasını geciktirmez.
  *
+ * Her hedefte `on`/`off` action'ı kabloda `dim`'e çevrilir (bkz. toWireCmd).
+ *
  * target:
  *  - "device" → Meven:<MAC>/cmd  (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
- *               `on`/`off` kabloda `dim`'e çevrilir (bkz. toWireCmd).
  *  - "zone"   → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
  *  - "all"    → Meven:all/cmd    (id = "all")
  */
@@ -532,10 +534,8 @@ export function publishCommand(
   const topic =
     target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
 
-  // Cihaz hedefinde on/off → dim çevrilir (firmware on/off tanımıyor); bölge/all
-  // olduğu gibi gider.
-  const wire = target === "device" ? toWireCmd(cmd) : cmd;
-  getMqttClient().publish(topic, buildPayload(wire), { qos: 1 });
+  // Tüm hedeflerde on/off → dim çevrilir (firmware on/off tanımıyor).
+  getMqttClient().publish(topic, buildPayload(toWireCmd(cmd)), { qos: 1 });
 
   return { requestId: randomUUID(), seq: ++cmdSeq };
 }
