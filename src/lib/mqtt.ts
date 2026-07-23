@@ -493,6 +493,21 @@ function buildPayload({ action, value, number, channel, text }: CommandInput): s
 }
 
 /**
+ * Cihaz komutunda `on`/`off` action'ı ESP tarafından işlenmiyor — firmware
+ * yalnızca `dim`'i (0-100) tanıyor. Bu yüzden cihaz hedefli aç/kapa komutları
+ * kabloda `dim`'e çevrilir: `on → dim 100`, `off → dim 0`. `channel` ve diğer
+ * alanlar korunur; yalnızca kablo payload'ı değişir — `recordCommand` orijinal
+ * `on`/`off` action'ıyla çağrıldığından snapshot/log (patchFor) aynı kalır ve
+ * optimistic UI bozulmaz. Bölge/"Tüm Sistem" (`target !== "device"`) bu
+ * dönüşümden etkilenmez.
+ */
+function toWireCmd(cmd: CommandInput): CommandInput {
+  if (cmd.action === "on") return { ...cmd, action: "dim", value: 100 };
+  if (cmd.action === "off") return { ...cmd, action: "dim", value: 0 };
+  return cmd;
+}
+
+/**
  * Komutu MQTT'ye yayınla. SENKRON ve DB'ye dokunmaz — çağrıldığı anda, zaten
  * açık olan TLS bağlantısı üzerinden publish eder. DB yazımı ve SSE için
  * ayrıca recordCommand'ı çağır (bkz. route'lardaki `after()`); böylece Neon
@@ -500,6 +515,7 @@ function buildPayload({ action, value, number, channel, text }: CommandInput): s
  *
  * target:
  *  - "device" → Meven:<MAC>/cmd  (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
+ *               `on`/`off` kabloda `dim`'e çevrilir (bkz. toWireCmd).
  *  - "zone"   → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
  *  - "all"    → Meven:all/cmd    (id = "all")
  */
@@ -516,7 +532,10 @@ export function publishCommand(
   const topic =
     target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
 
-  getMqttClient().publish(topic, buildPayload(cmd), { qos: 1 });
+  // Cihaz hedefinde on/off → dim çevrilir (firmware on/off tanımıyor); bölge/all
+  // olduğu gibi gider.
+  const wire = target === "device" ? toWireCmd(cmd) : cmd;
+  getMqttClient().publish(topic, buildPayload(wire), { qos: 1 });
 
   return { requestId: randomUUID(), seq: ++cmdSeq };
 }
