@@ -397,14 +397,23 @@ export function DeviceManager({
         </div>
       </Modal>
 
-      {/* Cihaz kontrol paneli (cihaz + lamba bazlı komut) */}
-      {controlling ? (
-        <DeviceControlModal
-          key={controlling.deviceId}
-          device={controlling}
-          onClose={() => setControlling(null)}
-        />
-      ) : null}
+      {/* Cihaz kontrol paneli (cihaz + lamba bazlı komut). "Tüm cihaz" seed'i
+          cihazın bölgesinin komut snapshot'ından gelir (son bölge/"Tüm Sistem"
+          komutunu yansıtsın diye); bölge yoksa cihazın telemetri değeri. */}
+      {controlling
+        ? (() => {
+            const z = zones.find((zn) => zn.id === controlling.zoneSlug);
+            return (
+              <DeviceControlModal
+                key={controlling.deviceId}
+                device={controlling}
+                initialOn={z ? z.isOn : controlling.relayStatus === "on"}
+                initialBrightness={z ? z.brightness : (controlling.brightness ?? 0)}
+                onClose={() => setControlling(null)}
+              />
+            );
+          })()
+        : null}
     </section>
   );
 }

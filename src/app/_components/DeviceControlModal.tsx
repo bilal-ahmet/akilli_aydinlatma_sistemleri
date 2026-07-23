@@ -65,9 +65,18 @@ const iconBtn =
  */
 export function DeviceControlModal({
   device,
+  initialOn,
+  initialBrightness,
   onClose,
 }: {
   device: DeviceView;
+  /**
+   * "Tüm cihaz" kontrolünün açılıştaki seed değeri — cihazın BÖLGESİNİN komut
+   * snapshot'ından gelir (zones.isOn/brightness). Böylece son bölge/"Tüm Sistem"
+   * komutunu yansıtır; telemetriden (device_status) değil (üstten-alta model).
+   */
+  initialOn: boolean;
+  initialBrightness: number;
   onClose: () => void;
 }) {
   const deviceId = device.deviceId;
@@ -97,9 +106,9 @@ export function DeviceControlModal({
   //   - yerel "Tüm cihaz" toggle/dim (optimistic)
   //   - cihaz-seviyesi komut echo'su (başka client, aynı seviye)
   //   - bölge / "Tüm Sistem" komutu (top-down) — bkz. onLive
-  // Prop'tan (device_status) tek seferlik seed edilir.
-  const [deviceOn, setDeviceOn] = useState(device.relayStatus === "on");
-  const [deviceBrightness, setDeviceBrightness] = useState(device.brightness ?? 0);
+  // Bölge komut snapshot'ından tek seferlik seed edilir (bkz. initialOn/…).
+  const [deviceOn, setDeviceOn] = useState(initialOn);
+  const [deviceBrightness, setDeviceBrightness] = useState(initialBrightness);
   const zoneSlug = device.zoneSlug;
 
   // Efekt hedefi: "device" (tüm ESP) veya kanal no
