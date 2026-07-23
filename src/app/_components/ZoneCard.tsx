@@ -1,14 +1,19 @@
 "use client";
 
-import type { Zone } from "@/app/_lib/types";
+import { useMemo } from "react";
+import type { OpenFault, Zone } from "@/app/_lib/types";
 import { formatInt, formatKw } from "@/app/_lib/format";
 import { zonePowerKw } from "@/app/_lib/mockData";
 import { effectByNumber } from "@/lib/effects";
+import { faultLabel } from "@/lib/faults";
+import { formatMac } from "@/lib/mac";
 import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
 
 interface ZoneCardProps {
   zone: Zone;
+  /** Bu bölgede O AN süren lamba arızaları (hangi cihaz/lamba). */
+  faults: OpenFault[];
   onToggle: (on: boolean) => void;
   onBrightness: (value: number) => void;
   onEffect: () => void;
@@ -22,10 +27,19 @@ const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
   fault: { label: "Arıza", cls: "text-danger" },
 };
 
-export function ZoneCard({ zone, onToggle, onBrightness, onEffect, onEdit, onDelete }: ZoneCardProps) {
+export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdit, onDelete }: ZoneCardProps) {
   const lvl = zone.isOn ? zone.brightness / 100 : 0;
   const status = STATUS[zone.status];
   const activeEffect = effectByNumber(zone.activeFx);
+
+  // Arızaları cihaza göre grupla — "hangi cihazın hangi lambası" tek satırda.
+  const faultsByDevice = useMemo(() => {
+    const m = new Map<string, OpenFault[]>();
+    for (const f of faults) {
+      (m.get(f.deviceId) ?? m.set(f.deviceId, []).get(f.deviceId)!).push(f);
+    }
+    return [...m.entries()];
+  }, [faults]);
 
   return (
     <article
@@ -56,8 +70,10 @@ export function ZoneCard({ zone, onToggle, onBrightness, onEffect, onEdit, onDel
       </div>
 
       <div className="mt-4">
+        {/* Kapalıyken bar 0 gösterir; açılınca son parlaklık (zone.brightness) geri
+            gelir — değer state'te korunur, yalnızca görüntü sıfırlanır. */}
         <BrightnessSlider
-          value={zone.brightness}
+          value={zone.isOn ? zone.brightness : 0}
           onChange={onBrightness}
           label={`${zone.name} ışık şiddeti`}
         />
@@ -129,6 +145,23 @@ export function ZoneCard({ zone, onToggle, onBrightness, onEffect, onEdit, onDel
           </button>
         </div>
       </div>
+
+      {/* Arıza detayı — hangi cihazın hangi lambası (bir bölgede çok cihaz olabilir). */}
+      {faultsByDevice.length > 0 ? (
+        <div className="mt-3 space-y-1 rounded-lg border border-danger/30 bg-danger/5 p-2.5">
+          {faultsByDevice.map(([deviceId, fs]) => (
+            <p key={deviceId} className="text-[11px] leading-snug text-muted">
+              <span className="font-semibold text-danger">
+                {fs[0].deviceName || formatMac(deviceId)}
+              </span>{" "}
+              ·{" "}
+              {fs
+                .map((f) => `Lamba ${f.channel} — ${faultLabel(f.code)}`)
+                .join(", ")}
+            </p>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }

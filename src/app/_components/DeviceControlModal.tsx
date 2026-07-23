@@ -91,9 +91,27 @@ export function DeviceControlModal({
   // Cihazın son komut yanıtı hatası; SSE'den gelen ack ile canlı güncellenir.
   const [lastError, setLastError] = useState<string | null>(device.lastError);
 
-  // Cihaz-seviyesi optimistic durum — son telemetriden başlar.
-  const [deviceOn, setDeviceOn] = useState(device.relayStatus === "on");
-  const [deviceBrightness, setDeviceBrightness] = useState(device.brightness ?? 0);
+  // "Tüm cihaz" durumu ÖNCELİKLE lamba (fixtures) kayıtlarından türetilir; bu
+  // hem prop'tan gelen device_status bayatlığını çözer hem de cross-client
+  // senkronu sağlar (başka client bir kanalı değiştirince SSE ile fixtures
+  // güncellenir, aggregate kendiliğinden yenilenir). Hiç lamba yoksa aşağıdaki
+  // fallback state kullanılır (prop'tan seed, yerel toggle ile optimistic).
+  const [fallbackOn, setFallbackOn] = useState(device.relayStatus === "on");
+  const [fallbackBrightness, setFallbackBrightness] = useState(device.brightness ?? 0);
+
+  // Aggregate = açık lambaların ortalaması (backend handleD4i ile aynı kural).
+  const deviceAgg = useMemo(() => {
+    if (fixtures.length === 0) return null;
+    const on = fixtures.filter((f) => f.isOn);
+    return {
+      isOn: on.length > 0,
+      brightness: on.length > 0
+        ? Math.round(on.reduce((a, f) => a + f.brightness, 0) / on.length)
+        : 0,
+    };
+  }, [fixtures]);
+  const deviceOn = deviceAgg ? deviceAgg.isOn : fallbackOn;
+  const deviceBrightness = deviceAgg ? deviceAgg.brightness : fallbackBrightness;
 
   // Efekt hedefi: "device" (tüm ESP) veya kanal no
   const [effectTarget, setEffectTarget] = useState<"device" | number | null>(null);
@@ -139,23 +157,7 @@ export function DeviceControlModal({
     // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
     fetch(`/api/devices/${deviceId}/fixtures`)
       .then((r) => r.json())
-      .then((j) => {
-        const rows = (j.data ?? []) as Fixture[];
-        setFixtures(rows);
-        // "Tüm cihaz" durumunu KALICI lamba kayıtlarından türet — prop'tan
-        // gelen device_status anlık görüntüsü yalnızca cihaz telemetri
-        // yayınladığında yazılıyor, bölge/toplu komutlardan sonra bayat
-        // kalıyor. Agregasyon backend'deki handleD4i ile aynı.
-        if (rows.length > 0) {
-          const on = rows.filter((f) => f.isOn);
-          setDeviceOn(on.length > 0);
-          setDeviceBrightness(
-            on.length > 0
-              ? Math.round(on.reduce((a, f) => a + f.brightness, 0) / on.length)
-              : 0,
-          );
-        }
-      })
+      .then((j) => setFixtures((j.data ?? []) as Fixture[]))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [deviceId]);
@@ -246,8 +248,8 @@ export function DeviceControlModal({
           }),
         );
       } else {
-        if (typeof e.isOn === "boolean") setDeviceOn(e.isOn);
-        if (typeof e.brightness === "number") setDeviceBrightness(e.brightness);
+        if (typeof e.isOn === "boolean") setFallbackOn(e.isOn);
+        if (typeof e.brightness === "number") setFallbackBrightness(e.brightness);
       }
     },
     [deviceId, scheduleRefresh],
@@ -272,7 +274,7 @@ export function DeviceControlModal({
 
   // ── Cihaz-seviyesi (tüm lambalar) ─────────────────────────
   function toggleDevice(on: boolean) {
-    setDeviceOn(on);
+    setFallbackOn(on);
     setFixtures((fs) => fs.map((f) => ({ ...f, isOn: on, activeFx: null })));
     beginPending("__device__");
     sendDeviceCommand(deviceId, { action: on ? "on" : "off" })
@@ -282,7 +284,7 @@ export function DeviceControlModal({
   }
 
   function setDeviceDim(value: number) {
-    setDeviceBrightness(value);
+    setFallbackBrightness(value);
     setFixtures((fs) => fs.map((f) => ({ ...f, brightness: value, isOn: true, activeFx: null })));
     debounce("__device__", () => sendDeviceCommand(deviceId, { action: "dim", value }));
   }
@@ -313,7 +315,7 @@ export function DeviceControlModal({
     const t = effectByNumber(number)?.allLamps ? "device" : effectTarget;
     if (t === null) return;
     if (t === "device") {
-      setDeviceOn(true);
+      setFallbackOn(true);
       setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, activeFx: number })));
       beginPending("__device__");
       sendDeviceCommand(deviceId, { action: "efekt", number, text })
@@ -544,8 +546,9 @@ export function DeviceControlModal({
               <Toggle checked={deviceOn} onChange={toggleDevice} label="Cihazı aç/kapat" />
             </div>
           </div>
+          {/* Kapalıyken bar 0; açılınca son seviyeye döner (değer state'te korunur). */}
           <BrightnessSlider
-            value={deviceBrightness}
+            value={deviceOn ? deviceBrightness : 0}
             onChange={setDeviceDim}
             label="Cihaz parlaklığı"
           />
@@ -641,7 +644,7 @@ export function DeviceControlModal({
                     </div>
                   </div>
                   <BrightnessSlider
-                    value={f.brightness}
+                    value={f.isOn ? f.brightness : 0}
                     onChange={(v) => setFixtureDim(f.channel, v)}
                     label={`Kanal ${f.channel} parlaklığı`}
                   />

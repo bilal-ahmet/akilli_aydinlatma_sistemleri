@@ -101,6 +101,23 @@ export interface FaultEvent {
   resolvedAt: string | null;
 }
 
+/**
+ * O AN süren bir lamba arızası — cihaz ve bölge bilgisiyle zenginleştirilmiş
+ * (`GET /api/faults`). Dashboard bölge kartında "hangi cihaz/lamba" detayını ve
+ * cihaz listesinde arıza rozetini bundan türetir. `channel` her zaman doludur
+ * (endpoint cihaz-seviyesi komut hatalarını hariç tutar).
+ */
+export interface OpenFault {
+  deviceId: string; // MAC
+  deviceName: string | null;
+  zoneSlug: string | null;
+  zoneName: string | null;
+  channel: number | null;
+  code: string;
+  detail: string | null;
+  startedAt: string;
+}
+
 /** Bir ESP'ye bağlı tek bağımsız aydınlatma (DALI kanalı). */
 export interface Fixture {
   id: string;

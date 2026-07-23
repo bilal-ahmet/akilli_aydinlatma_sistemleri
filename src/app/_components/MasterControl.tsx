@@ -71,8 +71,9 @@ export function MasterControl({
         <div className="mb-3 flex items-center justify-between">
           <label className="text-sm font-medium text-text">Genel Şiddet</label>
         </div>
+        {/* Kapalıyken bar 0; açılınca genel seviyeye (masterBrightness) döner. */}
         <BrightnessSlider
-          value={masterBrightness}
+          value={anyOn ? masterBrightness : 0}
           onChange={onSetAllBrightness}
           label="Genel ışık şiddeti"
           size="lg"

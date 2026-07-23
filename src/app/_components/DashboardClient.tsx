@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LiveSummary, Zone, ZoneStatus } from "@/app/_lib/types";
+import type { LiveSummary, OpenFault, Zone, ZoneStatus } from "@/app/_lib/types";
 import { summarize } from "@/app/_lib/mockData";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
@@ -68,9 +68,16 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   // Cihazlardan ölçülmüş özet — yüklenene kadar null (üst şerit tahmine düşer).
   const [live, setLive] = useState<LiveSummary | null>(null);
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [masterBrightness, setMasterBrightness] = useState(() =>
-    deriveMaster(initialZones),
-  );
+
+  // O an süren lamba arızaları (cihaz + bölge bilgisiyle). Bölge kartındaki
+  // "hangi cihaz" detayı ve cihaz listesindeki arıza rozeti bundan türer.
+  const [faults, setFaults] = useState<OpenFault[]>([]);
+
+  // Master slider ARTIK türetilir (bölgelerin ortalaması) — ayrı state değil.
+  // Böylece başka bir client "Tüm Sistem"i değiştirince, bölgeler SSE ile
+  // güncellenip master de kendiliğinden senkron olur (eskiden setMaster yalnızca
+  // yerel çağrılıyor, uzaktan gelen değişimi yansıtmıyordu).
+  const masterBrightness = useMemo(() => deriveMaster(zones), [zones]);
 
   // CRUD modal state
   const [formOpen, setFormOpen] = useState(false);
@@ -122,6 +129,23 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   const summary = useMemo(() => summarize(zones), [zones]);
   const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
 
+  // Arızaları bölge ve cihaz bazında grupla — kartlara/listeye bu haritalar iner.
+  const faultsByZone = useMemo(() => {
+    const m = new Map<string, OpenFault[]>();
+    for (const f of faults) {
+      if (!f.zoneSlug) continue;
+      (m.get(f.zoneSlug) ?? m.set(f.zoneSlug, []).get(f.zoneSlug)!).push(f);
+    }
+    return m;
+  }, [faults]);
+  const faultsByDevice = useMemo(() => {
+    const m = new Map<string, OpenFault[]>();
+    for (const f of faults) {
+      (m.get(f.deviceId) ?? m.set(f.deviceId, []).get(f.deviceId)!).push(f);
+    }
+    return m;
+  }, [faults]);
+
   /** Cihazlardan ölçülmüş özet (güç, gerilim, arızalı lamba sayısı). */
   const loadLive = useCallback(() => {
     fetch("/api/summary")
@@ -132,9 +156,20 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       .catch(() => {});
   }, []);
 
+  /** O an süren arızalar (bölge kartı detayı + cihaz rozeti). */
+  const loadFaults = useCallback(() => {
+    fetch("/api/faults")
+      .then((r) => r.json())
+      .then((j) => {
+        if (Array.isArray(j.data)) setFaults(j.data as OpenFault[]);
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadLive();
-  }, [loadLive]);
+    loadFaults();
+  }, [loadLive, loadFaults]);
 
   /**
    * SSE kaçarsa üst şerit ve bölge kartları bayat kalmasın.
@@ -146,6 +181,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
    */
   const reconcile = useCallback(() => {
     loadLive();
+    loadFaults();
     if (pendingRef.current.size > 0) return;
     if (Date.now() - lastCommandAtRef.current < 5_000) return;
     fetch("/api/zones")
@@ -154,7 +190,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         if (Array.isArray(j.data)) setZones(j.data as Zone[]);
       })
       .catch(() => {});
-  }, [loadLive]);
+  }, [loadLive, loadFaults]);
   useReconcile(reconcile);
 
   /**
@@ -167,8 +203,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     liveTimer.current = setTimeout(() => {
       liveTimer.current = null;
       loadLive();
+      loadFaults();
     }, LIVE_REFRESH_MS);
-  }, [loadLive]);
+  }, [loadLive, loadFaults]);
 
   useEffect(() => {
     const timer = liveTimer;
@@ -220,7 +257,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   function setZoneBrightness(id: string, value: number) {
-    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value, activeFx: null } : z)));
+    // dim = aynı zamanda "aç": kapalı bölgede bar sürüklenince optimistic açılır
+    // (backend patchFor("dim") de isOn=true yazar). Yoksa bar 0'da kilitli kalır.
+    setZones((zs) => zs.map((z) => (z.id === id ? { ...z, brightness: value, isOn: true, activeFx: null } : z)));
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
@@ -244,8 +283,8 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   function setAllBrightness(value: number) {
-    setMasterBrightness(value);
-    setZones((zs) => zs.map((z) => ({ ...z, brightness: value, activeFx: null })));
+    // masterBrightness türetildiği için (deriveMaster) ayrıca set edilmez.
+    setZones((zs) => zs.map((z) => ({ ...z, brightness: value, isOn: true, activeFx: null })));
     const ids = zones.map((z) => z.id);
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
@@ -377,6 +416,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       />
       <ZoneGrid
         zones={zones}
+        faultsByZone={faultsByZone}
         onToggle={toggleZone}
         onBrightness={setZoneBrightness}
         onCreate={openCreate}
@@ -384,7 +424,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         onEdit={openEdit}
         onDelete={(z) => setDeleting(z)}
       />
-      <DeviceManager zones={zones} />
+      <DeviceManager zones={zones} faultsByDevice={faultsByDevice} />
 
       {/* Cihazın reddettiği komutların hata bildirimleri */}
       <ErrorToasts />

@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Zone, DeviceView } from "@/app/_lib/types";
+import type { Zone, DeviceView, OpenFault } from "@/app/_lib/types";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { useReconcile } from "@/app/_lib/useReconcile";
 import { describeDeviceError } from "@/lib/deviceErrors";
+import { faultLabel } from "@/lib/faults";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 import { DeviceControlModal } from "./DeviceControlModal";
@@ -32,7 +33,14 @@ function telemetry(d: DeviceView): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-export function DeviceManager({ zones }: { zones: Zone[] }) {
+export function DeviceManager({
+  zones,
+  faultsByDevice,
+}: {
+  zones: Zone[];
+  /** Cihaz MAC'i → o cihazda O AN süren lamba arızaları. */
+  faultsByDevice: Map<string, OpenFault[]>;
+}) {
   const [devices, setDevices] = useState<DeviceView[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -212,6 +220,7 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
           <ul className="divide-y divide-border">
             {devices.map((d) => {
               const tel = telemetry(d);
+              const deviceFaults = faultsByDevice.get(d.deviceId) ?? [];
               return (
                 <li key={d.id} className="flex items-center justify-between gap-3 px-2 py-1">
                   <button
@@ -227,6 +236,11 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                           komut hatası
                         </span>
                       ) : null}
+                      {deviceFaults.length > 0 ? (
+                        <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                          arıza · {deviceFaults.length} lamba
+                        </span>
+                      ) : null}
                     </span>
                     <span className="mt-0.5 text-xs text-muted">
                       {d.zoneName ?? "bölge yok"}
@@ -237,6 +251,13 @@ export function DeviceManager({ zones }: { zones: Zone[] }) {
                       <span className="mt-0.5 text-[11px] text-danger">
                         {describeDeviceError(d.lastError).cause}
                         {d.lastErrorAt ? ` · ${formatSeen(d.lastErrorAt)}` : ""}
+                      </span>
+                    ) : null}
+                    {deviceFaults.length > 0 ? (
+                      <span className="mt-0.5 text-[11px] text-danger">
+                        {deviceFaults
+                          .map((f) => `Lamba ${f.channel} — ${faultLabel(f.code)}`)
+                          .join(", ")}
                       </span>
                     ) : null}
                   </button>

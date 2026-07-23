@@ -1,10 +1,12 @@
 "use client";
 
-import type { Zone } from "@/app/_lib/types";
+import type { OpenFault, Zone } from "@/app/_lib/types";
 import { ZoneCard } from "./ZoneCard";
 
 interface ZoneGridProps {
   zones: Zone[];
+  /** Bölge slug'ı → o bölgede süren lamba arızaları. */
+  faultsByZone: Map<string, OpenFault[]>;
   onToggle: (id: string, on: boolean) => void;
   onBrightness: (id: string, value: number) => void;
   onCreate: () => void;
@@ -15,6 +17,7 @@ interface ZoneGridProps {
 
 export function ZoneGrid({
   zones,
+  faultsByZone,
   onToggle,
   onBrightness,
   onCreate,
@@ -51,6 +54,7 @@ export function ZoneGrid({
             <ZoneCard
               key={zone.id}
               zone={zone}
+              faults={faultsByZone.get(zone.id) ?? []}
               onToggle={(on) => onToggle(zone.id, on)}
               onBrightness={(value) => onBrightness(zone.id, value)}
               onEffect={() => onEffect(zone)}
