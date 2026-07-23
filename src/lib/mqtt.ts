@@ -245,9 +245,12 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
   // 6) Bölge snapshot'ı + bekleyen komutlar + cihaz seviyesi canlı yayın
   const { zone } = await touchDevice(mac, now);
   if (zone) {
+    // YALNIZCA status (arıza) telemetriden güncellenir. Parlaklık/açık-kapalı
+    // ALTTAN ÜSTE yayılmaz: bölge, kendisine (veya "Tüm Sistem"e) verilen son
+    // komutu gösterir; cihaz telemetrisi bölge parlaklığını değiştirmez.
     await db
       .update(schema.zones)
-      .set({ isOn: aggIsOn, brightness: aggBrightness, status: aggFault ? "fault" : "ok" })
+      .set({ status: aggFault ? "fault" : "ok" })
       .where(eq(schema.zones.id, zone.id));
   }
   await markDelivered(mac, zone?.slug, now);
@@ -382,14 +385,13 @@ async function handleLegacyData(mac: string, d: DataPayload): Promise<void> {
   // 2) Cihazı bul, last_seen güncelle, bölgeyi çöz
   const { zone } = await touchDevice(mac, now);
 
-  // 3) Bölge snapshot'ını cihaz-seviyesi agregata göre rafine et
+  // 3) Bölge snapshot'ında YALNIZCA status (arıza) telemetriden güncellenir.
+  //    Parlaklık/açık-kapalı alttan üste yayılmaz (bkz. handleD4i).
   if (zone) {
-    const patch: StatePatch & { status?: string } = {
-      status: d.status === "error" ? "fault" : "ok",
-    };
-    if (typeof aggIsOn === "boolean") patch.isOn = aggIsOn;
-    if (typeof aggBrightness === "number") patch.brightness = aggBrightness;
-    await db.update(schema.zones).set(patch).where(eq(schema.zones.id, zone.id));
+    await db
+      .update(schema.zones)
+      .set({ status: d.status === "error" ? "fault" : "ok" })
+      .where(eq(schema.zones.id, zone.id));
   }
 
   // 4) Bekleyen komutları teslim edildi yap (device + bölge hedefi + all)
@@ -643,6 +645,20 @@ export async function recordCommand(
           seq,
         });
       }
+      // Cihaz-seviyesi ("Tüm cihaz") echo'su: kanal taşımayan bu olay, açık
+      // modallerin "Tüm cihaz" kontrolünü (yerel + cross-client) günceller.
+      // Lamba (kanal) olayları buraya bubble ETMEZ; bu yalnızca cihaz-seviyesi
+      // komutun kendi echo'sudur.
+      emitLiveEvent({
+        deviceId: id,
+        isOn: patch.isOn,
+        brightness: patch.brightness,
+        activeFx: patch.activeFx,
+        status: "ok",
+        kind: "command",
+        at,
+        seq,
+      });
     }
     return; // cihaz komutunda bölge snapshot işi yok
   }
@@ -681,11 +697,9 @@ export async function recordCommand(
   }
 
   // all
-  const updated = await db
-    .update(schema.zones)
-    .set(patchFor(action, value, number))
-    .returning();
-  await patchFixtures(null, patchFor(action, value, number), at, seq);
+  const allPatch = patchFor(action, value, number);
+  const updated = await db.update(schema.zones).set(allPatch).returning();
+  await patchFixtures(null, allPatch, at, seq);
   for (const z of updated) {
     emitLiveEvent({
       zoneSlug: z.slug,
@@ -698,4 +712,18 @@ export async function recordCommand(
       seq,
     });
   }
+  // Master (Tüm Sistem) slider'ı için kapsam olayı: bölge olayları master'ı
+  // OYNATMAZ (tek bölge değişimi master'ı kaydırmasın diye), master yalnızca bu
+  // scope:"all" olayıyla senkronlanır. `brightness` yalnızca dim'de dolu
+  // (patchFor), böylece on/off/efekt master seviyesini değiştirmez.
+  emitLiveEvent({
+    scope: "all",
+    isOn: allPatch.isOn,
+    brightness: allPatch.brightness,
+    activeFx: allPatch.activeFx,
+    status: "ok",
+    kind: "command",
+    at,
+    seq,
+  });
 }

@@ -73,11 +73,20 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   // "hangi cihaz" detayı ve cihaz listesindeki arıza rozeti bundan türer.
   const [faults, setFaults] = useState<OpenFault[]>([]);
 
-  // Master slider ARTIK türetilir (bölgelerin ortalaması) — ayrı state değil.
-  // Böylece başka bir client "Tüm Sistem"i değiştirince, bölgeler SSE ile
-  // güncellenip master de kendiliğinden senkron olur (eskiden setMaster yalnızca
-  // yerel çağrılıyor, uzaktan gelen değişimi yansıtmıyordu).
-  const masterBrightness = useMemo(() => deriveMaster(zones), [zones]);
+  // Master (Tüm Sistem) slider'ı BAĞIMSIZ state'tir — bölge ortalamasından
+  // TÜRETİLMEZ. Tek bir bölgenin parlaklığını değiştirmek master'ı oynatmamalı.
+  // Cross-client senkron için yalnızca "Tüm Sistem" komutunun SSE'deki
+  // scope:"all" olayıyla güncellenir (bkz. onLive).
+  const [masterBrightness, setMasterBrightness] = useState(() =>
+    deriveMaster(initialZones),
+  );
+  // Master switch de BAĞIMSIZ — bölgelerden türetilmez ("zones.some(isOn)").
+  // Tek bir bölgeyi açıp kapamak master switch'i oynatmamalı; master yalnızca
+  // "Tüm Sistem" komutuyla (yerel + scope:"all" echo) değişir.
+  const [masterOn, setMasterOn] = useState(() => initialZones.some((z) => z.isOn));
+  // scope:"all" olaylarının eski/yeni ayrımı + yerel all-komutu uçuşta guard'ı.
+  const masterSeqRef = useRef(0);
+  const masterPendingRef = useRef(0);
 
   // CRUD modal state
   const [formOpen, setFormOpen] = useState(false);
@@ -127,7 +136,6 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   const summary = useMemo(() => summarize(zones), [zones]);
-  const anyOn = useMemo(() => zones.some((z) => z.isOn), [zones]);
 
   // Arızaları bölge ve cihaz bazında grupla — kartlara/listeye bu haritalar iner.
   const faultsByZone = useMemo(() => {
@@ -220,6 +228,21 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     // Ölçüm özeti (güç/gerilim/arıza) cihaz raporundan sonra DB'den okunur;
     // olayın kendisi bu değerleri taşımaz. Bölge filtresinden ÖNCE ele alınır.
     if (e.kind === "telemetry" || e.kind === "ack") scheduleLiveRefresh();
+
+    // "Tüm Sistem" kapsam olayı: yalnızca master slider'ı senkronlar (bölge
+    // durumları kendi zoneSlug'lı olaylarıyla ayrıca güncellenir). Tek bölge
+    // değişimi bu olayı üretmez, dolayısıyla master oynamaz.
+    if (e.scope === "all") {
+      if (masterPendingRef.current > 0) return; // yerel all-komutu uçuşta
+      if (typeof e.seq === "number") {
+        if (e.seq < masterSeqRef.current) return; // eski echo
+        masterSeqRef.current = e.seq;
+      }
+      if (typeof e.isOn === "boolean") setMasterOn(e.isOn);
+      if (typeof e.brightness === "number") setMasterBrightness(e.brightness);
+      return; // scope:"all" olayının zoneSlug'ı yok; aşağısı zaten atlardı
+    }
+
     if (!e.zoneSlug) return;
     if ((pendingRef.current.get(e.zoneSlug) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
     if (typeof e.seq === "number") {
@@ -231,9 +254,14 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       prev.map((z) => {
         if (z.id !== e.zoneSlug) return z;
         const next: Zone = { ...z };
-        if (typeof e.isOn === "boolean") next.isOn = e.isOn;
-        if (typeof e.brightness === "number") next.brightness = e.brightness;
-        if (typeof e.activeFx !== "undefined") next.activeFx = e.activeFx;
+        // Parlaklık/açık-kapalı/efekt YALNIZCA komut olaylarından güncellenir
+        // (üstten alta). Cihaz telemetrisi (kind:"telemetry") bölge değerlerini
+        // ALTTAN ÜSTE değiştirmez — yalnızca arıza (status) bubble eder.
+        if (e.kind === "command") {
+          if (typeof e.isOn === "boolean") next.isOn = e.isOn;
+          if (typeof e.brightness === "number") next.brightness = e.brightness;
+          if (typeof e.activeFx !== "undefined") next.activeFx = e.activeFx;
+        }
         if (e.deviceId) next.status = (e.status === "error" ? "fault" : "ok") as ZoneStatus;
         return next;
       }),
@@ -273,27 +301,43 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   }
 
   function setAll(on: boolean) {
+    setMasterOn(on);
     setZones((zs) => zs.map((z) => ({ ...z, isOn: on, activeFx: null })));
     const ids = zones.map((z) => z.id);
     ids.forEach(beginPending);
+    masterPendingRef.current += 1;
     sendAll(on ? "on" : "off")
-      .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+      .then((seq) => {
+        ids.forEach((id) => applySeq(id, seq));
+        if (typeof seq === "number" && seq > masterSeqRef.current) masterSeqRef.current = seq;
+      })
       .catch(() => {})
-      .finally(() => ids.forEach(endPending)); // Meven:all/cmd
+      .finally(() => {
+        ids.forEach(endPending);
+        masterPendingRef.current -= 1;
+      }); // Meven:all/cmd
   }
 
   function setAllBrightness(value: number) {
-    // masterBrightness türetildiği için (deriveMaster) ayrıca set edilmez.
+    setMasterBrightness(value); // optimistic — echo (scope:"all") guard ile korunur
+    setMasterOn(true); // dim = aç
     setZones((zs) => zs.map((z) => ({ ...z, brightness: value, isOn: true, activeFx: null })));
     const ids = zones.map((z) => z.id);
     const timers = dimTimers.current;
     clearTimeout(timers.get("__all__"));
     timers.set("__all__", setTimeout(() => {
       ids.forEach(beginPending);
+      masterPendingRef.current += 1;
       sendAll("dim", value)
-        .then((seq) => ids.forEach((id) => applySeq(id, seq)))
+        .then((seq) => {
+          ids.forEach((id) => applySeq(id, seq));
+          if (typeof seq === "number" && seq > masterSeqRef.current) masterSeqRef.current = seq;
+        })
         .catch(() => {})
-        .finally(() => ids.forEach(endPending));
+        .finally(() => {
+          ids.forEach(endPending);
+          masterPendingRef.current -= 1;
+        });
       timers.delete("__all__");
     }, DIM_DEBOUNCE_MS));
   }
@@ -303,6 +347,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const t = effectTarget;
     if (!t) return;
     if (t === "all") {
+      setMasterOn(true);
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
       const ids = zones.map((z) => z.id);
       ids.forEach(beginPending);
@@ -325,6 +370,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const t = effectTarget;
     if (!t) return;
     if (t === "all") {
+      setMasterOn(true);
       setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
       const ids = zones.map((z) => z.id);
       ids.forEach(beginPending);
@@ -408,7 +454,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     <div className="flex flex-col gap-6">
       <StatusOverview summary={summary} live={live} />
       <MasterControl
-        anyOn={anyOn}
+        anyOn={masterOn}
         masterBrightness={masterBrightness}
         onSetAll={setAll}
         onSetAllBrightness={setAllBrightness}

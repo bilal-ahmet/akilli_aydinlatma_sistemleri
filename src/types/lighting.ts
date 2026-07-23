@@ -323,6 +323,13 @@ export type FixtureUpdate = z.infer<typeof fixtureUpdateSchema>;
 export type LiveEvent = {
   zoneSlug?: string;
   deviceId?: string;
+  /**
+   * "Tüm Sistem" (all) komutunun kapsam işareti. Bu olay tek bir bölgeye/cihaza
+   * değil, sisteme aittir; dashboard master (Tüm Sistem) parlaklık slider'ını
+   * SADECE bu olayla senkronlar. Böylece tek bir bölgenin değişimi master'ı
+   * oynatmaz (o yalnızca zoneSlug'lı olaylarla güncellenir).
+   */
+  scope?: "all";
   channel?: number; // DALI kanal (lamba) no — cihaz/lamba seviyesi olay
   action?: Action;
   value?: number;

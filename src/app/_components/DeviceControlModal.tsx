@@ -91,27 +91,16 @@ export function DeviceControlModal({
   // Cihazın son komut yanıtı hatası; SSE'den gelen ack ile canlı güncellenir.
   const [lastError, setLastError] = useState<string | null>(device.lastError);
 
-  // "Tüm cihaz" durumu ÖNCELİKLE lamba (fixtures) kayıtlarından türetilir; bu
-  // hem prop'tan gelen device_status bayatlığını çözer hem de cross-client
-  // senkronu sağlar (başka client bir kanalı değiştirince SSE ile fixtures
-  // güncellenir, aggregate kendiliğinden yenilenir). Hiç lamba yoksa aşağıdaki
-  // fallback state kullanılır (prop'tan seed, yerel toggle ile optimistic).
-  const [fallbackOn, setFallbackOn] = useState(device.relayStatus === "on");
-  const [fallbackBrightness, setFallbackBrightness] = useState(device.brightness ?? 0);
-
-  // Aggregate = açık lambaların ortalaması (backend handleD4i ile aynı kural).
-  const deviceAgg = useMemo(() => {
-    if (fixtures.length === 0) return null;
-    const on = fixtures.filter((f) => f.isOn);
-    return {
-      isOn: on.length > 0,
-      brightness: on.length > 0
-        ? Math.round(on.reduce((a, f) => a + f.brightness, 0) / on.length)
-        : 0,
-    };
-  }, [fixtures]);
-  const deviceOn = deviceAgg ? deviceAgg.isOn : fallbackOn;
-  const deviceBrightness = deviceAgg ? deviceAgg.brightness : fallbackBrightness;
+  // "Tüm cihaz" BAĞIMSIZ bir kontroldür — lambaların ortalamasından TÜRETİLMEZ.
+  // Tek bir lambayı değiştirmek "Tüm cihaz"ı oynatmaz (alttan üste etki yok).
+  // Değeri yalnızca ÜSTTEN ALTA veya kendi seviyesinde değişir:
+  //   - yerel "Tüm cihaz" toggle/dim (optimistic)
+  //   - cihaz-seviyesi komut echo'su (başka client, aynı seviye)
+  //   - bölge / "Tüm Sistem" komutu (top-down) — bkz. onLive
+  // Prop'tan (device_status) tek seferlik seed edilir.
+  const [deviceOn, setDeviceOn] = useState(device.relayStatus === "on");
+  const [deviceBrightness, setDeviceBrightness] = useState(device.brightness ?? 0);
+  const zoneSlug = device.zoneSlug;
 
   // Efekt hedefi: "device" (tüm ESP) veya kanal no
   const [effectTarget, setEffectTarget] = useState<"device" | number | null>(null);
@@ -216,6 +205,21 @@ export function DeviceControlModal({
   // ── Canlı durum (SSE): bu cihaza ait event'leri rafine et ──
   const onLive = useCallback(
     (e: LiveEvent) => {
+      // ── ÜSTTEN ALTA: "Tüm Sistem" (scope:"all") veya bu cihazın bölgesine
+      // giden komut, "Tüm cihaz" kontrolünü günceller. deviceId filtresinden
+      // ÖNCE ele alınır (bu olaylar deviceId taşımaz). Yerel "Tüm cihaz" komutu
+      // uçuştaysa atlanır ki optimistic değer bozulmasın.
+      const topDown =
+        e.kind === "command" &&
+        (e.scope === "all" || (!!zoneSlug && e.zoneSlug === zoneSlug));
+      if (topDown) {
+        if ((pendingRef.current.get("__device__") ?? 0) === 0) {
+          if (typeof e.isOn === "boolean") setDeviceOn(e.isOn);
+          if (typeof e.brightness === "number") setDeviceBrightness(e.brightness);
+        }
+        return;
+      }
+
       if (e.deviceId !== deviceId) return;
       // Komut yanıtı: durum taşımaz, yalnızca hata bandını günceller. Aşağıdaki
       // in-flight guard'ından ÖNCE ele alınmalı — ack tam da komut uçuştayken gelir.
@@ -236,6 +240,8 @@ export function DeviceControlModal({
         lastSeqRef.current.set(seqKey, e.seq);
       }
       if (typeof e.channel === "number") {
+        // Lamba (leaf) — "Tüm cihaz"a ALTTAN ÜSTE bubble ETMEZ, yalnızca
+        // ilgili fixture satırını günceller.
         setFixtures((prev) =>
           prev.map((f) => {
             if (f.channel !== e.channel) return f;
@@ -247,12 +253,15 @@ export function DeviceControlModal({
             return next;
           }),
         );
-      } else {
-        if (typeof e.isOn === "boolean") setFallbackOn(e.isOn);
-        if (typeof e.brightness === "number") setFallbackBrightness(e.brightness);
+      } else if (e.kind === "command") {
+        // Cihaz-seviyesi komut echo'su (aynı seviye — örn. başka client "Tüm
+        // cihaz"ı değiştirdi). Telemetri (kind:"telemetry") device-level
+        // olayları "Tüm cihaz"ı DEĞİŞTİRMEZ (alttan üste etki yok).
+        if (typeof e.isOn === "boolean") setDeviceOn(e.isOn);
+        if (typeof e.brightness === "number") setDeviceBrightness(e.brightness);
       }
     },
-    [deviceId, scheduleRefresh],
+    [deviceId, zoneSlug, scheduleRefresh],
   );
   useLiveStatus(onLive);
 
@@ -274,7 +283,7 @@ export function DeviceControlModal({
 
   // ── Cihaz-seviyesi (tüm lambalar) ─────────────────────────
   function toggleDevice(on: boolean) {
-    setFallbackOn(on);
+    setDeviceOn(on);
     setFixtures((fs) => fs.map((f) => ({ ...f, isOn: on, activeFx: null })));
     beginPending("__device__");
     sendDeviceCommand(deviceId, { action: on ? "on" : "off" })
@@ -284,7 +293,7 @@ export function DeviceControlModal({
   }
 
   function setDeviceDim(value: number) {
-    setFallbackBrightness(value);
+    setDeviceBrightness(value);
     setFixtures((fs) => fs.map((f) => ({ ...f, brightness: value, isOn: true, activeFx: null })));
     debounce("__device__", () => sendDeviceCommand(deviceId, { action: "dim", value }));
   }
@@ -315,7 +324,7 @@ export function DeviceControlModal({
     const t = effectByNumber(number)?.allLamps ? "device" : effectTarget;
     if (t === null) return;
     if (t === "device") {
-      setFallbackOn(true);
+      setDeviceOn(true);
       setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, activeFx: number })));
       beginPending("__device__");
       sendDeviceCommand(deviceId, { action: "efekt", number, text })
