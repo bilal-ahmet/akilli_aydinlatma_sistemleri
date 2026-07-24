@@ -13,6 +13,7 @@ interface ZoneGridProps {
   onEffect: (zone: Zone) => void;
   onEdit: (zone: Zone) => void;
   onDelete: (zone: Zone) => void;
+  onOpenDevices: (zone: Zone) => void;
 }
 
 export function ZoneGrid({
@@ -24,6 +25,7 @@ export function ZoneGrid({
   onEffect,
   onEdit,
   onDelete,
+  onOpenDevices,
 }: ZoneGridProps) {
   return (
     <section aria-label="Aydınlatma bölgeleri">
@@ -60,6 +62,7 @@ export function ZoneGrid({
               onEffect={() => onEffect(zone)}
               onEdit={() => onEdit(zone)}
               onDelete={() => onDelete(zone)}
+              onOpenDevices={() => onOpenDevices(zone)}
             />
           ))}
         </div>

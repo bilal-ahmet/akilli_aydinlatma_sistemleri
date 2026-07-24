@@ -38,10 +38,16 @@ function telemetry(d: DeviceView): string | null {
 export function DeviceManager({
   zones,
   faultsByDevice,
+  openZone = null,
+  onCloseZone,
 }: {
   zones: Zone[];
   /** Cihaz MAC'i → o cihazda O AN süren lamba arızaları. */
   faultsByDevice: Map<string, OpenFault[]>;
+  /** Bölge kartından açılan "bu bölgenin cihazları" paneli için hedef bölge. */
+  openZone?: Zone | null;
+  /** O paneli kapat. */
+  onCloseZone?: () => void;
 }) {
   const [devices, setDevices] = useState<DeviceView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,8 +125,8 @@ export function DeviceManager({
   }, []);
   useLiveStatus(onLive);
 
-  function openAdd() {
-    setZoneSlug(zones[0]?.id ?? "");
+  function openAdd(preZoneSlug?: string) {
+    setZoneSlug(preZoneSlug ?? zones[0]?.id ?? "");
     setMac("");
     setName("");
     setError(null);
@@ -230,6 +236,9 @@ export function DeviceManager({
     return out;
   }, [zones, devices]);
 
+  // Bölge kartından açılan panelde gösterilecek cihazlar (o bölgeye bağlı olanlar).
+  const zoneDevices = openZone ? devices.filter((d) => d.zoneSlug === openZone.id) : [];
+
   /** Tek bir cihaz satırı — bölge grubunun içinde listelenir. */
   const renderDevice = (d: DeviceView) => {
     const tel = telemetry(d);
@@ -308,7 +317,7 @@ export function DeviceManager({
         </div>
         <button
           type="button"
-          onClick={openAdd}
+          onClick={() => openAdd()}
           disabled={zones.length === 0}
           className="inline-flex items-center gap-1.5 rounded-lg border border-glow/40 bg-glow/20 px-3 py-1.5 text-sm font-semibold text-text transition-colors hover:bg-glow/30 disabled:opacity-50"
         >
@@ -380,6 +389,46 @@ export function DeviceManager({
           </div>
         )}
       </div>
+
+      {/* Bölgeye ait cihazlar (bölge kartından açılır). Cihaz listesinin aynısı:
+          satırdan tıklayınca kontrol/telemetri paneli (DeviceControlModal), kalem/çöp
+          ile düzenle/sil aynı modallar üstte açılır. Bu yüzden EN ÖNDE değil, en
+          ARKADA durur — diğer modallar (kontrol/düzenle/sil) DOM'da sonra gelip üste biner. */}
+      <Modal
+        open={openZone !== null}
+        onClose={() => onCloseZone?.()}
+        size="lg"
+        title={openZone ? `${openZone.name} — Cihazlar` : "Cihazlar"}
+        subtitle={
+          openZone ? (
+            <span className="text-xs">
+              {zoneDevices.length} cihaz{openZone.district ? ` · ${openZone.district}` : ""}
+            </span>
+          ) : undefined
+        }
+      >
+        <div className="mb-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => openZone && openAdd(openZone.id)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-glow/40 bg-glow/20 px-3 py-1.5 text-sm font-semibold text-text transition-colors hover:bg-glow/30"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Yeni Cihaz
+          </button>
+        </div>
+        {zoneDevices.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
+            Bu bölgede tanımlı cihaz yok. &quot;Yeni Cihaz&quot; ile bu bölgeye bir ESP32 ekleyebilirsin.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-panel">
+            {zoneDevices.map((d) => renderDevice(d))}
+          </ul>
+        )}
+      </Modal>
 
       {/* Yeni cihaz */}
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Yeni Cihaz">

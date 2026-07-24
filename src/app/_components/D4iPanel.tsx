@@ -99,11 +99,28 @@ function Metrics({ items }: { items: Metric[] }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * Sürücü / LED gibi bağımsız birimlerin kendi kutusu. Her biri kenarlıklı,
+ * ikonlu başlıklı ayrı bir kart — böylece iki blok gözle net ayrılır, sayılar
+ * tek bir yığın gibi görünmez.
+ */
+function Section({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="border-t border-border pt-3">
-      <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
-        <span aria-hidden className="h-3.5 w-1 rounded-full bg-accent/60" />
+    <div className="rounded-xl border border-border bg-panel/40 p-3">
+      <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-text">
+        {icon ? (
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+            {icon}
+          </span>
+        ) : null}
         {title}
       </p>
       {children}
@@ -516,7 +533,16 @@ export function D4iPanel({
                 <div className="space-y-3">
                   <SummaryStats r={r} />
 
-                  <Section title="Sürücü">
+                  <Section
+                    title="Sürücü"
+                    icon={
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <rect x="5" y="5" width="14" height="14" rx="2" />
+                        <rect x="9" y="9" width="6" height="6" />
+                        <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+                      </svg>
+                    }
+                  >
                     <Metrics
                       items={[
                         { label: "Çalışma sıcaklığı", value: num(r.driverTemperatureC, "°C", tr0) },
@@ -550,7 +576,14 @@ export function D4iPanel({
                     <Faults block={drv} keys={DRIVER_FAULTS} />
                   </Section>
 
-                  <Section title="LED">
+                  <Section
+                    title="LED"
+                    icon={
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z" />
+                      </svg>
+                    }
+                  >
                     <Metrics
                       items={[
                         {

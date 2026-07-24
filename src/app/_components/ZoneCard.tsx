@@ -19,6 +19,8 @@ interface ZoneCardProps {
   onEffect: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** Bölge adına tıklanınca: o bölgenin cihazlarını gösteren paneli aç. */
+  onOpenDevices: () => void;
 }
 
 const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
@@ -27,7 +29,7 @@ const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
   fault: { label: "Arıza", cls: "text-danger" },
 };
 
-export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdit, onDelete }: ZoneCardProps) {
+export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdit, onDelete, onOpenDevices }: ZoneCardProps) {
   const lvl = zone.isOn ? zone.brightness / 100 : 0;
   const status = STATUS[zone.status];
   const activeEffect = effectByNumber(zone.activeFx);
@@ -54,14 +56,33 @@ export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdi
       }
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate font-display text-base font-semibold text-text">
-            {zone.name}
+        <button
+          type="button"
+          onClick={onOpenDevices}
+          title="Bölgenin cihazlarını göster"
+          className="group -ml-1 min-w-0 flex-1 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-glow/10"
+        >
+          <h3 className="flex items-center gap-1 font-display text-base font-semibold text-text transition-colors group-hover:text-accent">
+            <span className="truncate">{zone.name}</span>
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              className="shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+            >
+              <path d="m9 6 6 6-6 6" />
+            </svg>
           </h3>
-          <p className="mt-0.5 text-xs text-muted">
+          <p className="mt-0.5 truncate text-xs text-muted">
             {zone.district} · {formatInt(zone.poleCount)} direk
           </p>
-        </div>
+        </button>
         <Toggle
           checked={zone.isOn}
           onChange={onToggle}

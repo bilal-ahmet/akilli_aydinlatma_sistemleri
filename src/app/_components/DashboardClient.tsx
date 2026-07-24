@@ -98,6 +98,10 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   // Efekt picker hedefi: bir bölge, "all" (tüm sistem) veya kapalı
   const [effectTarget, setEffectTarget] = useState<Zone | "all" | null>(null);
 
+  // Bölge kartına tıklanınca açılan "o bölgenin cihazları" paneli (DeviceManager
+  // içinde). Zone nesnesi taze kalsın diye slug tutulur, Zone `zones`'tan türetilir.
+  const [devicesZoneSlug, setDevicesZoneSlug] = useState<string | null>(null);
+
   const dimTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Son bilinen komut seq'i (zone bazlı) — SSE echo'sundan ve bu client'ın
@@ -469,8 +473,14 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
         onEffect={(z) => setEffectTarget(z)}
         onEdit={openEdit}
         onDelete={(z) => setDeleting(z)}
+        onOpenDevices={(z) => setDevicesZoneSlug(z.id)}
       />
-      <DeviceManager zones={zones} faultsByDevice={faultsByDevice} />
+      <DeviceManager
+        zones={zones}
+        faultsByDevice={faultsByDevice}
+        openZone={zones.find((z) => z.id === devicesZoneSlug) ?? null}
+        onCloseZone={() => setDevicesZoneSlug(null)}
+      />
 
       {/* Cihazın reddettiği komutların hata bildirimleri */}
       <ErrorToasts />
