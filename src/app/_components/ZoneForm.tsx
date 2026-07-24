@@ -1,20 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import type { Zone, ZoneStatus } from "@/app/_lib/types";
+import { useMemo, useState } from "react";
+import type { Zone } from "@/app/_lib/types";
+import {
+  PROVINCE,
+  provinceNames,
+  districtsOf,
+  neighborhoodsOf,
+  composeLocation,
+  parseLocation,
+} from "@/app/_lib/kocaeli";
 
 export interface ZoneFormValues {
   name: string;
   district: string;
   poleCount: number;
-  status: ZoneStatus;
 }
-
-const STATUS_OPTIONS: { value: ZoneStatus; label: string }[] = [
-  { value: "ok", label: "Çalışıyor" },
-  { value: "warning", label: "Uyarı" },
-  { value: "fault", label: "Arıza" },
-];
 
 interface ZoneFormProps {
   initial?: Zone; // verilirse düzenleme modu
@@ -28,26 +29,89 @@ const inputCls =
 const labelCls = "mb-1 block text-xs font-medium text-muted";
 
 export function ZoneForm({ initial, submitting, onSubmit, onCancel }: ZoneFormProps) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [district, setDistrict] = useState(initial?.district ?? "");
-  const [poleCount, setPoleCount] = useState(String(initial?.poleCount ?? 0));
-  const [status, setStatus] = useState<ZoneStatus>(initial?.status ?? "ok");
+  // Düzenlemede kayıtlı `district` metnini (İlçe · Mahalle) tekrar seçimlere ayır.
+  const parsed = useMemo(() => parseLocation(initial?.district), [initial?.district]);
 
-  const canSubmit = name.trim().length > 0 && !submitting;
+  const [province, setProvince] = useState(PROVINCE);
+  const [district, setDistrict] = useState(parsed.district);
+  const [neighborhood, setNeighborhood] = useState(parsed.neighborhood);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [poleCount, setPoleCount] = useState(String(initial?.poleCount ?? 0));
+
+  const districts = useMemo(() => districtsOf(province), [province]);
+  const neighborhoods = useMemo(
+    () => neighborhoodsOf(province, district),
+    [province, district],
+  );
+
+  const canSubmit =
+    name.trim().length > 0 && district.length > 0 && neighborhood.length > 0 && !submitting;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     onSubmit({
       name: name.trim(),
-      district: district.trim(),
+      district: composeLocation(district, neighborhood),
       poleCount: Math.max(0, parseInt(poleCount, 10) || 0),
-      status,
     });
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {/* Konum: önce il / ilçe / mahalle, ardından bölge adı seçilir. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div>
+          <label className={labelCls} htmlFor="zf-province">İl *</label>
+          <select
+            id="zf-province"
+            className={inputCls}
+            value={province}
+            onChange={(e) => {
+              setProvince(e.target.value);
+              setDistrict("");
+              setNeighborhood("");
+            }}
+          >
+            {provinceNames().map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="zf-district">İlçe *</label>
+          <select
+            id="zf-district"
+            className={inputCls}
+            value={district}
+            onChange={(e) => {
+              setDistrict(e.target.value);
+              setNeighborhood("");
+            }}
+          >
+            <option value="">Seçiniz…</option>
+            {districts.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="zf-neighborhood">Mahalle *</label>
+          <select
+            id="zf-neighborhood"
+            className={inputCls}
+            value={neighborhood}
+            disabled={district.length === 0}
+            onChange={(e) => setNeighborhood(e.target.value)}
+          >
+            <option value="">{district ? "Seçiniz…" : "Önce ilçe seçin"}</option>
+            {neighborhoods.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div>
         <label className={labelCls} htmlFor="zf-name">Bölge adı *</label>
         <input
@@ -56,46 +120,19 @@ export function ZoneForm({ initial, submitting, onSubmit, onCancel }: ZoneFormPr
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Örn. Atatürk Bulvarı"
-          autoFocus
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls} htmlFor="zf-district">İlçe / Bölge</label>
-          <input
-            id="zf-district"
-            className={inputCls}
-            value={district}
-            onChange={(e) => setDistrict(e.target.value)}
-            placeholder="Örn. Merkez"
-          />
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="zf-poles">Direk sayısı</label>
-          <input
-            id="zf-poles"
-            type="number"
-            min={0}
-            className={inputCls}
-            value={poleCount}
-            onChange={(e) => setPoleCount(e.target.value)}
-          />
-        </div>
-      </div>
-
       <div>
-        <label className={labelCls} htmlFor="zf-status">Durum</label>
-        <select
-          id="zf-status"
+        <label className={labelCls} htmlFor="zf-poles">Direk sayısı</label>
+        <input
+          id="zf-poles"
+          type="number"
+          min={0}
           className={inputCls}
-          value={status}
-          onChange={(e) => setStatus(e.target.value as ZoneStatus)}
-        >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+          value={poleCount}
+          onChange={(e) => setPoleCount(e.target.value)}
+        />
       </div>
 
       <div className="mt-1 flex justify-end gap-2">

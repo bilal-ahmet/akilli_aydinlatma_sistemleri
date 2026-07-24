@@ -406,7 +406,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     setFormError(null);
     try {
       if (editing) {
-        // Düzenleme — durum dahil tüm alanları PATCH'le.
+        // Düzenleme — form alanlarını (isim, konum, direk) PATCH'le.
         const res = await fetch(`/api/zones/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Zone, DeviceView, OpenFault } from "@/app/_lib/types";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
@@ -23,11 +23,13 @@ function formatSeen(iso: string | null): string {
   });
 }
 
-/** Son telemetriyi kısa metne çevirir: "açık · %75 · 42°C · -67 dBm". */
+/**
+ * Son telemetriyi kısa metne çevirir: "42°C · -67 dBm". Açık/kapalı ve parlaklık
+ * (%) BİLEREK gösterilmez — onlar cihazın telemetri agregatıydı ve "Tüm cihaz"
+ * kontrolüyle (son komut) karışıyordu; cihaz durumu modaldeki kontrolde görülür.
+ */
 function telemetry(d: DeviceView): string | null {
   const parts: string[] = [];
-  if (d.relayStatus) parts.push(d.relayStatus === "on" ? "açık" : "kapalı");
-  if (typeof d.brightness === "number") parts.push(`%${d.brightness}`);
   if (typeof d.temperature === "number") parts.push(`${d.temperature}°C`);
   if (typeof d.rssi === "number") parts.push(`${d.rssi} dBm`);
   return parts.length ? parts.join(" · ") : null;
@@ -52,6 +54,19 @@ export function DeviceManager({
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DeviceView | null>(null);
   const [controlling, setControlling] = useState<DeviceView | null>(null);
+
+  // Bölge başlığına tıklanınca o bölgenin cihazları açılır/kapanır. Cihazlar
+  // artık bağlı oldukları bölgenin altında gruplu duruyor (bölge ↔ cihaz bağını
+  // görünür kılmak için); başlangıçta hepsi kapalı — "bölgeye tıkla, cihazlar gelsin".
+  const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
+  function toggleZone(key: string) {
+    setExpandedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   // Düzenleme (bölge / isim) — MAC değiştirilemez.
   const [editing, setEditing] = useState<DeviceView | null>(null);
@@ -189,6 +204,101 @@ export function DeviceManager({
     }
   }
 
+  // Cihazları bölgeye göre grupla — bölge sırasını koru, bölgesi olmayan (ya da
+  // bilinmeyen bölgeye işaret eden) cihazlar en sona ayrı bir gruba düşer.
+  const groups = useMemo(() => {
+    const byZone = new Map<string, DeviceView[]>();
+    for (const d of devices) {
+      const key = d.zoneSlug ?? "__none__";
+      const arr = byZone.get(key) ?? [];
+      arr.push(d);
+      byZone.set(key, arr);
+    }
+    const out: { key: string; name: string; devices: DeviceView[] }[] = [];
+    const known = new Set(zones.map((z) => z.id));
+    for (const z of zones) {
+      const ds = byZone.get(z.id);
+      if (ds && ds.length) out.push({ key: z.id, name: z.name, devices: ds });
+    }
+    // zones listesinde olmayan bir slug'a bağlı cihazlar (senkron dışı durum)
+    for (const [key, ds] of byZone) {
+      if (key === "__none__" || known.has(key)) continue;
+      out.push({ key, name: ds[0].zoneName ?? key, devices: ds });
+    }
+    const none = byZone.get("__none__");
+    if (none && none.length) out.push({ key: "__none__", name: "Bölge atanmamış", devices: none });
+    return out;
+  }, [zones, devices]);
+
+  /** Tek bir cihaz satırı — bölge grubunun içinde listelenir. */
+  const renderDevice = (d: DeviceView) => {
+    const tel = telemetry(d);
+    const deviceFaults = faultsByDevice.get(d.deviceId) ?? [];
+    return (
+      <li key={d.id} className="flex items-center justify-between gap-3 px-2 py-1 sm:pl-5">
+        <button
+          type="button"
+          onClick={() => setControlling(d)}
+          title="Cihazı kontrol et"
+          className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-2 py-2 text-left transition-colors hover:bg-glow/10"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</span>
+            {d.lastError ? (
+              <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                komut hatası
+              </span>
+            ) : null}
+            {deviceFaults.length > 0 ? (
+              <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                arıza · {deviceFaults.length} lamba
+              </span>
+            ) : null}
+          </span>
+          <span className="mt-0.5 text-xs text-muted">
+            {d.name ? `${d.name} · ` : ""}son görülme: {formatSeen(d.lastSeen)}
+          </span>
+          {tel ? <span className="mt-0.5 font-mono text-[11px] text-accent">{tel}</span> : null}
+          {d.lastError ? (
+            <span className="mt-0.5 text-[11px] text-danger">
+              {describeDeviceError(d.lastError).cause}
+              {d.lastErrorAt ? ` · ${formatSeen(d.lastErrorAt)}` : ""}
+            </span>
+          ) : null}
+          {deviceFaults.length > 0 ? (
+            <span className="mt-0.5 text-[11px] text-danger">
+              {deviceFaults
+                .map((f) => `Lamba ${f.channel} — ${faultLabel(f.code)}`)
+                .join(", ")}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => openEdit(d)}
+          aria-label={`${d.deviceId} düzenle`}
+          title="Bölge / isim düzenle"
+          className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDeleting(d)}
+          aria-label={`${d.deviceId} sil`}
+          title="Sil"
+          className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-danger/15 hover:text-danger"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          </svg>
+        </button>
+      </li>
+    );
+  };
+
   return (
     <section aria-label="Cihazlar">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -217,76 +327,57 @@ export function DeviceManager({
             Henüz cihaz yok. Gerçek ESP32&apos;yi bağlamadan önce buradan MAC adresini ve bölgesini tanımla.
           </p>
         ) : (
-          <ul className="divide-y divide-border">
-            {devices.map((d) => {
-              const tel = telemetry(d);
-              const deviceFaults = faultsByDevice.get(d.deviceId) ?? [];
+          <div className="divide-y divide-border">
+            {groups.map((g) => {
+              const isOpen = expandedZones.has(g.key);
+              const errCount = g.devices.filter((d) => d.lastError).length;
+              const faultCount = g.devices.filter(
+                (d) => (faultsByDevice.get(d.deviceId)?.length ?? 0) > 0,
+              ).length;
               return (
-                <li key={d.id} className="flex items-center justify-between gap-3 px-2 py-1">
+                <div key={g.key}>
                   <button
                     type="button"
-                    onClick={() => setControlling(d)}
-                    title="Cihazı kontrol et"
-                    className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-2 py-2 text-left transition-colors hover:bg-glow/10"
+                    onClick={() => toggleZone(g.key)}
+                    aria-expanded={isOpen}
+                    className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-glow/10"
                   >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-mono text-sm text-text">{formatMac(d.deviceId)}</span>
-                      {d.lastError ? (
-                        <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
-                          komut hatası
-                        </span>
-                      ) : null}
-                      {deviceFaults.length > 0 ? (
-                        <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
-                          arıza · {deviceFaults.length} lamba
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="mt-0.5 text-xs text-muted">
-                      {d.zoneName ?? "bölge yok"}
-                      {d.name ? ` · ${d.name}` : ""} · son görülme: {formatSeen(d.lastSeen)}
-                    </span>
-                    {tel ? <span className="mt-0.5 font-mono text-[11px] text-accent">{tel}</span> : null}
-                    {d.lastError ? (
-                      <span className="mt-0.5 text-[11px] text-danger">
-                        {describeDeviceError(d.lastError).cause}
-                        {d.lastErrorAt ? ` · ${formatSeen(d.lastErrorAt)}` : ""}
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                      className={`shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
+                    >
+                      <path d="m9 6 6 6-6 6" />
+                    </svg>
+                    <span className="truncate font-display text-sm font-semibold text-text">{g.name}</span>
+                    <span className="shrink-0 text-xs text-muted">{g.devices.length} cihaz</span>
+                    {errCount > 0 ? (
+                      <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                        komut hatası · {errCount}
                       </span>
                     ) : null}
-                    {deviceFaults.length > 0 ? (
-                      <span className="mt-0.5 text-[11px] text-danger">
-                        {deviceFaults
-                          .map((f) => `Lamba ${f.channel} — ${faultLabel(f.code)}`)
-                          .join(", ")}
+                    {faultCount > 0 ? (
+                      <span className="shrink-0 rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">
+                        arıza · {faultCount}
                       </span>
                     ) : null}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openEdit(d)}
-                    aria-label={`${d.deviceId} düzenle`}
-                    title="Bölge / isim düzenle"
-                    className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text"
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeleting(d)}
-                    aria-label={`${d.deviceId} sil`}
-                    title="Sil"
-                    className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-danger/15 hover:text-danger"
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    </svg>
-                  </button>
-                </li>
+                  {isOpen ? (
+                    <ul className="divide-y divide-border border-t border-border bg-panel-2/40">
+                      {g.devices.map((d) => renderDevice(d))}
+                    </ul>
+                  ) : null}
+                </div>
               );
             })}
-          </ul>
+          </div>
         )}
       </div>
 

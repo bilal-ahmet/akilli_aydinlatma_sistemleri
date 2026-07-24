@@ -101,9 +101,72 @@ function Metrics({ items }: { items: Metric[] }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="border-t border-border pt-2.5">
-      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">{title}</p>
+    <div className="border-t border-border pt-3">
+      <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
+        <span aria-hidden className="h-3.5 w-1 rounded-full bg-accent/60" />
+        {title}
+      </p>
       {children}
+    </div>
+  );
+}
+
+/**
+ * Lambanın en önemli sayıları için büyük, okunur bir kutu. Cihaz kartının
+ * tepesindeki özet şeridini oluşturur — göz önce buraya gider, ayrıntılar
+ * (sürücü/LED) altta kalır.
+ */
+function StatTile({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-panel/70 px-3 py-2">
+      <p className="text-[11px] leading-tight text-muted">{label}</p>
+      <p
+        className={`mt-1 font-mono text-lg font-semibold leading-none ${
+          accent ? "text-accent" : "text-text"
+        }`}
+      >
+        {value}
+      </p>
+      {sub ? <p className="mt-1 text-[10px] leading-tight text-muted">{sub}</p> : null}
+    </div>
+  );
+}
+
+/** Cihaz kartının tepesindeki özet şeridi — dolu olan ölçümler kutu olur. */
+function SummaryStats({ r }: { r: D4iSnapshot }) {
+  const tiles: Array<{ label: string; value: string; sub?: string; accent?: boolean }> = [];
+
+  if (typeof r.actualLevel === "number") {
+    tiles.push({
+      label: "Işık seviyesi",
+      value: `%${levelToPercent(r.actualLevel)}`,
+      sub: `${r.actualLevel}/${MAX_ARC_LEVEL} arc`,
+      accent: true,
+    });
+  }
+  const power = num(r.powerW, "W");
+  if (power) tiles.push({ label: "Anlık güç", value: power, sub: "şebekeden çekilen" });
+  const load = num(r.raw?.d4i?.load_power?.value, "W", tr0);
+  if (load) tiles.push({ label: "Yük gücü", value: load, sub: "LED'e giden" });
+  const energy = num(r.energyWh, "Wh", tr1);
+  if (energy) tiles.push({ label: "Toplam enerji", value: energy });
+
+  if (tiles.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {tiles.map((t) => (
+        <StatTile key={t.label} {...t} />
+      ))}
     </div>
   );
 }
@@ -430,7 +493,7 @@ export function D4iPanel({
                   isFaulty(r) ? "border-danger/50" : "border-border"
                 }`}
               >
-                <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-text">{name}</span>
                   <span className="font-mono text-xs text-muted">ch{r.channel}</span>
                   {r.online === false ? (
@@ -444,31 +507,14 @@ export function D4iPanel({
                     </span>
                   ) : null}
                   {!r.d4iSupported ? (
-                    <span className="rounded-md bg-panel px-2 py-0.5 text-xs text-muted">
+                    <span className="ml-auto rounded-md bg-panel px-2 py-0.5 text-xs text-muted">
                       D4i desteklemiyor
-                    </span>
-                  ) : null}
-                  {typeof r.actualLevel === "number" ? (
-                    <span className="ml-auto font-mono text-sm text-accent">
-                      %{levelToPercent(r.actualLevel)}{" "}
-                      <span className="text-xs text-muted">
-                        ({r.actualLevel}/{MAX_ARC_LEVEL})
-                      </span>
                     </span>
                   ) : null}
                 </div>
 
-                <div className="space-y-2.5">
-                  <Metrics
-                    items={[
-                      {
-                        label: "Anlık güç",
-                        value: num(r.powerW, "W"),
-                        note: "Sürücünün şebekeden çektiği güç. LED'e giden güç ayrıca “Yük gücü” olarak gösterilir.",
-                      },
-                      { label: "Toplam enerji", value: num(r.energyWh, "Wh", tr1) },
-                    ]}
-                  />
+                <div className="space-y-3">
+                  <SummaryStats r={r} />
 
                   <Section title="Sürücü">
                     <Metrics
@@ -525,11 +571,6 @@ export function D4iPanel({
                           note: readingNote(ledTemp, "°C", tr0),
                           kind: ledTemp?.kind,
                         },
-                        {
-                          label: "Yük gücü",
-                          value: num(r.raw?.d4i?.load_power?.value, "W", tr0),
-                          note: "LED'e aktarılan güç (sürücü kayıpları hariç).",
-                        },
                         { label: "Çalışma süresi", value: hours(pickNumber(led, "operating_time_s")) },
                         {
                           label: "Enerjilenme/başlatma sayısı",
@@ -552,27 +593,24 @@ export function D4iPanel({
                     <Faults block={led} keys={LED_FAULTS} />
                   </Section>
 
-                  <Section title="Seviye sınırları">
-                    <Metrics
-                      items={[
-                        {
-                          label: "En düşük",
-                          value: typeof r.minLevel === "number" ? `${r.minLevel}` : null,
-                        },
-                        {
-                          label: "En yüksek",
-                          value: typeof r.maxLevel === "number" ? `${r.maxLevel}` : null,
-                        },
-                        {
-                          label: "Fiziksel min",
-                          value:
-                            typeof r.physicalMinLevel === "number"
-                              ? `${r.physicalMinLevel}`
-                              : null,
-                        },
-                      ]}
-                    />
-                  </Section>
+                  {(() => {
+                    // Seviye sınırları ikincil bilgi — ayrı bir bölüm yerine tek
+                    // satır muted metin, kartın yükünü azaltır.
+                    const limits = [
+                      typeof r.minLevel === "number" ? `en düşük ${r.minLevel}` : null,
+                      typeof r.maxLevel === "number" ? `en yüksek ${r.maxLevel}` : null,
+                      typeof r.physicalMinLevel === "number"
+                        ? `fiziksel min ${r.physicalMinLevel}`
+                        : null,
+                    ].filter(Boolean);
+                    if (limits.length === 0) return null;
+                    return (
+                      <p className="border-t border-border pt-3 text-xs text-muted">
+                        <span className="font-medium">Seviye sınırları (arc):</span>{" "}
+                        <span className="font-mono text-text">{limits.join(" · ")}</span>
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <TechnicalDetail snapshot={r} />
