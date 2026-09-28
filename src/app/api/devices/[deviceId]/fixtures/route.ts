@@ -2,16 +2,19 @@ import { and, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toFixture } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 import { fixtureCreateSchema } from "@/types/lighting";
 
 export const runtime = "nodejs";
 
 // GET /api/devices/:deviceId/fixtures → cihaza bağlı lambalar (kanal sırasıyla).
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "read");
+  if (ctx instanceof Response) return ctx;
   try {
     const rows = await db
       .select()
@@ -30,6 +33,8 @@ export async function POST(
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "write");
+  if (ctx instanceof Response) return ctx;
 
   const parsed = fixtureCreateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {

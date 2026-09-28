@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ThemeToggle } from "./ThemeToggle";
+import { UserMenu, type MenuLink } from "./UserMenu";
+import type { Viewer } from "@/types/admin";
 
 function useClock() {
   const [now, setNow] = useState<Date | null>(null);
@@ -19,7 +22,18 @@ function useClock() {
   return now;
 }
 
-export function TopBar() {
+export function TopBar({
+  subtitle = "Sokak Aydınlatma Kontrolü",
+  homeHref = "/",
+  user,
+  links = [],
+}: {
+  /** Logo altındaki satır — müşteri panelinde müşteri adı. */
+  subtitle?: string;
+  homeHref?: string;
+  user?: Viewer | null;
+  links?: MenuLink[];
+} = {}) {
   const now = useClock();
   const time = now
     ? now.toLocaleTimeString("tr-TR", {
@@ -39,7 +53,7 @@ export function TopBar() {
   return (
     <header className="sticky top-0 z-20 border-b border-border/70 bg-bg/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-3">
+        <Link href={homeHref} className="flex min-w-0 items-center gap-3">
           <span
             aria-hidden
             className="grid h-9 w-9 place-items-center rounded-xl bg-glow/15 text-lg shadow-[0_0_18px_-4px_var(--glow)]"
@@ -50,9 +64,9 @@ export function TopBar() {
             <p className="font-display text-base font-bold tracking-tight text-text">
               Fener
             </p>
-            <p className="text-[11px] text-muted">Sokak Aydınlatma Kontrolü</p>
+            <p className="truncate text-[11px] text-muted">{subtitle}</p>
           </div>
-        </div>
+        </Link>
 
         <div className="flex items-center gap-3 sm:gap-5">
           <div className="hidden text-right sm:block">
@@ -60,6 +74,7 @@ export function TopBar() {
             <p className="text-[11px] capitalize text-muted">{date}</p>
           </div>
           <ThemeToggle />
+          {user ? <UserMenu user={user} links={links} /> : null}
         </div>
       </div>
     </header>

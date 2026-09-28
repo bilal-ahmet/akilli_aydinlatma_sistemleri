@@ -1,15 +1,18 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
 // GET /api/devices/:deviceId/status — cihazın son durumu (device_status).
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "read");
+  if (ctx instanceof Response) return ctx;
   const [last] = await db
     .select()
     .from(schema.deviceStatus)

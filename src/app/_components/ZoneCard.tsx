@@ -21,6 +21,8 @@ interface ZoneCardProps {
   onDelete: () => void;
   /** Bölge adına tıklanınca: o bölgenin cihazlarını gösteren paneli aç. */
   onOpenDevices: () => void;
+  /** Salt okunur: kontroller pasif, efekt/düzenle/sil gizli. */
+  readOnly?: boolean;
 }
 
 const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
@@ -29,7 +31,7 @@ const STATUS: Record<Zone["status"], { label: string; cls: string }> = {
   fault: { label: "Arıza", cls: "text-danger" },
 };
 
-export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdit, onDelete, onOpenDevices }: ZoneCardProps) {
+export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdit, onDelete, onOpenDevices, readOnly = false }: ZoneCardProps) {
   const lvl = zone.isOn ? zone.brightness / 100 : 0;
   const status = STATUS[zone.status];
   const activeEffect = effectByNumber(zone.activeFx);
@@ -87,6 +89,7 @@ export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdi
           checked={zone.isOn}
           onChange={onToggle}
           label={`${zone.name} aç/kapat`}
+          disabled={readOnly}
         />
       </div>
 
@@ -97,6 +100,7 @@ export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdi
           value={zone.isOn ? zone.brightness : 0}
           onChange={onBrightness}
           label={`${zone.name} ışık şiddeti`}
+          disabled={readOnly}
         />
       </div>
 
@@ -131,6 +135,7 @@ export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdi
           <span className="font-mono tabular-nums text-muted">
             {zone.isOn ? formatKw(zonePowerKw(zone)) : "0,0 kW"}
           </span>
+          {readOnly ? null : (<>
           <button
             type="button"
             onClick={onEffect}
@@ -164,6 +169,7 @@ export function ZoneCard({ zone, faults, onToggle, onBrightness, onEffect, onEdi
               <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             </svg>
           </button>
+          </>)}
         </div>
       </div>
 

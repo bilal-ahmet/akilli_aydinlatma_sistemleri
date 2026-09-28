@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toFaultEvent } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,8 @@ export async function GET(
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "read");
+  if (ctx instanceof Response) return ctx;
   const raw = Number(new URL(req.url).searchParams.get("limit"));
   const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, MAX_LIMIT) : DEFAULT_LIMIT;
 

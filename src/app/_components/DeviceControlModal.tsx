@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeviceView, Fixture, D4iSnapshot, FaultEvent } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
+import { useApi, usePanel } from "@/app/_lib/panel";
 import { effectByNumber } from "@/lib/effects";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
@@ -24,11 +25,14 @@ const DIM_DEBOUNCE_MS = 150;
 const TELEMETRY_REFRESH_MS = 1200;
 
 /** Cihaz bazlı komut → POST /api/devices/:id/command. channel yoksa tüm cihaz. */
+type ApiFn = (path: string) => string;
+
 async function sendDeviceCommand(
+  api: ApiFn,
   deviceId: string,
   body: { action: Action; value?: number; number?: number; channel?: number; text?: string },
 ): Promise<number | undefined> {
-  const res = await fetch(`/api/devices/${deviceId}/command`, {
+  const res = await fetch(api(`/api/devices/${deviceId}/command`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -39,15 +43,15 @@ async function sendDeviceCommand(
 }
 
 /** Kanal başına son D4i raporu → GET /api/devices/:id/telemetry. */
-function fetchTelemetry(deviceId: string): Promise<D4iSnapshot[]> {
-  return fetch(`/api/devices/${deviceId}/telemetry`)
+function fetchTelemetry(api: ApiFn, deviceId: string): Promise<D4iSnapshot[]> {
+  return fetch(api(`/api/devices/${deviceId}/telemetry`))
     .then((r) => r.json())
     .then((j) => (j.data ?? []) as D4iSnapshot[]);
 }
 
 /** Arıza geçmişi (süren + çözülen) → GET /api/devices/:id/faults. */
-function fetchFaults(deviceId: string): Promise<FaultEvent[]> {
-  return fetch(`/api/devices/${deviceId}/faults`)
+function fetchFaults(api: ApiFn, deviceId: string): Promise<FaultEvent[]> {
+  return fetch(api(`/api/devices/${deviceId}/faults`))
     .then((r) => r.json())
     .then((j) => (j.data ?? []) as FaultEvent[]);
 }
@@ -80,6 +84,8 @@ export function DeviceControlModal({
   onClose: () => void;
 }) {
   const deviceId = device.deviceId;
+  const api = useApi();
+  const { canWrite } = usePanel();
 
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,12 +159,12 @@ export function DeviceControlModal({
 
   useEffect(() => {
     // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
-    fetch(`/api/devices/${deviceId}/fixtures`)
+    fetch(api(`/api/devices/${deviceId}/fixtures`))
       .then((r) => r.json())
       .then((j) => setFixtures((j.data ?? []) as Fixture[]))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [deviceId]);
+  }, [api, deviceId]);
 
   /**
    * Telemetriyi arka planda tazeler — "Yükleniyor…" göstergesini KENDİSİ
@@ -166,22 +172,22 @@ export function DeviceControlModal({
    * "Yenile" butonu bunu ayrıca `setTelemetryLoading(true)` ile yapar.
    */
   const loadTelemetry = useCallback(() => {
-    fetchTelemetry(deviceId)
+    fetchTelemetry(api, deviceId)
       .then((rows) => {
         setTelemetry(rows);
         setTelemetryAt(Date.now());
       })
       .catch(() => {})
       .finally(() => setTelemetryLoading(false));
-  }, [deviceId]);
+  }, [api, deviceId]);
 
   /** Arıza geçmişi — arıza satırı yalnızca durum değişiminde yazılır. */
   const loadFaults = useCallback(() => {
-    fetchFaults(deviceId)
+    fetchFaults(api, deviceId)
       .then(setFaults)
       .catch(() => {})
       .finally(() => setFaultsLoading(false));
-  }, [deviceId]);
+  }, [api, deviceId]);
 
   useEffect(() => {
     loadTelemetry();
@@ -295,7 +301,7 @@ export function DeviceControlModal({
     setDeviceOn(on);
     setFixtures((fs) => fs.map((f) => ({ ...f, isOn: on, activeFx: null })));
     beginPending("__device__");
-    sendDeviceCommand(deviceId, { action: on ? "on" : "off" })
+    sendDeviceCommand(api, deviceId, { action: on ? "on" : "off" })
       .then((seq) => applySeq("__device__", seq))
       .catch(() => {})
       .finally(() => endPending("__device__"));
@@ -304,7 +310,7 @@ export function DeviceControlModal({
   function setDeviceDim(value: number) {
     setDeviceBrightness(value);
     setFixtures((fs) => fs.map((f) => ({ ...f, brightness: value, isOn: true, activeFx: null })));
-    debounce("__device__", () => sendDeviceCommand(deviceId, { action: "dim", value }));
+    debounce("__device__", () => sendDeviceCommand(api, deviceId, { action: "dim", value }));
   }
 
   // ── Tek lamba (kanal) ─────────────────────────────────────
@@ -312,7 +318,7 @@ export function DeviceControlModal({
     setFixtures((fs) => fs.map((f) => (f.channel === ch ? { ...f, isOn: on, activeFx: null } : f)));
     const key = `ch-${ch}`;
     beginPending(key);
-    sendDeviceCommand(deviceId, { action: on ? "on" : "off", channel: ch })
+    sendDeviceCommand(api, deviceId, { action: on ? "on" : "off", channel: ch })
       .then((seq) => applySeq(key, seq))
       .catch(() => {})
       .finally(() => endPending(key));
@@ -322,7 +328,7 @@ export function DeviceControlModal({
     setFixtures((fs) =>
       fs.map((f) => (f.channel === ch ? { ...f, brightness: value, isOn: true, activeFx: null } : f)),
     );
-    debounce(`ch-${ch}`, () => sendDeviceCommand(deviceId, { action: "dim", value, channel: ch }));
+    debounce(`ch-${ch}`, () => sendDeviceCommand(api, deviceId, { action: "dim", value, channel: ch }));
   }
 
   // ── Efektler ──────────────────────────────────────────────
@@ -336,7 +342,7 @@ export function DeviceControlModal({
       setDeviceOn(true);
       setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, activeFx: number })));
       beginPending("__device__");
-      sendDeviceCommand(deviceId, { action: "efekt", number, text })
+      sendDeviceCommand(api, deviceId, { action: "efekt", number, text })
         .then((seq) => applySeq("__device__", seq))
         .catch(() => {})
         .finally(() => endPending("__device__"));
@@ -344,7 +350,7 @@ export function DeviceControlModal({
       setFixtures((fs) => fs.map((f) => (f.channel === t ? { ...f, isOn: true, activeFx: number } : f)));
       const key = `ch-${t}`;
       beginPending(key);
-      sendDeviceCommand(deviceId, { action: "efekt", number, channel: t, text })
+      sendDeviceCommand(api, deviceId, { action: "efekt", number, channel: t, text })
         .then((seq) => applySeq(key, seq))
         .catch(() => {})
         .finally(() => endPending(key));
@@ -358,7 +364,7 @@ export function DeviceControlModal({
     if (t === "device") {
       setFixtures((fs) => fs.map((f) => ({ ...f, activeFx: null })));
       beginPending("__device__");
-      sendDeviceCommand(deviceId, { action: "dim", value: deviceBrightness })
+      sendDeviceCommand(api, deviceId, { action: "dim", value: deviceBrightness })
         .then((seq) => applySeq("__device__", seq))
         .catch(() => {})
         .finally(() => endPending("__device__"));
@@ -367,7 +373,7 @@ export function DeviceControlModal({
       setFixtures((fs) => fs.map((x) => (x.channel === t ? { ...x, activeFx: null } : x)));
       const key = `ch-${t}`;
       beginPending(key);
-      sendDeviceCommand(deviceId, { action: "dim", value: f?.brightness ?? 0, channel: t })
+      sendDeviceCommand(api, deviceId, { action: "dim", value: f?.brightness ?? 0, channel: t })
         .then((seq) => applySeq(key, seq))
         .catch(() => {})
         .finally(() => endPending(key));
@@ -405,7 +411,7 @@ export function DeviceControlModal({
         form.mode === "add"
           ? `/api/devices/${deviceId}/fixtures`
           : `/api/devices/${deviceId}/fixtures/${form.original.channel}`;
-      const res = await fetch(url, {
+      const res = await fetch(api(url), {
         method: form.mode === "add" ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -433,7 +439,7 @@ export function DeviceControlModal({
 
   function deleteFixture(ch: number) {
     setFixtures((fs) => fs.filter((f) => f.channel !== ch));
-    fetch(`/api/devices/${deviceId}/fixtures/${ch}`, { method: "DELETE" }).catch(() => {});
+    fetch(api(`/api/devices/${deviceId}/fixtures/${ch}`), { method: "DELETE" }).catch(() => {});
   }
 
   // Telemetri kanal no ile gelir; başlıklarda dashboard'da girilen lamba adını
@@ -544,7 +550,9 @@ export function DeviceControlModal({
             }}
           />
         ) : (
-          <>
+          // Salt okunur hesapta kontrol sekmesindeki tüm düğmeler pasif
+          // (fieldset disabled); sunucu da yazma isteklerine 403 döner.
+          <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
         <div className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -672,7 +680,7 @@ export function DeviceControlModal({
           )}
         </div>
 
-          </>
+          </fieldset>
         )}
       </Modal>
 

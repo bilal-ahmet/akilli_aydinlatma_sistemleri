@@ -11,7 +11,9 @@ import {
   jsonb,
   index,
   unique,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Şema, CLAUDE.md'deki SQL tablolarını temel alır. İki pragmatik uzantı var
@@ -22,10 +24,60 @@ import {
  * Ham cihaz telemetrisi yine `device_status`'a akar.
  */
 
+/**
+ * Müşteri (kiracı). Her bölge tam olarak bir müşteriye aittir; cihazın
+ * müşterisi bölgesinden türetilir (tek doğruluk kaynağı). Pasif müşterinin
+ * kullanıcıları giriş yapamaz, cihazları ise çalışmaya devam eder.
+ */
+export const customers = pgTable("customers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: varchar("slug", { length: 100 }).notNull().unique(), // URL: /c/<slug>
+  name: varchar("name", { length: 150 }).notNull(),
+  contactName: varchar("contact_name", { length: 150 }),
+  contactEmail: varchar("contact_email", { length: 150 }),
+  contactPhone: varchar("contact_phone", { length: 50 }),
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+/**
+ * Panel kullanıcıları. `admin` platformun tamamını yönetir (customer_id NULL);
+ * `manager` kendi müşterisinde tam yetkili, `viewer` salt okunur.
+ * `token_version` şifre değişiminde/pasifleştirmede artar → eski oturumlar düşer.
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    username: varchar("username", { length: 64 }).notNull().unique(), // küçük harf
+    passwordHash: text("password_hash").notNull(),
+    displayName: varchar("display_name", { length: 150 }),
+    role: varchar("role", { length: 20 }).notNull(), // admin | manager | viewer
+    customerId: uuid("customer_id").references(() => customers.id),
+    isActive: boolean("is_active").notNull().default(true),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    tokenVersion: integer("token_version").notNull().default(0),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    index("idx_users_customer_id").on(t.customerId),
+    check(
+      "chk_users_role_customer",
+      sql`(${t.role} = 'admin' AND ${t.customerId} IS NULL) OR (${t.role} IN ('manager','viewer') AND ${t.customerId} IS NOT NULL)`,
+    ),
+  ],
+);
+
 export const zones = pgTable("zones", {
   id: uuid("id").primaryKey().defaultRandom(),
   // [uzantı] MQTT topic ve API route'larında kullanılan stabil public id.
   slug: varchar("slug", { length: 100 }).notNull().unique(),
+  // Sahip müşteri. Bölgenin cihazları da bu müşteriye aittir.
+  customerId: uuid("customer_id")
+    .notNull()
+    .references(() => customers.id),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
   // [uzantı] dashboard snapshot alanları
@@ -36,7 +88,43 @@ export const zones = pgTable("zones", {
   status: varchar("status", { length: 20 }).notNull().default("ok"), // ok | warning | fault
   activeFx: integer("active_fx"), // aktif efekt numarası (1-14, null = yok)
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (t) => [index("idx_zones_customer_id").on(t.customerId)]);
+
+/**
+ * Silinmiş bölgelerin slug'ları. Slug = MQTT topic (`Meven:<slug>/cmd`) ve
+ * sahada o slug ile flaşlanmış cihazlar bölge silindikten sonra da o topic'i
+ * dinlemeye devam eder. Slug başka bir müşteriye verilirse o müşterinin bölge
+ * komutları eski cihazlara ulaşır — bu yüzden silinen slug bir daha verilmez.
+ */
+export const retiredZoneSlugs = pgTable("retired_zone_slugs", {
+  slug: varchar("slug", { length: 100 }).primaryKey(),
+  customerId: uuid("customer_id"),
+  retiredAt: timestamp("retired_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Denetim kaydı: kim, hangi müşteri adına, ne yaptı. Admin müşteri panelinde
+ * işlem yaptığında `customer_id` o müşteridir, `user_id` admin'dir.
+ * Komutlar burada değil `commands.user_id`'de izlenir (yüksek frekanslı).
+ */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    userId: uuid("user_id"),
+    username: varchar("username", { length: 64 }),
+    customerId: uuid("customer_id"),
+    action: varchar("action", { length: 60 }).notNull(), // zone.create, auth.login_failed…
+    target: varchar("target", { length: 150 }),
+    detail: jsonb("detail"),
+    ip: varchar("ip", { length: 64 }),
+  },
+  (t) => [
+    index("idx_audit_log_customer_at").on(t.customerId, t.at.desc()),
+    index("idx_audit_log_at").on(t.at.desc()),
+  ],
+);
 
 export const devices = pgTable("devices", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -175,8 +263,11 @@ export const faultEvents = pgTable(
 export const commands = pgTable("commands", {
   id: uuid("id").primaryKey().defaultRandom(),
   requestId: uuid("request_id").notNull().unique(), // idempotency
-  targetType: varchar("target_type", { length: 20 }).notNull(), // zone | device
+  targetType: varchar("target_type", { length: 20 }).notNull(), // zone | device | customer | all
   targetId: varchar("target_id", { length: 100 }).notNull(),
+  // Komutu veren kullanıcı ve komutun verildiği müşteri ("all" için NULL).
+  userId: uuid("user_id"),
+  customerId: uuid("customer_id"),
   channel: integer("channel"), // hedef DALI kanal (lamba) no; null = tüm cihaz
   action: varchar("action", { length: 20 }).notNull(),
   value: integer("value"),
@@ -185,6 +276,9 @@ export const commands = pgTable("commands", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 });
 
+export type CustomerRow = typeof customers.$inferSelect;
+export type UserRow = typeof users.$inferSelect;
+export type AuditLogRow = typeof auditLog.$inferSelect;
 export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;
 export type FixtureRow = typeof fixtures.$inferSelect;

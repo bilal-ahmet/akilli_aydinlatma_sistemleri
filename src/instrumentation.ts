@@ -14,4 +14,15 @@ export async function register() {
   } catch (err) {
     console.error("[instrumentation] MQTT başlatılamadı:", err);
   }
+
+  // Kiracı index'ini ısıt: ilk komut/SSE isteği DB'yi beklemesin (Kural #10).
+  // Hata sunucuyu düşürmez; index ilk istekte yeniden denenir.
+  try {
+    const { refreshTenancy } = await import("@/lib/tenancy");
+    void refreshTenancy().catch((err) =>
+      console.error("[instrumentation] tenancy yüklenemedi:", err),
+    );
+  } catch (err) {
+    console.error("[instrumentation] tenancy başlatılamadı:", err);
+  }
 }

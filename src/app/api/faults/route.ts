@@ -1,20 +1,24 @@
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeScope } from "@/lib/auth/guard";
 import type { OpenFault } from "@/app/_lib/types";
 
 export const runtime = "nodejs";
 
 /**
- * GET /api/faults → O AN süren (resolved_at IS NULL) lamba arızaları, cihaz ve
- * bölge bilgisiyle. Dashboard bölge kartlarında "hangi cihaz/lamba" detayını,
- * cihaz listesinde ise arıza rozetini bundan besler.
+ * GET /api/faults?customer=<slug> → müşterinin O AN süren (resolved_at IS
+ * NULL) lamba arızaları, cihaz ve bölge bilgisiyle. Dashboard bölge
+ * kartlarında "hangi cihaz/lamba" detayını, cihaz listesinde ise arıza
+ * rozetini bundan besler.
  *
  * Yalnızca `channel` taşıyan (lamba/donanım) arızalar döner; cihaz seviyesi
  * komut hataları (`channel = NULL`) hariç tutulur — onlar zaten
  * `devices.last_error` üzerinden "komut hatası" olarak gösteriliyor.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const ctx = await authorizeScope(req, "read");
+  if (ctx instanceof Response) return ctx;
   try {
     const rows = await db
       .select({
@@ -28,10 +32,11 @@ export async function GET() {
         zoneName: schema.zones.name,
       })
       .from(schema.faultEvents)
-      .leftJoin(schema.devices, eq(schema.faultEvents.deviceId, schema.devices.deviceId))
-      .leftJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .innerJoin(schema.devices, eq(schema.faultEvents.deviceId, schema.devices.deviceId))
+      .innerJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
       .where(
         and(
+          eq(schema.zones.customerId, ctx.customer.id),
           isNull(schema.faultEvents.resolvedAt),
           isNotNull(schema.faultEvents.channel),
         ),

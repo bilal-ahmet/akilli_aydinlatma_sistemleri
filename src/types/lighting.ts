@@ -257,6 +257,11 @@ export const zoneUpdateSchema = z
     status: z.enum(ZONE_STATUSES).optional(),
     isOn: z.boolean().optional(),
     brightness: z.number().int().min(0).max(100).optional(),
+    /**
+     * YALNIZCA ADMIN: bölgeyi (cihazlarıyla birlikte) başka müşteriye taşır.
+     * Slug değişmez → cihazların yeniden flaşlanması gerekmez.
+     */
+    customerSlug: z.string().trim().min(1).max(100).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "En az bir alan güncellenmeli",
@@ -330,6 +335,12 @@ export type LiveEvent = {
    * oynatmaz (o yalnızca zoneSlug'lı olaylarla güncellenir).
    */
   scope?: "all";
+  /**
+   * SUNUCU İÇİ: olayın ait olduğu müşteri. `emitLiveEvent` bölge/MAC'ten
+   * doldurur; SSE route'u olayları buna göre süzer ve istemciye göndermeden
+   * önce siler. `scope:"all"` olayı artık müşterinin "Tüm Sistem"idir.
+   */
+  customerId?: string;
   channel?: number; // DALI kanal (lamba) no — cihaz/lamba seviyesi olay
   action?: Action;
   value?: number;

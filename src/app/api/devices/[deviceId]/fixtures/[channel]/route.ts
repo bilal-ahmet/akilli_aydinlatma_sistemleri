@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toFixture } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 import { fixtureUpdateSchema } from "@/types/lighting";
 
 export const runtime = "nodejs";
@@ -19,6 +20,8 @@ export async function PATCH(
   { params }: { params: Promise<{ deviceId: string; channel: string }> },
 ) {
   const { deviceId, channel } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "write");
+  if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
   if (!Number.isInteger(ch)) return fail("Geçersiz kanal", 422);
 
@@ -74,10 +77,12 @@ export async function PATCH(
 
 // DELETE /api/devices/:deviceId/fixtures/:channel → lamba (kanal) kaydını sil.
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ deviceId: string; channel: string }> },
 ) {
   const { deviceId, channel } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "write");
+  if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
   if (!Number.isInteger(ch)) return fail("Geçersiz kanal", 422);
 

@@ -3,7 +3,10 @@ import type {
   FixtureRow,
   D4iTelemetryRow,
   FaultEventRow,
+  UserRow,
 } from "@/lib/db/schema";
+import type { CustomerUser } from "@/types/admin";
+import type { CustomerRole } from "@/lib/auth/roles";
 import type {
   Zone,
   ZoneStatus,
@@ -112,5 +115,19 @@ export function toFaultEvent(row: FaultEventRow): FaultEvent {
     detail: row.detail,
     startedAt: row.startedAt.toISOString(),
     resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
+  };
+}
+
+/** DB `users` satırını müşteri kullanıcı listesi görünümüne çevirir (şifre özeti ASLA çıkmaz). */
+export function toCustomerUser(u: UserRow): CustomerUser {
+  return {
+    id: u.id,
+    username: u.username,
+    displayName: u.displayName,
+    role: u.role as CustomerRole,
+    isActive: u.isActive,
+    mustChangePassword: u.mustChangePassword,
+    lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+    createdAt: u.createdAt ? u.createdAt.toISOString() : null,
   };
 }

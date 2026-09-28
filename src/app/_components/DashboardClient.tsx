@@ -6,6 +6,7 @@ import { summarize } from "@/app/_lib/mockData";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { useReconcile } from "@/app/_lib/useReconcile";
+import { useApi, usePanel } from "@/app/_lib/panel";
 import { StatusOverview } from "./StatusOverview";
 import { MasterControl } from "./MasterControl";
 import { ZoneGrid } from "./ZoneGrid";
@@ -21,14 +22,17 @@ const DIM_DEBOUNCE_MS = 150;
 /** Cihaz raporu gelince ölçüm özetinin tazelenmesi bu kadar geciktirilir. */
 const LIVE_REFRESH_MS = 1500;
 
+type ApiFn = (path: string) => string;
+
 async function sendCommand(
+  api: ApiFn,
   zoneId: string,
   action: Action,
   value?: number,
   number?: number,
   text?: string,
 ): Promise<number | undefined> {
-  const res = await fetch(`/api/zones/${zoneId}/command`, {
+  const res = await fetch(api(`/api/zones/${zoneId}/command`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, value, number, text }),
@@ -38,14 +42,18 @@ async function sendCommand(
   return json?.data?.seq;
 }
 
-/** Toplu komut → Meven:all/cmd (tek publish). */
+/**
+ * Müşterinin "Tüm Sistem"i → müşterinin her bölge topic'ine publish (sunucu
+ * tarafında fanout; Meven:all/cmd diğer müşterileri de sürerdi).
+ */
 async function sendAll(
+  api: ApiFn,
   action: Action,
   value?: number,
   number?: number,
   text?: string,
 ): Promise<number | undefined> {
-  const res = await fetch(`/api/command/all`, {
+  const res = await fetch(api(`/api/command/all`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, value, number, text }),
@@ -63,6 +71,8 @@ function deriveMaster(zones: Zone[]): number {
 }
 
 export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
+  const api = useApi();
+  const { canWrite, customers, customerSlug } = usePanel();
   const [zones, setZones] = useState<Zone[]>(initialZones);
 
   // Cihazlardan ölçülmüş özet — yüklenene kadar null (üst şerit tahmine düşer).
@@ -160,23 +170,23 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
 
   /** Cihazlardan ölçülmüş özet (güç, gerilim, arızalı lamba sayısı). */
   const loadLive = useCallback(() => {
-    fetch("/api/summary")
+    fetch(api("/api/summary"))
       .then((r) => r.json())
       .then((j) => {
         if (j.data) setLive(j.data as LiveSummary);
       })
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   /** O an süren arızalar (bölge kartı detayı + cihaz rozeti). */
   const loadFaults = useCallback(() => {
-    fetch("/api/faults")
+    fetch(api("/api/faults"))
       .then((r) => r.json())
       .then((j) => {
         if (Array.isArray(j.data)) setFaults(j.data as OpenFault[]);
       })
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     loadLive();
@@ -196,13 +206,13 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     loadFaults();
     if (pendingRef.current.size > 0) return;
     if (Date.now() - lastCommandAtRef.current < 5_000) return;
-    fetch("/api/zones")
+    fetch(api("/api/zones"))
       .then((r) => r.json())
       .then((j) => {
         if (Array.isArray(j.data)) setZones(j.data as Zone[]);
       })
       .catch(() => {});
-  }, [loadLive, loadFaults]);
+  }, [api, loadLive, loadFaults]);
   useReconcile(reconcile);
 
   /**
@@ -282,7 +292,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const prev = zones;
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on, activeFx: null } : z)));
     beginPending(id);
-    sendCommand(id, on ? "on" : "off")
+    sendCommand(api, id, on ? "on" : "off")
       .then((seq) => applySeq(id, seq))
       .catch(() => setZones(prev))
       .finally(() => endPending(id));
@@ -296,7 +306,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     clearTimeout(timers.get(id));
     timers.set(id, setTimeout(() => {
       beginPending(id);
-      sendCommand(id, "dim", value)
+      sendCommand(api, id, "dim", value)
         .then((seq) => applySeq(id, seq))
         .catch(() => {})
         .finally(() => endPending(id));
@@ -310,7 +320,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const ids = zones.map((z) => z.id);
     ids.forEach(beginPending);
     masterPendingRef.current += 1;
-    sendAll(on ? "on" : "off")
+    sendAll(api, on ? "on" : "off")
       .then((seq) => {
         ids.forEach((id) => applySeq(id, seq));
         if (typeof seq === "number" && seq > masterSeqRef.current) masterSeqRef.current = seq;
@@ -332,7 +342,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     timers.set("__all__", setTimeout(() => {
       ids.forEach(beginPending);
       masterPendingRef.current += 1;
-      sendAll("dim", value)
+      sendAll(api, "dim", value)
         .then((seq) => {
           ids.forEach((id) => applySeq(id, seq));
           if (typeof seq === "number" && seq > masterSeqRef.current) masterSeqRef.current = seq;
@@ -355,14 +365,14 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
       const ids = zones.map((z) => z.id);
       ids.forEach(beginPending);
-      sendAll("efekt", undefined, number, text)
+      sendAll(api, "efekt", undefined, number, text)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
         .catch(() => {})
         .finally(() => ids.forEach(endPending));
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, isOn: true, activeFx: number } : z)));
       beginPending(t.id);
-      sendCommand(t.id, "efekt", undefined, number, text)
+      sendCommand(api, t.id, "efekt", undefined, number, text)
         .then((seq) => applySeq(t.id, seq))
         .catch(() => {})
         .finally(() => endPending(t.id));
@@ -378,14 +388,14 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
       setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
       const ids = zones.map((z) => z.id);
       ids.forEach(beginPending);
-      sendAll("dim", masterBrightness)
+      sendAll(api, "dim", masterBrightness)
         .then((seq) => ids.forEach((id) => applySeq(id, seq)))
         .catch(() => {})
         .finally(() => ids.forEach(endPending));
     } else {
       setZones((zs) => zs.map((z) => (z.id === t.id ? { ...z, activeFx: null } : z)));
       beginPending(t.id);
-      sendCommand(t.id, "dim", t.brightness)
+      sendCommand(api, t.id, "dim", t.brightness)
         .then((seq) => applySeq(t.id, seq))
         .catch(() => {})
         .finally(() => endPending(t.id));
@@ -411,22 +421,26 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     try {
       if (editing) {
         // Düzenleme — form alanlarını (isim, konum, direk) PATCH'le.
-        const res = await fetch(`/api/zones/${editing.id}`, {
+        const res = await fetch(api(`/api/zones/${editing.id}`), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(values),
         });
-        if (!res.ok) throw new Error(`Güncelleme başarısız (${res.status})`);
-        const { data } = (await res.json()) as { data: Zone };
-        setZones((zs) => zs.map((z) => (z.id === data.id ? data : z)));
+        const j = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(j?.error ?? `Güncelleme başarısız (${res.status})`);
+        const data = j.data as Zone & { movedTo: { slug: string; name: string } | null };
+        // Başka müşteriye taşınan bölge bu panelden çıkar.
+        if (data.movedTo) setZones((zs) => zs.filter((z) => z.id !== data.id));
+        else setZones((zs) => zs.map((z) => (z.id === data.id ? data : z)));
       } else {
-        const res = await fetch(`/api/zones`, {
+        const res = await fetch(api(`/api/zones`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(values),
         });
-        if (!res.ok) throw new Error(`Oluşturma başarısız (${res.status})`);
-        const { data } = (await res.json()) as { data: Zone };
+        const j = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(j?.error ?? `Oluşturma başarısız (${res.status})`);
+        const data = j.data as Zone;
         setZones((zs) => [...zs, data]);
       }
       setFormOpen(false);
@@ -443,7 +457,7 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
     const target = deleting;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/zones/${target.id}`, { method: "DELETE" });
+      const res = await fetch(api(`/api/zones/${target.id}`), { method: "DELETE" });
       if (!res.ok) throw new Error();
       setZones((zs) => zs.filter((z) => z.id !== target.id));
       setDeleting(null);
@@ -457,14 +471,18 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
   return (
     <div className="flex flex-col gap-6">
       <StatusOverview summary={summary} live={live} />
-      <MasterControl
-        anyOn={masterOn}
-        masterBrightness={masterBrightness}
-        onSetAll={setAll}
-        onSetAllBrightness={setAllBrightness}
-        onEffectAll={() => setEffectTarget("all")}
-      />
+      {/* Salt okunur hesapta tüm-sistem kontrolleri pasif (sunucu da 403 döner). */}
+      <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
+        <MasterControl
+          anyOn={masterOn}
+          masterBrightness={masterBrightness}
+          onSetAll={setAll}
+          onSetAllBrightness={setAllBrightness}
+          onEffectAll={() => setEffectTarget("all")}
+        />
+      </fieldset>
       <ZoneGrid
+        readOnly={!canWrite}
         zones={zones}
         faultsByZone={faultsByZone}
         onToggle={toggleZone}
@@ -513,6 +531,9 @@ export function DashboardClient({ initialZones }: { initialZones: Zone[] }) {
           </p>
         ) : null}
         <ZoneForm
+          key={editing?.id ?? "new"}
+          customers={customers}
+          currentCustomer={editing ? customerSlug : undefined}
           initial={editing ?? undefined}
           submitting={submitting}
           onSubmit={submitForm}

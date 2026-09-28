@@ -1,9 +1,12 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toDeviceView } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
 import { deviceCreateSchema } from "@/types/lighting";
 import { normalizeMac } from "@/lib/mac";
+import { authorizeScope } from "@/lib/auth/guard";
+import { refreshTenancy } from "@/lib/tenancy";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -18,13 +21,16 @@ const selectShape = {
   zoneName: schema.zones.name,
 };
 
-// GET /api/devices — tüm cihazlar (bölge + son telemetri ile).
-export async function GET() {
+// GET /api/devices?customer=<slug> — müşterinin cihazları (bölge + son telemetri ile).
+export async function GET(req: Request) {
+  const ctx = await authorizeScope(req, "read");
+  if (ctx instanceof Response) return ctx;
   try {
     const rows = await db
       .select(selectShape)
       .from(schema.devices)
-      .leftJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .innerJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .where(eq(schema.zones.customerId, ctx.customer.id))
       .orderBy(asc(schema.devices.deviceId));
 
     // Her cihaz için en güncel device_status'u getir (recordedAt desc, ilk satır).
@@ -56,8 +62,11 @@ export async function GET() {
   }
 }
 
-// POST /api/devices — yeni cihaz kaydı (MAC + bölge).
+// POST /api/devices?customer=<slug> — yeni cihaz kaydı (MAC + müşterinin bölgesi).
 export async function POST(req: Request) {
+  const ctx = await authorizeScope(req, "write");
+  if (ctx instanceof Response) return ctx;
+
   const parsed = deviceCreateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return fail("Geçersiz cihaz verisi", 422, parsed.error.flatten());
@@ -67,27 +76,55 @@ export async function POST(req: Request) {
   if (!mac) return fail("Geçersiz MAC adresi (12 hane hex bekleniyor)", 422);
   const { zoneSlug, name } = parsed.data;
 
-  // Bölge var mı?
+  // Bölge bu müşterinin mi?
   const [zone] = await db
     .select({ id: schema.zones.id })
     .from(schema.zones)
-    .where(eq(schema.zones.slug, zoneSlug))
+    .where(and(eq(schema.zones.slug, zoneSlug), eq(schema.zones.customerId, ctx.customer.id)))
     .limit(1);
   if (!zone) return fail("Bölge bulunamadı", 404);
 
-  // MAC benzersiz mi?
+  // MAC benzersiz mi? Başka müşterideyse sahibi AÇIKLANMAZ.
   const [dup] = await db
-    .select({ id: schema.devices.id })
+    .select({ id: schema.devices.id, zoneId: schema.devices.zoneId })
     .from(schema.devices)
     .where(eq(schema.devices.deviceId, mac))
     .limit(1);
-  if (dup) return fail("Bu MAC adresi zaten kayıtlı", 409);
+  if (dup) {
+    const [dupZone] = dup.zoneId
+      ? await db
+          .select({ customerId: schema.zones.customerId })
+          .from(schema.zones)
+          .where(eq(schema.zones.id, dup.zoneId))
+          .limit(1)
+      : [];
+    if (dupZone?.customerId === ctx.customer.id) {
+      return fail("Bu MAC adresi zaten kayıtlı", 409);
+    }
+    await audit({
+      req,
+      user: ctx.user,
+      customerId: ctx.customer.id,
+      action: "device.create_conflict",
+      target: mac,
+    });
+    return fail("Bu MAC adresi başka bir hesapta kayıtlı. Yöneticinize başvurun.", 409);
+  }
 
   try {
     await db.insert(schema.devices).values({
       deviceId: mac,
       zoneId: zone.id,
       name: name ?? null,
+    });
+    await refreshTenancy();
+    await audit({
+      req,
+      user: ctx.user,
+      customerId: ctx.customer.id,
+      action: "device.create",
+      target: mac,
+      detail: { zoneSlug, name: name ?? null },
     });
 
     const [row] = await db

@@ -8,6 +8,7 @@ import { effectByNumber } from "@/lib/effects";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { activeFaultCodes } from "@/lib/faults";
 import { syncFaultEvents } from "@/lib/faultLog";
+import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import {
   cmdTopic,
   zoneCmdTopic,
@@ -139,9 +140,28 @@ async function touchDevice(
   return { device, zone };
 }
 
+/**
+ * Bir cihazı etkileyebilecek komut hedefleri: kendi MAC'i, admin'in global
+ * "all"u, bölge slug'ı ve bölgenin müşterisinin slug'ı (müşteri "Tüm Sistem"i
+ * `commands.target_id` = müşteri slug'ı ile kaydedilir).
+ */
+function commandTargets(mac: string, zone?: { slug: string; customerId: string }): string[] {
+  const targets = [mac, "all"];
+  if (zone) {
+    targets.push(zone.slug);
+    const customerSlug = peekTenancy()?.customersById.get(zone.customerId)?.slug;
+    if (customerSlug) targets.push(customerSlug);
+  }
+  return targets;
+}
+
 /** Cihazdan haber gelince o cihaza/bölgesine ait bekleyen komutları kapat. */
-async function markDelivered(mac: string, zoneSlug: string | undefined, now: Date) {
-  const targets = [mac, "all", ...(zoneSlug ? [zoneSlug] : [])];
+async function markDelivered(
+  mac: string,
+  zone: { slug: string; customerId: string } | undefined,
+  now: Date,
+) {
+  const targets = commandTargets(mac, zone);
   await db
     .update(schema.commands)
     .set({ status: "delivered", deliveredAt: now })
@@ -253,7 +273,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
       .set({ status: aggFault ? "fault" : "ok" })
       .where(eq(schema.zones.id, zone.id));
   }
-  await markDelivered(mac, zone?.slug, now);
+  await markDelivered(mac, zone, now);
 
   emitLiveEvent({
     zoneSlug: zone?.slug,
@@ -279,7 +299,7 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
 
   if (ack.status === "ok") {
     const { zone } = await touchDevice(mac, now, { lastError: null, lastErrorAt: null });
-    await markDelivered(mac, zone?.slug, now);
+    await markDelivered(mac, zone, now);
     // Başarılı yanıt rozeti temizler; geçmişteki açık komut hatasını da kapatır.
     await syncFaultEvents(mac, null, [], now);
     emitLiveEvent({ deviceId: mac, status: "ok", kind: "ack", at });
@@ -291,7 +311,7 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   console.warn(`[mqtt] komut hatası (${mac}) [${info.code}]: ${message}`);
 
   const { zone } = await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
-  const targets = [mac, "all", ...(zone ? [zone.slug] : [])];
+  const targets = commandTargets(mac, zone);
   const [latest] = await db
     .select({ id: schema.commands.id, channel: schema.commands.channel })
     .from(schema.commands)
@@ -395,7 +415,7 @@ async function handleLegacyData(mac: string, d: DataPayload): Promise<void> {
   }
 
   // 4) Bekleyen komutları teslim edildi yap (device + bölge hedefi + all)
-  await markDelivered(mac, zone?.slug, now);
+  await markDelivered(mac, zone, now);
 
   // 5) Dashboard'a canlı yayınla (cihaz-seviyesi agregat)
   emitLiveEvent({
@@ -520,27 +540,47 @@ function toWireCmd(cmd: CommandInput): CommandInput {
  *
  * target:
  *  - "device" → Meven:<MAC>/cmd  (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
- *  - "zone"   → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
- *  - "all"    → Meven:all/cmd    (id = "all")
+ *  - "zone"     → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
+ *  - "customer" → müşterinin HER bölgesi için Meven:<slug>/cmd (id = müşteri
+ *                 slug'ı, `zoneSlugs` = müşterinin bölgeleri). Müşterinin
+ *                 "Tüm Sistem"i budur: firmware müşteri topic'i tanımadığı ve
+ *                 Meven:all/cmd diğer müşterilerin cihazlarını da sürdüğü için
+ *                 Kural #3'ün bilinçli istisnası (bölge sayısı kadar publish).
+ *                 `zoneSlugs` tenancy index'inden gelir → DB beklenmez.
+ *  - "all"      → Meven:all/cmd (id = "all") — TÜM müşteriler; yalnızca admin.
  */
 // Publish anında (senkron, route handler'da ilk iş olarak) atanır — komutların
 // gönderilme sırasını, arka plandaki recordCommand'ların bitiş sırasından
 // bağımsız olarak korur. Frontend SSE'de bunu eski/yeni event ayrımı için kullanır.
 let cmdSeq = 0;
 
+export type CommandTarget = "device" | "zone" | "customer" | "all";
+
 export function publishCommand(
-  target: "device" | "zone" | "all",
+  target: CommandTarget,
   id: string,
   cmd: CommandInput,
+  zoneSlugs?: string[],
 ): { requestId: string; seq: number } {
-  const topic =
-    target === "device" ? cmdTopic(id) : target === "zone" ? zoneCmdTopic(id) : ALL_CMD;
+  const topics =
+    target === "device"
+      ? [cmdTopic(id)]
+      : target === "zone"
+        ? [zoneCmdTopic(id)]
+        : target === "customer"
+          ? (zoneSlugs ?? []).map(zoneCmdTopic)
+          : [ALL_CMD];
 
   // Tüm hedeflerde on/off → dim çevrilir (firmware on/off tanımıyor).
-  getMqttClient().publish(topic, buildPayload(toWireCmd(cmd)), { qos: 1 });
+  const payload = buildPayload(toWireCmd(cmd));
+  const client = getMqttClient();
+  for (const topic of topics) client.publish(topic, payload, { qos: 1 });
 
   return { requestId: randomUUID(), seq: ++cmdSeq };
 }
+
+/** Komutu kimin, hangi müşteri adına verdiği (commands tablosu için). */
+export type CommandMeta = { userId: string | null; customerId: string | null };
 
 /**
  * Bölge/toplu komutta lamba (fixture) snapshot'larını da günceller.
@@ -589,11 +629,12 @@ async function patchFixtures(
  * bunu `after()` içinde çağırır.
  */
 export async function recordCommand(
-  target: "device" | "zone" | "all",
+  target: CommandTarget,
   id: string,
   requestId: string,
   seq: number,
   cmd: CommandInput,
+  meta: CommandMeta,
 ): Promise<void> {
   const { action, value, number, channel } = cmd;
   const at = new Date().toISOString();
@@ -602,6 +643,8 @@ export async function recordCommand(
     requestId,
     targetType: target,
     targetId: id,
+    userId: meta.userId,
+    customerId: meta.customerId,
     channel: channel ?? null,
     action,
     value: action === "efekt" ? number : value, // commands log
@@ -696,13 +739,35 @@ export async function recordCommand(
     return;
   }
 
-  // all
+  // customer ("Tüm Sistem" — bir müşterinin tüm bölgeleri) ya da all (admin global)
   const allPatch = patchFor(action, value, number);
-  const updated = await db.update(schema.zones).set(allPatch).returning();
-  await patchFixtures(null, allPatch, at, seq);
+  const idx = await getTenancy();
+
+  let customerIds: string[];
+  let updated: (typeof schema.zones.$inferSelect)[];
+  if (target === "customer") {
+    const cid = meta.customerId;
+    if (!cid) {
+      console.warn(`[mqtt] müşteri komutu müşterisiz kaydedildi: ${id}`);
+      return;
+    }
+    customerIds = [cid];
+    updated = await db
+      .update(schema.zones)
+      .set(allPatch)
+      .where(eq(schema.zones.customerId, cid))
+      .returning();
+    await patchFixtures(idx.customersById.get(cid)?.macs ?? [], allPatch, at, seq);
+  } else {
+    customerIds = [...idx.customersById.keys()];
+    updated = await db.update(schema.zones).set(allPatch).returning();
+    await patchFixtures(null, allPatch, at, seq);
+  }
+
   for (const z of updated) {
     emitLiveEvent({
       zoneSlug: z.slug,
+      customerId: z.customerId,
       isOn: z.isOn,
       brightness: z.brightness,
       activeFx: z.activeFx,
@@ -716,14 +781,18 @@ export async function recordCommand(
   // OYNATMAZ (tek bölge değişimi master'ı kaydırmasın diye), master yalnızca bu
   // scope:"all" olayıyla senkronlanır. `brightness` yalnızca dim'de dolu
   // (patchFor), böylece on/off/efekt master seviyesini değiştirmez.
-  emitLiveEvent({
-    scope: "all",
-    isOn: allPatch.isOn,
-    brightness: allPatch.brightness,
-    activeFx: allPatch.activeFx,
-    status: "ok",
-    kind: "command",
-    at,
-    seq,
-  });
+  // Olay müşteri başına üretilir: her panel yalnızca kendi master'ını görür.
+  for (const customerId of customerIds) {
+    emitLiveEvent({
+      scope: "all",
+      customerId,
+      isOn: allPatch.isOn,
+      brightness: allPatch.brightness,
+      activeFx: allPatch.activeFx,
+      status: "ok",
+      kind: "command",
+      at,
+      seq,
+    });
+  }
 }

@@ -5,6 +5,7 @@ import type { Zone, DeviceView, OpenFault } from "@/app/_lib/types";
 import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { useReconcile } from "@/app/_lib/useReconcile";
+import { useApi, usePanel } from "@/app/_lib/panel";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { faultLabel } from "@/lib/faults";
 import { formatMac } from "@/lib/mac";
@@ -49,6 +50,8 @@ export function DeviceManager({
   /** O paneli kapat. */
   onCloseZone?: () => void;
 }) {
+  const api = useApi();
+  const { canWrite } = usePanel();
   const [devices, setDevices] = useState<DeviceView[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -80,12 +83,12 @@ export function DeviceManager({
   const [editName, setEditName] = useState("");
 
   const loadDevices = useCallback(() => {
-    fetch("/api/devices")
+    fetch(api("/api/devices"))
       .then((r) => r.json())
       .then((j) => setDevices(j.data ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     loadDevices();
@@ -139,7 +142,7 @@ export function DeviceManager({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/devices", {
+      const res = await fetch(api("/api/devices"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mac: mac.trim(), zoneSlug, name: name.trim() || undefined }),
@@ -169,7 +172,7 @@ export function DeviceManager({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/devices/${target.deviceId}`, {
+      const res = await fetch(api(`/api/devices/${target.deviceId}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ zoneSlug: editZoneSlug, name: editName.trim() }),
@@ -199,7 +202,7 @@ export function DeviceManager({
     const target = deleting;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/devices/${target.deviceId}`, { method: "DELETE" });
+      const res = await fetch(api(`/api/devices/${target.deviceId}`), { method: "DELETE" });
       if (!res.ok) throw new Error();
       setDevices((ds) => ds.filter((d) => d.deviceId !== target.deviceId));
       setDeleting(null);
@@ -282,6 +285,7 @@ export function DeviceManager({
             </span>
           ) : null}
         </button>
+        {canWrite ? (<>
         <button
           type="button"
           onClick={() => openEdit(d)}
@@ -304,6 +308,7 @@ export function DeviceManager({
             <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
           </svg>
         </button>
+        </>) : null}
       </li>
     );
   };
@@ -315,6 +320,7 @@ export function DeviceManager({
           <h2 className="font-display text-lg font-bold text-text">Cihazlar</h2>
           <p className="text-xs text-muted">{devices.length} ESP32</p>
         </div>
+        {canWrite ? (
         <button
           type="button"
           onClick={() => openAdd()}
@@ -326,6 +332,7 @@ export function DeviceManager({
           </svg>
           Yeni Cihaz
         </button>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-panel">
@@ -407,6 +414,7 @@ export function DeviceManager({
           ) : undefined
         }
       >
+        {canWrite ? (
         <div className="mb-3 flex justify-end">
           <button
             type="button"
@@ -419,6 +427,7 @@ export function DeviceManager({
             Yeni Cihaz
           </button>
         </div>
+        ) : null}
         {zoneDevices.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
             Bu bölgede tanımlı cihaz yok. &quot;Yeni Cihaz&quot; ile bu bölgeye bir ESP32 ekleyebilirsin.

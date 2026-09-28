@@ -43,6 +43,13 @@
       "when": 1784720968836,
       "tag": "0005_majestic_umar",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790576385432,
+      "tag": "0006_multi_tenant",
+      "breakpoints": true
     }
   ]
 }

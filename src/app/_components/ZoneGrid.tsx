@@ -14,6 +14,8 @@ interface ZoneGridProps {
   onEdit: (zone: Zone) => void;
   onDelete: (zone: Zone) => void;
   onOpenDevices: (zone: Zone) => void;
+  /** Salt okunur hesap: ekleme/düzenleme/kontrol pasif, cihazlar görüntülenebilir. */
+  readOnly?: boolean;
 }
 
 export function ZoneGrid({
@@ -26,6 +28,7 @@ export function ZoneGrid({
   onEdit,
   onDelete,
   onOpenDevices,
+  readOnly = false,
 }: ZoneGridProps) {
   return (
     <section aria-label="Aydınlatma bölgeleri">
@@ -34,6 +37,7 @@ export function ZoneGrid({
           <h2 className="font-display text-lg font-bold text-text">Bölgeler</h2>
           <p className="text-xs text-muted">{zones.length} cadde / sokak</p>
         </div>
+        {readOnly ? null : (
         <button
           type="button"
           onClick={onCreate}
@@ -44,11 +48,12 @@ export function ZoneGrid({
           </svg>
           Yeni Bölge
         </button>
+        )}
       </div>
 
       {zones.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-panel/50 p-8 text-center text-sm text-muted">
-          Henüz bölge yok. “Yeni Bölge” ile ekleyebilirsin.
+          {readOnly ? "Henüz bölge yok." : "Henüz bölge yok. “Yeni Bölge” ile ekleyebilirsin."}
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -56,6 +61,7 @@ export function ZoneGrid({
             <ZoneCard
               key={zone.id}
               zone={zone}
+              readOnly={readOnly}
               faults={faultsByZone.get(zone.id) ?? []}
               onToggle={(on) => onToggle(zone.id, on)}
               onBrightness={(value) => onBrightness(zone.id, value)}

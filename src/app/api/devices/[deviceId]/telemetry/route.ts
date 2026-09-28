@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toD4iSnapshot } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
@@ -14,10 +15,12 @@ const SCAN_LIMIT = 200;
 
 // GET /api/devices/:deviceId/telemetry → her DALI adresinin son D4i raporu.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "read");
+  if (ctx instanceof Response) return ctx;
   try {
     const rows = await db
       .select()

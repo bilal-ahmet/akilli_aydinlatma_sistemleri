@@ -46,6 +46,60 @@ ESP32 (PubSubClient + WiFiClientSecure)
 
 ---
 
+## Çok Müşterili Yapı (Multi-tenant) ve Giriş
+
+Her **müşteri** (`customers`) kendi kullanıcı adı/şifresiyle girer ve yalnızca
+kendi bölge/cihaz/lamba/telemetri/arıza verisini görür. **Bölge bir müşteriye
+aittir** (`zones.customer_id`); cihazın müşterisi bölgesinden türetilir.
+
+| Rol | Kapsam |
+|---|---|
+| `admin` | Platform yöneticisi (`customer_id` NULL). `/admin`'de tüm müşteriler; bir müşteriye tıklayınca `/c/<slug>` panelini **tüm fonksiyonlarıyla** kullanır. |
+| `manager` | Müşteri yöneticisi: kendi panelinde tam yetki (bölge/cihaz/lamba/kullanıcı + komut). |
+| `viewer` | Müşteri izleyicisi: salt okunur. |
+
+**Sayfalar:** `/login` · `/` (role göre yönlendirir) · `/admin` (müşteri kartları,
+global acil komut) · `/admin/customers/<slug>` (bilgiler, pasifleştirme,
+kullanıcılar, denetim kaydı) · `/c/<slug>` (dashboard) · `/c/<slug>/kullanicilar`
+(manager/admin) · `/hesap` (şifre değiştirme; ilk girişte zorunlu).
+
+**Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
+
+- `src/lib/auth/token.ts` — `jose` HS256 JWT, HttpOnly çerez `fener_session`
+  (`{sub, role, cid, tv}`, 7 gün, kayan yenileme). `SESSION_SECRET` MQTT
+  env'inden ayrı doğrulanır.
+- `src/lib/auth/password.ts` — `node:crypto` scrypt; kullanıcı yokken de sahte
+  doğrulama (zamanlama ile kullanıcı adı tahmini engellenir).
+- `src/proxy.ts` — YALNIZCA iyimser kontrol (imza), `/login`'e yönlendirir / 401.
+  **Güvenlik sınırı değildir.**
+- `src/lib/auth/dal.ts` — sayfalar: `requireUser`, `requireAdmin`,
+  `requireCustomerAccess(slug)` (başka müşteri → 404).
+- `src/lib/auth/guard.ts` — API route'ları: `authorizeScope` (koleksiyon,
+  `?customer=<slug>`), `authorizeZone`, `authorizeDevice`, `authorizeAdmin`,
+  `authorizeCustomerManage`. Başka müşterinin kaynağına **404** (varlık sızmaz).
+- `src/lib/tenancy.ts` — **bellek içi kiracı index'i** (bölge/MAC → müşteri,
+  kullanıcı aktifliği + token sürümü). Komut yolu bu sayede DB'ye gitmez
+  (Kural #10). Açılışta ısıtılır; **her CRUD sonrası `refreshTenancy()`**.
+- `src/lib/audit.ts` — `audit_log`'a kim/hangi müşteri adına/ne yaptı.
+- Hatalı giriş: IP+kullanıcı başına 15 dk'da 5 deneme, sonra kilit (bellek içi).
+- Şifre değişimi/sıfırlama `token_version`'ı artırır → eski oturumlar düşer.
+  Pasif kullanıcı/müşteri bir sonraki istekte düşer (SSE akışı heartbeat'te).
+
+**İstemci:** `/c/[customer]/layout.tsx` `PanelProvider` kurar
+(`src/app/_lib/panel.tsx`). Panel içindeki her `fetch` `useApi()` ile
+`?customer=<slug>` ekler; `useLiveStatus` akışı müşteriye kapsamlar.
+`canWrite=false` iken kontroller pasif gösterilir (asıl yetki sunucuda).
+
+**İlk admin:** `npm run auth:create-admin -- <kullanici>` (şifre
+`ADMIN_PASSWORD` env'inden ya da terminalden; `--reset` ile sıfırlama).
+Kodda varsayılan şifre yoktur.
+
+**İzolasyon testi:** `npm run check:tenancy` (çalışan sunucuya karşı; bkz.
+`scripts/tenant-check.ts`). Komut testleri gerçek publish yapar — canlı
+broker'a bağlı sunucuda çalıştırmayın.
+
+---
+
 ## MQTT Yapılandırması
 
 ### Broker
@@ -73,7 +127,18 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 
 - **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
   yayınlar, cihaz listesini DB'den çözmez. ESP kendi bölge slug'ını firmware'deki
-  `ZONE_SLUG`'tan bilir ve o topic'e subscribe olur. "Tüm Sistem" → `Meven:all/cmd`.
+  `ZONE_SLUG`'tan bilir ve o topic'e subscribe olur.
+- **Müşterinin "Tüm Sistem"i = müşterinin HER bölge topic'ine ayrı publish**
+  (`publishCommand("customer", …)`, bölge listesi tenancy index'inden; Kural
+  #3'ün bilinçli istisnası). `Meven:all/cmd`'ye tüm müşterilerin cihazları
+  abone olduğu için müşteri "Tüm Sistem"i oraya GİTMEZ.
+- **`Meven:all/cmd` yalnızca admin'in global acil komutudur**
+  (`POST /api/admin/command/global`) — bütün müşterilerin bütün lambaları.
+- **Bölge slug'ı = topic, global benzersiz.** `all`, 12 haneli hex (MAC
+  biçimi) ve `c-` öneki rezervdir (`isReservedZoneSlug`). Silinen bölgenin slug'ı
+  `retired_zone_slugs`'a yazılır ve **bir daha verilmez**: o slug ile flaşlanmış
+  cihazlar topic'i dinlemeye devam eder, slug başka müşteriye verilseydi onun
+  komutlarını alırdı.
 - Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
   gömülemez); MAC payload'daki `deviceId`'den okunur.
 - **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
@@ -260,12 +325,39 @@ rafine edilir. `channels` yoksa mevcut tek-lamba davranışı korunur.
 
 ## API Endpoint'leri
 
+> **Tüm `/api/*` route'ları oturum ister** (`/api/auth/login` hariç). Koleksiyon
+> route'ları (`GET/POST /api/zones`, `GET/POST /api/devices`, `/api/summary`,
+> `/api/faults`, `/api/events`, `/api/command/all`) müşteri kapsamını
+> `?customer=<slug>` ile alır: müşteri kullanıcısında opsiyonel (her zaman
+> kendisi, başka slug → 403), admin'de zorunlu (yoksa 400). Kaynak route'ları
+> (`/api/zones/:slug/*`, `/api/devices/:mac/*`) sahipliği kaynaktan okur.
+> Yazma işlemleri `viewer` için 403.
+
+### Giriş ve Hesap
+
+```
+POST /api/auth/login      { username, password }  → çerez + { redirect }
+POST /api/auth/logout
+POST /api/auth/password   { currentPassword, newPassword }
+```
+
+### Yönetim (admin)
+
+```
+GET/POST        /api/admin/customers              # liste (sayılar + ölçülmüş özet) / oluştur
+GET/PATCH/DELETE /api/admin/customers/:slug       # bilgi, isActive; silme yalnızca bölgesizse
+POST            /api/admin/command/global         # Meven:all/cmd — TÜM müşteriler
+GET/POST        /api/customers/:slug/users        # admin veya o müşterinin manager'ı
+PATCH/DELETE    /api/customers/:slug/users/:id    # rol, aktiflik, şifre sıfırlama
+PATCH           /api/zones/:slug { customerSlug } # (admin) bölgeyi cihazlarıyla başka müşteriye taşı
+```
+
 ### Komut Gönderme
 
 ```
 POST /api/zones/:zoneId/command
 POST /api/devices/:deviceId/command       # channel ile tek lamba, yoksa tüm cihaz
-POST /api/command/all                     # Meven:all/cmd (toplu)
+POST /api/command/all?customer=<slug>     # müşterinin "Tüm Sistem"i (bölge topic'lerine fanout)
 
 Body:
 {
@@ -293,6 +385,14 @@ DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 > almaya devam eder, yeninin komutlarını almaz. Tekil (MAC) ve `Meven:all/cmd`
 > komutları etkilenmez. Dashboard bölge seçimi değiştiğinde bu uyarıyı gösterir.
 > MAC değiştirilemez: cihazın kimliği odur, tüm telemetri/lamba kayıtları ona bağlı.
+>
+> **Cihaz başka MÜŞTERİNİN bölgesine taşınamaz** (admin için de): eski
+> `ZONE_SLUG`'ı dinlemeye devam edeceği için eski müşterinin bölge komutlarını
+> almayı sürdürürdü. Müşteri değişimi bölge seviyesinde yapılır (admin bölgeyi
+> taşır; slug değişmez, yeniden flaş gerekmez). Başka müşteride kayıtlı MAC
+> eklenmek istenirse 409 döner ve sahip açıklanmaz. Cihaz/bölge silinince
+> `fault_events` dahil tüm MAC kayıtları silinir (MAC başka müşteriye geçerse
+> eski geçmiş sızmasın).
 
 **Lamba (DALI kanal) yönetimi:**
 
@@ -349,12 +449,48 @@ Frontend tarafı: `src/app/_lib/useLiveStatus.ts` (`EventSource`). Backend köpr
 
 ## Veritabanı Şeması
 
+### `customers` / `users`
+
+```sql
+CREATE TABLE customers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug VARCHAR(100) UNIQUE NOT NULL,     -- URL: /c/<slug>
+  name VARCHAR(150) NOT NULL,
+  contact_name, contact_email, contact_phone, notes,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,   -- pasif: kullanıcılar giremez, cihazlar çalışır
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username VARCHAR(64) UNIQUE NOT NULL,  -- küçük harf
+  password_hash TEXT NOT NULL,           -- scrypt$N$r$p$salt$hash
+  display_name VARCHAR(150),
+  role VARCHAR(20) NOT NULL,             -- admin | manager | viewer
+  customer_id UUID REFERENCES customers(id),  -- admin: NULL (CHECK ile zorunlu)
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  token_version INTEGER NOT NULL DEFAULT 0,   -- artınca eski oturumlar düşer
+  last_login_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Ayrıca: `retired_zone_slugs(slug PK, customer_id, retired_at)` — silinmiş bölge
+slug'ları, bir daha verilmez. `audit_log(id, at, user_id, username, customer_id,
+action, target, detail JSONB, ip)` — CRUD ve giriş denetimi. `commands`'a
+`user_id` ve `customer_id` eklendi; `target_type` artık `zone | device | customer | all`.
+
+> Migration `0006_multi_tenant.sql` elle düzenlendi: `meven-arge` ("Meven ArGe")
+> müşterisini oluşturur, mevcut tüm bölgeleri ona bağlar, sonra
+> `zones.customer_id`'yi NOT NULL yapar.
+
 ### `zones`
 
 ```sql
 CREATE TABLE zones (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   slug        VARCHAR(100) UNIQUE NOT NULL,  -- MQTT topic / API public id (örn. "ataturk-bulvari")
+  customer_id UUID NOT NULL REFERENCES customers(id),  -- sahip müşteri
   name        VARCHAR(100) NOT NULL,
   description TEXT,
   -- dashboard snapshot alanları (Kural #6'yı zone seviyesinde sağlar):
@@ -561,6 +697,10 @@ MQTT_PORT=8883
 MQTT_USER=backend-service
 MQTT_PASS=****
 
+# Oturum çerezi imza anahtarı (≥32 karakter; openssl rand -base64 48).
+# Değişirse tüm oturumlar düşer.
+SESSION_SECRET=****
+
 # Uygulama (SSE; aynı origin olduğu için varsayılan /api/events)
 NEXT_PUBLIC_SSE_URL=/api/events
 ```
@@ -586,7 +726,12 @@ NEXT_PUBLIC_SSE_URL=/api/events
 7. **LoRa geçişinde** transport katmanı değişir (Chirpstack → MQTT → Backend), API kontratı aynı kalır.
 8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
 9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.
-10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar).
+10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar). Yetki kontrolü de DB'ye gitmez: tenancy index'i + JWT (`lib/auth/guard.ts`).
+11. **Her `/api/*` route'u guard ile başlar** (`authorize*`, `lib/auth/guard.ts`); yalnızca `/api/auth/login` ve `/api/auth/logout` hariç. `src/proxy.ts` iyimser kontroldür, tek başına güvenlik sınırı değildir. Yeni route eklerken guard'ı unutma.
+12. **Her sorgu müşteriye göre süzülür.** Liste sorguları `zones.customer_id` (ya da `tenancy` → `customer.macs`) ile kapsamlanır; kayıtsız MAC'lerin telemetrisi hiçbir müşteriye görünmez. Canlı olaylar `customerId` ile etiketlenir, SSE route'u buna göre süzer.
+13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
+14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
+15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
 
 ---
 
@@ -595,9 +740,13 @@ NEXT_PUBLIC_SSE_URL=/api/events
 ```
 /
 ├── src/
-│   ├── instrumentation.ts                # açılışta MQTT başlatma (try/catch)
+│   ├── instrumentation.ts                # açılışta MQTT + tenancy index (try/catch)
+│   ├── proxy.ts                          # iyimser oturum kontrolü (/login yönlendirme)
 │   ├── app/
-│   │   ├── page.tsx                      # dashboard (DB'den zone okur)
+│   │   ├── page.tsx                      # role göre yönlendirici
+│   │   ├── login/ · hesap/               # giriş, şifre değiştirme
+│   │   ├── admin/                        # müşteri listesi, müşteri ayarları
+│   │   ├── c/[customer]/                 # müşteri dashboard'u (layout: PanelProvider) + kullanicilar/
 │   │   ├── _components/                  # UI (DashboardClient, ZoneCard, ...)
 │   │   │   ├── ErrorToasts.tsx           # cihaz komut hatası bildirimleri (SSE)
 │   │   │   ├── DeviceControlModal.tsx    # cihaz paneli — Kontrol/Telemetri/Arıza geçmişi sekmeleri
@@ -617,6 +766,9 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
 │   │   ├── faults.ts                     # arıza kodu kataloğu (saf; client de kullanır)
 │   │   ├── faultLog.ts                   # fault_events senkronu (yalnız değişimde yazar)
+│   │   ├── auth/                         # token, password, session, dal, guard, rateLimit, roles
+│   │   ├── tenancy.ts                    # bellek içi kiracı index'i
+│   │   ├── audit.ts  summary.ts  customers.ts  zoneSlug.ts
 │   │   ├── db/{schema,index,seed}.ts     # Drizzle
 │   │   ├── env.ts  adapters.ts  api/respond.ts
 │   └── types/lighting.ts                 # payload tipleri + zod kontrat
@@ -639,6 +791,7 @@ Backend, DB, MQTT, SSE ve frontend entegrasyonu **tamamlandı ve Railway'de canl
 - [x] Frontend gerçek API'ye bağlandı (komut + canlı durum)
 - [x] Mock ESP32 entegrasyon testi (`scripts/mock-esp32.md`)
 - [x] Deploy: Railway + Neon (Service Variables ile env)
+- [x] Çok müşterili giriş + admin paneli (kod hazır; canlıya alma adımları aşağıda)
 - [ ] Gerçek ESP32 sahada test (`firmware/esp32-fener/`)
 - [ ] (İleride) LoRaWAN geçişi
 
@@ -646,3 +799,8 @@ Backend, DB, MQTT, SSE ve frontend entegrasyonu **tamamlandı ve Railway'de canl
 - `master`'a push → otomatik deploy (`npm run build` → `npm start`).
 - Env değişkenleri Railway **Service Variables**'ta. `.env.local` deploy edilmez.
 - **Replica = 1** (Kural #8). DB değişikliğinde lokalden `npm run db:migrate` (DATABASE_URL = Neon).
+- **Çok müşterili sürümü ilk kez canlıya alma sırası:** (1) Railway'e
+  `SESSION_SECRET` ekle, (2) `npm run db:migrate` (0006: "Meven ArGe" + backfill),
+  (3) `npm run auth:create-admin -- <admin>`, (4) `master`'a push. Migration ile
+  deploy arasındaki birkaç dakikada eski koddan bölge oluşturma başarısız olur
+  (NOT NULL); diğer her şey çalışır.

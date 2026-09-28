@@ -247,7 +247,10 @@ Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → h
 ## 6) Akış özeti
 - Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
 - Dashboard bölge komutu → `Meven:<slug>/cmd`'e **tek publish** (o bölgedeki her cihaz alır).
-- Dashboard "Tüm Sistem" → `Meven:all/cmd`'e tek publish (her cihaz alır).
+- Müşteri panelindeki "Tüm Sistem" → o müşterinin **her bölge topic'ine** ayrı
+  publish (`Meven:<slug>/cmd`). Cihaz tarafında fark yok; bölge komutu gibi gelir.
+- Admin'in global acil komutu → `Meven:all/cmd`'e tek publish (TÜM müşterilerin
+  her cihazı alır). Firmware bu topic'e abone kalmalı.
 - Cihaz komutu işler → `{"status":...}` yanıtını `Meven:<MAC>/data`'ya publish →
   backend hatayı dashboard'a bildirim + rozet olarak yansıtır.
 - Cihaz durum bildirir → `Meven:<MAC>/data`'ya `d4i_periodic` publish → backend

@@ -2,15 +2,19 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toZone } from "@/lib/adapters";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeZone } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
 // GET /api/zones/:zoneId/status — son bilinen zone durumu (DB snapshot).
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ zoneId: string }> },
 ) {
   const { zoneId } = await params;
+  const ctx = await authorizeZone(req, zoneId, "read");
+  if (ctx instanceof Response) return ctx;
+
   const [zone] = await db
     .select()
     .from(schema.zones)

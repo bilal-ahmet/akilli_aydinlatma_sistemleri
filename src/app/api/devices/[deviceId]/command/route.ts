@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { publishCommand, recordCommand } from "@/lib/mqtt";
 import { commandRequestSchema } from "@/types/lighting";
 import { ok, fail } from "@/lib/api/respond";
+import { authorizeDevice } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,8 @@ export async function POST(
   { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const { deviceId } = await params;
+  const ctx = await authorizeDevice(req, deviceId, "write");
+  if (ctx instanceof Response) return ctx;
 
   const parsed = commandRequestSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -30,9 +33,10 @@ export async function POST(
   }
 
   after(() =>
-    recordCommand("device", deviceId, requestId, seq, cmd).catch((err) =>
-      console.error("[cmd] cihaz kaydı başarısız:", err),
-    ),
+    recordCommand("device", deviceId, requestId, seq, cmd, {
+      userId: ctx.user.id,
+      customerId: ctx.customerId,
+    }).catch((err) => console.error("[cmd] cihaz kaydı başarısız:", err)),
   );
 
   return ok({ requestId, seq, status: "pending" }, { status: 202 });

@@ -10,6 +10,12 @@ import * as schema from "./schema";
  * Frontend mock'undaki 8 zone'u gerçek `zones` satırlarına çevirir ve her
  * zone için birkaç örnek `devices` kaydı oluşturur. Idempotent: önce temizler.
  *
+ * Çok kiracılık: bölgelerin ilk yarısı "Meven ArGe", ikinci yarısı "Demo
+ * Belediyesi" müşterisine bağlanır (müşteriler yoksa oluşturulur).
+ * Kullanıcı hesaplarına DOKUNMAZ — admin'i `npm run auth:create-admin` açar.
+ *
+ * DİKKAT: bölge/cihaz/komut kayıtlarını SİLER. Yalnızca lokal/test DB'de çalıştırın.
+ *
  * Çalıştır:  npm run db:seed
  */
 async function main() {
@@ -22,11 +28,25 @@ async function main() {
   await db.delete(schema.devices);
   await db.delete(schema.zones);
 
-  for (const z of initialZones) {
+  const customer = async (slug: string, name: string) => {
+    const [row] = await db
+      .insert(schema.customers)
+      .values({ slug, name })
+      .onConflictDoUpdate({ target: schema.customers.slug, set: { name } })
+      .returning();
+    return row;
+  };
+  const meven = await customer("meven-arge", "Meven ArGe");
+  const demo = await customer("demo-belediyesi", "Demo Belediyesi");
+  const half = Math.ceil(initialZones.length / 2);
+
+  for (const [i, z] of initialZones.entries()) {
+    const owner = i < half ? meven : demo;
     const [zoneRow] = await db
       .insert(schema.zones)
       .values({
         slug: z.id,
+        customerId: owner.id,
         name: z.name,
         district: z.district,
         poleCount: z.poleCount,
@@ -47,7 +67,7 @@ async function main() {
       });
     }
 
-    console.log(`✓ ${z.name} (${z.id}) + ${deviceCount} cihaz`);
+    console.log(`✓ [${owner.name}] ${z.name} (${z.id}) + ${deviceCount} cihaz`);
   }
 
   await pool.end();
