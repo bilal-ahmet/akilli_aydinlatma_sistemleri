@@ -196,6 +196,37 @@ body {
     letter-spacing: 0.05em;
   }
 
+  /* İnce kaydırma çubuğu (Genel Bakış'taki bölge şeridi, çubuklar, liste).
+     Görünür kalır ki alanın kaydırılabildiği anlaşılsın. */
+  .scroll-x,
+  .scroll-y {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line2) transparent;
+    overscroll-behavior-x: contain;
+  }
+  .scroll-x::-webkit-scrollbar {
+    height: 6px;
+  }
+  .scroll-y::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scroll-x::-webkit-scrollbar-thumb,
+  .scroll-y::-webkit-scrollbar-thumb {
+    background: var(--line2);
+    border-radius: 3px;
+  }
+  .scroll-x::-webkit-scrollbar-track,
+  .scroll-y::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* Her iki temada koyu kalan "Tüm sistem" kartının içinde. */
+  .scroll-x-dark {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+  .scroll-x-dark::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+  }
+
   /* Bölüm etiketi ("AÇIK · 0", "GEÇMİŞ · SON 30 GÜN"). */
   .eyebrow {
     font-size: 12px;

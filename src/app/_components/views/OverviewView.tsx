@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRef } from "react";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
@@ -12,13 +13,16 @@ import { formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
 import type { Zone } from "@/app/_lib/types";
 import { Toggle } from "../Toggle";
-import { BrightnessSlider } from "../BrightnessSlider";
 import { PageHeader, StatCard } from "../PanelUi";
 
 const PRESETS = [25, 50, 75, 100];
 
-/** Kahraman kartındaki direk şeridinde en fazla bu kadar bölge gösterilir. */
-const MAX_POLES = 6;
+/** Halkanın dolgusu bu açıdan başlar (CSS conic: 0° = tepe, saat yönü). */
+const KNOB_START_DEG = 200;
+/** Bir tam tur = %0 → %100. */
+const PCT_PER_DEG = 100 / 360;
+/** Merkeze bu kadar yakın işaretçinin açısı gürültülü; hareket yok sayılır. */
+const KNOB_DEAD_ZONE_PX = 22;
 
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
 
@@ -63,7 +67,7 @@ function OnlinePill() {
 function Pole({ zone }: { zone: Zone }) {
   const lvl = zone.isOn ? Math.max(0.15, zone.brightness / 100) : 0;
   return (
-    <div className="relative flex h-28 min-w-0 flex-col items-center">
+    <div className="relative flex h-28 min-w-[136px] flex-1 flex-col items-center">
       <div className="absolute bottom-0 top-1.5 w-[3px] rounded-sm bg-[#3a352c]" />
       <div
         className="relative h-[9px] w-[30px] rounded-[5px] transition-[background,box-shadow] duration-500"
@@ -84,9 +88,149 @@ function Pole({ zone }: { zone: Zone }) {
           opacity: lvl,
         }}
       />
-      <div className="absolute bottom-2 max-w-full truncate rounded-[5px] bg-[rgba(20,18,14,.7)] px-[7px] py-0.5 text-[11.5px] text-[#cfc8ba]">
+      <div className="absolute bottom-2 max-w-[calc(100%-12px)] truncate rounded-[5px] bg-[rgba(20,18,14,.7)] px-[7px] py-0.5 text-[11.5px] text-[#cfc8ba]">
         {zone.name}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Genel şiddet halkası — döndürülerek kullanılır: saat yönünde çevirmek
+ * artırır, tersine çevirmek azaltır (bir tam tur = %0→%100). Göreli çalışır:
+ * tutulan yerden ne kadar dönüldüyse değer o kadar değişir, tıklanan nokta
+ * değere atlamaz. Klavyeyle de ayarlanır (slider rolü).
+ *
+ * Fare tekerleği BİLEREK bağlanmadı: sayfa kaydırılırken imleç halkanın
+ * üstünden geçince gerçek lambaların şiddeti istemeden değişirdi.
+ * Komut, `setAllBrightness` içindeki debounce ile çevirme durunca gider.
+ */
+function BrightnessKnob({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  disabled: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Sürükleme: son açı (NaN = henüz ölü bölgede), birikmiş ondalıklı değer,
+  // son gönderilen tam sayı.
+  const drag = useRef<{ angle: number; value: number; sent: number } | null>(null);
+
+  /** İşaretçinin halka merkezine göre açısı (derece, saat yönü artar); ölü bölgede null. */
+  function angleOf(e: React.PointerEvent): number | null {
+    const r = ref.current!.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    if (Math.hypot(dx, dy) < KNOB_DEAD_ZONE_PX) return null;
+    return (Math.atan2(dy, dx) * 180) / Math.PI;
+  }
+
+  function set(next: number) {
+    const v = Math.max(0, Math.min(100, Math.round(next)));
+    if (v !== value) onChange(v);
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (disabled) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.focus();
+    drag.current = { angle: angleOf(e) ?? Number.NaN, value, sent: value };
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    const angle = angleOf(e);
+    if (angle === null) return;
+    if (Number.isNaN(d.angle)) {
+      d.angle = angle;
+      return;
+    }
+    let delta = angle - d.angle;
+    // -180°/180° sınırından geçerken sıçramayı engelle.
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    d.angle = angle;
+    d.value = Math.max(0, Math.min(100, d.value + delta * PCT_PER_DEG));
+    const rounded = Math.round(d.value);
+    if (rounded !== d.sent) {
+      d.sent = rounded;
+      onChange(rounded);
+    }
+  }
+
+  function endDrag() {
+    drag.current = null;
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (disabled) return;
+    const step: Record<string, number> = {
+      ArrowRight: 1,
+      ArrowUp: 1,
+      ArrowLeft: -1,
+      ArrowDown: -1,
+      PageUp: 10,
+      PageDown: -10,
+    };
+    if (e.key in step) set(value + step[e.key]);
+    else if (e.key === "Home") set(0);
+    else if (e.key === "End") set(100);
+    else return;
+    e.preventDefault();
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2.5">
+      <div
+        ref={ref}
+        role="slider"
+        tabIndex={disabled ? -1 : 0}
+        aria-label="Genel ışık şiddeti"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value}
+        aria-valuetext={`%${value}`}
+        aria-disabled={disabled || undefined}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onKeyDown={onKeyDown}
+        className={`relative grid h-[168px] w-[168px] touch-none select-none place-items-center rounded-full shadow-[0_0_50px_oklch(0.75_0.16_65/.35)] outline-none focus-visible:ring-2 focus-visible:ring-[oklch(0.85_0.15_78)] focus-visible:ring-offset-4 focus-visible:ring-offset-[#15130f] ${
+          disabled ? "cursor-not-allowed opacity-70" : "cursor-grab active:cursor-grabbing"
+        }`}
+        style={{
+          background: `conic-gradient(from ${KNOB_START_DEG}deg, oklch(0.7 0.18 52), oklch(0.86 0.15 80) ${value}%, rgba(255,255,255,.08) ${value}% 100%)`,
+        }}
+      >
+        {/* Tutamaç: değerin bulunduğu noktada beyaz düğme */}
+        {disabled ? null : (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{ transform: `rotate(${KNOB_START_DEG + value * 3.6}deg)` }}
+          >
+            <span className="absolute left-1/2 top-[4px] h-5 w-5 -translate-x-1/2 rounded-full border-[3px] border-[oklch(0.77_0.16_68)] bg-white shadow-[0_1px_4px_rgba(0,0,0,.35),0_0_12px_oklch(0.77_0.16_68/.6)]" />
+          </span>
+        )}
+        <div className="pointer-events-none flex h-[140px] w-[140px] flex-col items-center justify-center gap-0.5 rounded-full bg-[#17150f]">
+          <span className="font-mono text-[40px] font-semibold tracking-[-0.04em] text-[oklch(0.88_0.13_80)]">
+            %{value}
+          </span>
+          <span className="text-xs text-[#a8a194]">genel şiddet</span>
+        </div>
+      </div>
+      {disabled ? null : (
+        <p className="max-w-[200px] text-center text-[11.5px] leading-snug text-[#a8a194]">
+          Halkayı tutup çevirin: <span className="text-[#d8d2c6]">saat yönü ↻ artırır</span>, tersi ↺
+          azaltır.
+        </p>
+      )}
     </div>
   );
 }
@@ -99,7 +243,6 @@ function SystemHero() {
   const onZones = zones.filter((z) => z.isOn).length;
   const fx = new Set(zones.filter((z) => z.isOn && z.activeFx).map((z) => z.activeFx));
   const fxName = fx.size === 1 ? effectByNumber([...fx][0])?.label : null;
-  const poles = zones.slice(0, MAX_POLES);
 
   return (
     <section
@@ -167,43 +310,23 @@ function SystemHero() {
                 disabled={!canWrite}
               />
             </div>
-            <div className="max-w-md">
-              <BrightnessSlider
-                value={shown}
-                onChange={setAllBrightness}
-                label="Genel ışık şiddeti"
-                hideValue
-                onDark
-                disabled={!canWrite}
-              />
-            </div>
           </fieldset>
         </div>
 
-        {/* Genel şiddet halkası */}
-        <div
-          className="mx-auto hidden h-[168px] w-[168px] place-items-center rounded-full shadow-[0_0_50px_oklch(0.75_0.16_65/.35)] sm:grid"
-          style={{
-            background: `conic-gradient(from 200deg, oklch(0.7 0.18 52), oklch(0.86 0.15 80) ${shown}%, rgba(255,255,255,.08) ${shown}% 100%)`,
-          }}
-          role="img"
-          aria-label={`Genel şiddet yüzde ${shown}`}
-        >
-          <div className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-0.5 rounded-full bg-[#17150f]">
-            <span className="font-mono text-[40px] font-semibold tracking-[-0.04em] text-[oklch(0.88_0.13_80)]">
-              %{shown}
-            </span>
-            <span className="text-xs text-[#a8a194]">genel şiddet</span>
-          </div>
+        {/* Genel şiddet halkası — çevirerek ayarlanır */}
+        <div className="justify-self-center">
+          <BrightnessKnob value={shown} onChange={setAllBrightness} disabled={!canWrite} />
         </div>
       </div>
 
-      {poles.length > 0 ? (
+      {/* Direk şeridi: tüm bölgeler; sığmayınca yatay kaydırılır. */}
+      {zones.length > 0 ? (
         <div
-          className="grid items-end border-b border-white/[.08]"
-          style={{ gridTemplateColumns: `repeat(${poles.length}, minmax(0, 1fr))` }}
+          role="group"
+          aria-label="Bölgeler"
+          className="scroll-x scroll-x-dark -mx-5 flex items-end overflow-x-auto border-b border-white/[.08] px-5 sm:-mx-[30px] sm:px-[30px]"
         >
-          {poles.map((z) => (
+          {zones.map((z) => (
             <Pole key={z.id} zone={z} />
           ))}
         </div>
@@ -294,7 +417,7 @@ function ZoneLevels() {
       {zones.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted">Henüz bölge yok.</p>
       ) : (
-        <div className="flex items-end gap-3 overflow-x-auto pb-1 sm:gap-[18px]">
+        <div className="scroll-x flex items-end gap-3 overflow-x-auto pb-2 sm:gap-[18px]">
           {zones.map((z) => {
             const pct = z.isOn ? z.brightness : 0;
             return (
@@ -302,7 +425,7 @@ function ZoneLevels() {
                 key={z.id}
                 href={`/c/${customerSlug}/bolgeler/${z.id}`}
                 title={`${z.name} — ${z.isOn ? `%${z.brightness}` : "kapalı"}`}
-                className="group flex min-w-[56px] flex-1 flex-col items-center gap-2"
+                className="group flex min-w-[76px] flex-1 flex-col items-center gap-2"
               >
                 <span className="font-mono text-xs text-ink-2">{z.isOn ? `%${z.brightness}` : "kapalı"}</span>
                 <span className="flex h-[150px] w-full max-w-14 items-end overflow-hidden rounded-lg bg-track transition-[filter] group-hover:brightness-95">
@@ -332,7 +455,9 @@ function ZoneList() {
   return (
     <section className="flex min-w-0 flex-col gap-1.5 rounded-2xl border border-border bg-panel px-[22px] py-[22px]">
       <div className="mb-1.5 flex items-center justify-between">
-        <h2 className="text-base font-semibold text-text">Bölgeler</h2>
+        <h2 className="text-base font-semibold text-text">
+          Bölgeler <span className="font-normal text-muted">{zones.length}</span>
+        </h2>
         <Link href={`/c/${customerSlug}/bolgeler`} className="text-[13px] font-medium text-accent hover:underline">
           Tümü
         </Link>
@@ -340,7 +465,9 @@ function ZoneList() {
       {zones.length === 0 ? (
         <p className="border-t border-border py-4 text-sm text-muted">Henüz bölge yok.</p>
       ) : (
-        zones.map((z) => {
+        // Sabit yükseklik (~4 satır); fazlası kutunun içinde dikey kaydırılır.
+        <div className="scroll-y -mr-2.5 max-h-[296px] overflow-y-auto pr-2.5">
+        {zones.map((z) => {
           const power = stats(z.id).measure.powerW;
           return (
             <div key={z.id} className="flex items-center gap-3 border-t border-border py-3">
@@ -359,7 +486,8 @@ function ZoneList() {
               />
             </div>
           );
-        })
+        })}
+        </div>
       )}
     </section>
   );
