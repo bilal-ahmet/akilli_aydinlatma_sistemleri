@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Fener logosu (BrandMark ile aynı): amber degrade kare + parlayan nokta -->
+  <defs>
+    <linearGradient id="g" x1="0.25" y1="0.067" x2="0.75" y2="0.933">
+      <stop offset="0" stop-color="#ffc75a"/>
+      <stop offset="1" stop-color="#f27700"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="9" fill="url(#g)"/>
+  <circle cx="16" cy="16" r="10" fill="#fff" fill-opacity="0.35"/>
+  <circle cx="16" cy="16" r="6" fill="#fff"/>
+</svg>
