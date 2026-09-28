@@ -17,8 +17,8 @@ import { PageHeader, StatCard } from "../PanelUi";
 
 const PRESETS = [25, 50, 75, 100];
 
-/** Halkanın dolgusu bu açıdan başlar (CSS conic: 0° = tepe, saat yönü). */
-const KNOB_START_DEG = 200;
+/** Halkanın dolgusu tepeden (saat 12) başlar, saat yönünde dolar (CSS conic: 0° = tepe). */
+const KNOB_START_DEG = 0;
 /** Bir tam tur = %0 → %100. */
 const PCT_PER_DEG = 100 / 360;
 /** Merkeze bu kadar yakın işaretçinin açısı gürültülü; hareket yok sayılır. */
@@ -99,7 +99,7 @@ function Pole({ zone }: { zone: Zone }) {
  * Genel şiddet halkası — döndürülerek kullanılır: saat yönünde çevirmek
  * artırır, tersine çevirmek azaltır (bir tam tur = %0→%100). Göreli çalışır:
  * tutulan yerden ne kadar dönüldüyse değer o kadar değişir, tıklanan nokta
- * değere atlamaz. Klavyeyle de ayarlanır (slider rolü).
+ * değere atlamaz. Klavyeyle de ayarlanır (slider rolü, ←/→, PgUp/PgDn, Home/End).
  *
  * Fare tekerleği BİLEREK bağlanmadı: sayfa kaydırılırken imleç halkanın
  * üstünden geçince gerçek lambaların şiddeti istemeden değişirdi.
@@ -185,52 +185,44 @@ function BrightnessKnob({
   }
 
   return (
-    <div className="flex flex-col items-center gap-2.5">
-      <div
-        ref={ref}
-        role="slider"
-        tabIndex={disabled ? -1 : 0}
-        aria-label="Genel ışık şiddeti"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={value}
-        aria-valuetext={`%${value}`}
-        aria-disabled={disabled || undefined}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onKeyDown={onKeyDown}
-        className={`relative grid h-[168px] w-[168px] touch-none select-none place-items-center rounded-full shadow-[0_0_50px_oklch(0.75_0.16_65/.35)] outline-none focus-visible:ring-2 focus-visible:ring-[oklch(0.85_0.15_78)] focus-visible:ring-offset-4 focus-visible:ring-offset-[#15130f] ${
-          disabled ? "cursor-not-allowed opacity-70" : "cursor-grab active:cursor-grabbing"
-        }`}
-        style={{
-          background: `conic-gradient(from ${KNOB_START_DEG}deg, oklch(0.7 0.18 52), oklch(0.86 0.15 80) ${value}%, rgba(255,255,255,.08) ${value}% 100%)`,
-        }}
-      >
-        {/* Tutamaç: değerin bulunduğu noktada beyaz düğme */}
-        {disabled ? null : (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            style={{ transform: `rotate(${KNOB_START_DEG + value * 3.6}deg)` }}
-          >
-            <span className="absolute left-1/2 top-[4px] h-5 w-5 -translate-x-1/2 rounded-full border-[3px] border-[oklch(0.77_0.16_68)] bg-white shadow-[0_1px_4px_rgba(0,0,0,.35),0_0_12px_oklch(0.77_0.16_68/.6)]" />
-          </span>
-        )}
-        <div className="pointer-events-none flex h-[140px] w-[140px] flex-col items-center justify-center gap-0.5 rounded-full bg-[#17150f]">
-          <span className="font-mono text-[40px] font-semibold tracking-[-0.04em] text-[oklch(0.88_0.13_80)]">
-            %{value}
-          </span>
-          <span className="text-xs text-[#a8a194]">genel şiddet</span>
-        </div>
-      </div>
+    <div
+      ref={ref}
+      role="slider"
+      tabIndex={disabled ? -1 : 0}
+      aria-label="Genel ışık şiddeti"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+      aria-valuetext={`%${value}`}
+      aria-disabled={disabled || undefined}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onKeyDown={onKeyDown}
+      className={`relative grid h-[168px] w-[168px] touch-none select-none place-items-center rounded-full shadow-[0_0_50px_oklch(0.75_0.16_65/.35)] outline-none focus-visible:ring-2 focus-visible:ring-[oklch(0.85_0.15_78)] focus-visible:ring-offset-4 focus-visible:ring-offset-[#15130f] ${
+        disabled ? "cursor-not-allowed opacity-70" : "cursor-grab active:cursor-grabbing"
+      }`}
+      style={{
+        background: `conic-gradient(from ${KNOB_START_DEG}deg, oklch(0.7 0.18 52), oklch(0.86 0.15 80) ${value}%, rgba(255,255,255,.08) ${value}% 100%)`,
+      }}
+    >
+      {/* Tutamaç: değerin bulunduğu noktada, halka bandının ortasında beyaz düğme */}
       {disabled ? null : (
-        <p className="max-w-[200px] text-center text-[11.5px] leading-snug text-[#a8a194]">
-          Halkayı tutup çevirin: <span className="text-[#d8d2c6]">saat yönü ↻ artırır</span>, tersi ↺
-          azaltır.
-        </p>
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ transform: `rotate(${KNOB_START_DEG + value * 3.6}deg)` }}
+        >
+          <span className="absolute left-1/2 top-[-3px] h-5 w-5 -translate-x-1/2 rounded-full border-[3px] border-[oklch(0.77_0.16_68)] bg-white shadow-[0_1px_4px_rgba(0,0,0,.35),0_0_12px_oklch(0.77_0.16_68/.6)]" />
+        </span>
       )}
+      <div className="pointer-events-none flex h-[140px] w-[140px] flex-col items-center justify-center gap-0.5 rounded-full bg-[#17150f]">
+        <span className="font-mono text-[40px] font-semibold tracking-[-0.04em] text-[oklch(0.88_0.13_80)]">
+          %{value}
+        </span>
+        <span className="text-xs text-[#a8a194]">genel şiddet</span>
+      </div>
     </div>
   );
 }
