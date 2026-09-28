@@ -7,8 +7,21 @@ import type { Viewer } from "@/types/admin";
 
 export type MenuLink = { href: string; label: string };
 
-/** Sağ üst kullanıcı menüsü: kim olduğu, hızlı bağlantılar ve çıkış. */
-export function UserMenu({ user, links }: { user: Viewer; links: MenuLink[] }) {
+/**
+ * Kullanıcı menüsü: kim olduğu, hızlı bağlantılar ve çıkış. Üst çubukta
+ * (varsayılan) sağa yaslı aşağı açılır; kenar çubuğunda `placement="up"` ile
+ * tam genişlik düğme olarak yukarı açılır.
+ */
+export function UserMenu({
+  user,
+  links,
+  placement = "down",
+}: {
+  user: Viewer;
+  links: MenuLink[];
+  placement?: "down" | "up";
+}) {
+  const up = placement === "up";
   const [open, setOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -44,15 +57,28 @@ export function UserMenu({ user, links }: { user: Viewer; links: MenuLink[] }) {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-xl border border-border bg-panel-2 py-1 pl-1 pr-2.5 text-left transition-colors hover:border-glow/40"
+        className={`flex items-center gap-2 rounded-xl text-left transition-colors ${
+          up
+            ? "w-full px-2 py-1.5 hover:bg-panel-2"
+            : "border border-border bg-panel-2 py-1 pl-1 pr-2.5 hover:border-glow/40"
+        }`}
       >
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-glow/20 font-display text-xs font-bold text-text">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-glow/20 text-xs font-bold text-text">
           {initials}
         </span>
-        <span className="hidden max-w-[10rem] truncate text-sm font-medium text-text sm:block">
-          {user.displayName || user.username}
-        </span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden className="text-muted">
+        {up ? (
+          <span className="flex min-w-0 flex-1 flex-col leading-tight">
+            <span className="truncate text-[13px] font-semibold text-text">
+              {user.displayName || user.username}
+            </span>
+            <span className="truncate text-[11.5px] text-muted">{ROLE_LABELS[user.role]}</span>
+          </span>
+        ) : (
+          <span className="hidden max-w-[10rem] truncate text-sm font-medium text-text sm:block">
+            {user.displayName || user.username}
+          </span>
+        )}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden className={`shrink-0 text-muted ${up ? "rotate-180" : ""}`}>
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
@@ -60,7 +86,9 @@ export function UserMenu({ user, links }: { user: Viewer; links: MenuLink[] }) {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-30 mt-2 w-60 overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
+          className={`absolute z-30 w-60 overflow-hidden rounded-xl border border-border bg-panel shadow-xl ${
+            up ? "bottom-full left-0 mb-2" : "right-0 mt-2"
+          }`}
         >
           <div className="border-b border-border px-4 py-3">
             <p className="truncate text-sm font-semibold text-text">{user.displayName || user.username}</p>

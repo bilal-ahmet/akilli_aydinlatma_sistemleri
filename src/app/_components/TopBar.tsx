@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserMenu, type MenuLink } from "./UserMenu";
 import type { Viewer } from "@/types/admin";
@@ -51,17 +52,12 @@ export function TopBar({
     : "";
 
   return (
-    <header className="sticky top-0 z-20 border-b border-border/70 bg-bg/80 backdrop-blur-md">
+    <header className="sticky top-0 z-20 border-b border-border/70 bg-panel/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <Link href={homeHref} className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid h-9 w-9 place-items-center rounded-xl bg-glow/15 text-lg shadow-[0_0_18px_-4px_var(--glow)]"
-          >
-            💡
-          </span>
+          <BrandMark />
           <div className="leading-tight">
-            <p className="font-display text-base font-bold tracking-tight text-text">
+            <p className="text-base font-bold tracking-tight text-text">
               Fener
             </p>
             <p className="truncate text-[11px] text-muted">{subtitle}</p>

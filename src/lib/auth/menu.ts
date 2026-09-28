@@ -28,3 +28,15 @@ export function menuLinksFor(user: SessionUser, customerSlug?: string): MenuLink
   links.push({ href: "/hesap", label: "Hesabım ve şifre" });
   return links;
 }
+
+/**
+ * Müşteri panelinin kenar çubuğundaki kullanıcı menüsü. Panel sayfaları
+ * (Kullanıcılar dahil) zaten kenar çubuğunun gezinmesinde olduğu için burada
+ * yalnızca panel dışı bağlantılar kalır.
+ */
+export function panelMenuLinks(user: SessionUser): MenuLink[] {
+  const links: MenuLink[] = [];
+  if (user.role === "admin") links.push({ href: "/admin", label: "Müşteriler" });
+  links.push({ href: "/hesap", label: "Hesabım ve şifre" });
+  return links;
+}

@@ -118,6 +118,15 @@ export interface OpenFault {
   startedAt: string;
 }
 
+/**
+ * `GET /api/faults?days=N` satırı: süren arızalara ek olarak son N günde
+ * çözülmüş olanlar. `resolvedAt` null → sürüyor.
+ */
+export interface FaultRecord extends OpenFault {
+  id: number;
+  resolvedAt: string | null;
+}
+
 /** Bir ESP'ye bağlı tek bağımsız aydınlatma (DALI kanalı). */
 export interface Fixture {
   id: string;
@@ -151,6 +160,23 @@ export interface LiveSummary {
   ledVoltageEstimated: boolean;
   /** Açık arızası olan farklı lamba sayısı (cihaz seviyesi kayıtlar hariç). */
   faultyLamps: number;
+  /**
+   * Cihaz (MAC) başına aynı ölçümler. Son 10 dakikada rapor vermemiş cihaz
+   * burada YOKTUR — "veri bekleniyor" ayrımı buna dayanır.
+   */
+  devices: Record<string, DeviceMeasure>;
+}
+
+/** Tek cihazın ölçülmüş özeti — `LiveSummary` ile aynı toplama kuralları. */
+export interface DeviceMeasure {
+  powerW: number | null;
+  loadPowerW: number | null;
+  /** Lamba ortalaması — gerilim toplanmaz. */
+  ledVoltageV: number | null;
+  ledVoltageLamps: number;
+  ledVoltageEstimated: boolean;
+  /** Son 10 dakikada rapor veren lamba (DALI adresi) sayısı. */
+  lamps: number;
 }
 
 export interface SystemSummary {

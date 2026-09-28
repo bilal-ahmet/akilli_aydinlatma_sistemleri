@@ -60,8 +60,12 @@ aittir** (`zones.customer_id`); cihazın müşterisi bölgesinden türetilir.
 
 **Sayfalar:** `/login` · `/` (role göre yönlendirir) · `/admin` (müşteri kartları,
 global acil komut) · `/admin/customers/<slug>` (bilgiler, pasifleştirme,
-kullanıcılar, denetim kaydı) · `/c/<slug>` (dashboard) · `/c/<slug>/kullanicilar`
-(manager/admin) · `/hesap` (şifre değiştirme; ilk girişte zorunlu).
+kullanıcılar, denetim kaydı) · `/hesap` (şifre değiştirme; ilk girişte zorunlu).
+
+Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
+`/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
+detay) · `/c/<slug>/cihazlar` · `/c/<slug>/arizalar` · `/c/<slug>/efektler` ·
+`/c/<slug>/kullanicilar` (manager/admin).
 
 **Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
 
@@ -89,6 +93,16 @@ kullanıcılar, denetim kaydı) · `/c/<slug>` (dashboard) · `/c/<slug>/kullani
 (`src/app/_lib/panel.tsx`). Panel içindeki her `fetch` `useApi()` ile
 `?customer=<slug>` ekler; `useLiveStatus` akışı müşteriye kapsamlar.
 `canWrite=false` iken kontroller pasif gösterilir (asıl yetki sunucuda).
+
+Layout ayrıca bölgeleri DB'den okuyup **`LightingProvider`**'a verir
+(`src/app/_lib/lighting.tsx`): bölgeler, cihazlar, ölçüm özeti, süren arızalar
+ve tüm komutlar (optimistic + seq/pending koruması, "Tüm Sistem" master'ı)
+burada, tek yerde yaşar — sayfalar arası gezinmede state ve SSE aboneliği
+kaybolmaz. Diyaloglar (bölge/cihaz formu, silme onayı, cihaz paneli, efekt
+seçici) `DialogsProvider`'dadır (`_components/PanelDialogs.tsx`); sayfalar
+`useDialogs()` ile açar. Sayfa görünümleri `_components/views/*View.tsx`.
+Açık sorun sayısı (kenar çubuğu rozeti = Genel Bakış = Arızalar) tek
+fonksiyondan: `_lib/alerts.ts → openAlerts` (lamba arızaları + komut hataları).
 
 **İlk admin:** `npm run auth:create-admin -- <kullanici>` (şifre
 `ADMIN_PASSWORD` env'inden ya da terminalden; `--reset` ile sıfırlama).
@@ -426,7 +440,15 @@ son 10 dakika) toplar: çekilen güç, yük gücü, ortalama LED gerilimi (**ger
 toplanmaz**) ve `fault_events`'ten açık arızası olan **farklı lamba** sayısı.
 Ölçüm yoksa `powerW: null` döner ve dashboard direk sayısına dayalı tahmine
 düşer. Değerler ham `raw` bloğundan `lib/d4i.ts` ile okunur — panelle aynı
-doğrulanmış → tahmini → ham kuralı.
+doğrulanmış → tahmini → ham kuralı. Yanıt ayrıca `devices` (MAC → aynı
+ölçümler) kırılımını taşır; cihaz tablosu ve bölge detayı (istemcide
+cihazlarından toplanır) bunu kullanır. Son 10 dk'da rapor vermeyen cihaz
+kırılımda yoktur → panelde "Veri bekleniyor".
+
+```
+GET /api/faults             → süren lamba arızaları (cihaz + bölge bilgisiyle)
+GET /api/faults?days=30     → + son N günde (1-90) çözülenler (id, resolvedAt)
+```
 
 ### Dashboard Real-time (SSE)
 
@@ -747,12 +769,13 @@ NEXT_PUBLIC_SSE_URL=/api/events
 │   │   ├── login/ · hesap/               # giriş, şifre değiştirme
 │   │   ├── admin/                        # müşteri listesi, müşteri ayarları
 │   │   ├── c/[customer]/                 # müşteri dashboard'u (layout: PanelProvider) + kullanicilar/
-│   │   ├── _components/                  # UI (DashboardClient, ZoneCard, ...)
+│   │   ├── _components/                  # UI (PanelShell, PanelDialogs, views/*View, ...)
 │   │   │   ├── ErrorToasts.tsx           # cihaz komut hatası bildirimleri (SSE)
 │   │   │   ├── DeviceControlModal.tsx    # cihaz paneli — Kontrol/Telemetri/Arıza geçmişi sekmeleri
 │   │   │   ├── D4iPanel.tsx              # sürücü/LED telemetri detayı
 │   │   │   ├── FaultHistory.tsx          # arıza geçmişi (fault_events)
 │   │   ├── _lib/
+│   │   │   ├── lighting.tsx              # LightingProvider: panel state + komutlar
 │   │   │   ├── useLiveStatus.ts          # SSE (EventSource) hook
 │   │   │   ├── mockData.ts / types.ts / format.ts
 │   │   └── api/

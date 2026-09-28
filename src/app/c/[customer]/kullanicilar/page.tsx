@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { UserManager } from "@/app/_components/UserManager";
 import { requireCustomerAccess } from "@/lib/auth/dal";
@@ -16,10 +15,7 @@ export default async function CustomerUsersPage({
   if (user.role === "viewer") notFound();
 
   return (
-    <div className="flex flex-col gap-4">
-      <Link href={`/c/${customer.slug}`} className="text-xs font-medium text-accent hover:underline">
-        ← Dashboard
-      </Link>
+    <div className="flex max-w-[1100px] flex-col gap-4">
       <UserManager customerSlug={customer.slug} currentUserId={user.id} canManage />
     </div>
   );

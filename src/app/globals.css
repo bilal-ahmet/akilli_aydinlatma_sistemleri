@@ -3,66 +3,84 @@
 /* Manuel koyu tema: <html class="dark"> ile yönetilir (sistem değil) */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ---- Tasarım tokenları (Tailwind utility'lerine açılır) ---- */
+/* ---- Tasarım tokenları (Tailwind utility'lerine açılır) ----
+   Palet "Fener Dashboard v2" tasarımından. Eski utility adları (text, muted,
+   border, glow, accent, danger) korunur ve yeni palete bağlanır — böylece
+   D4i paneli, admin ve giriş sayfaları da aynı görünümü alır. */
 @theme inline {
   --color-bg: var(--bg);
   --color-panel: var(--panel);
-  --color-panel-2: var(--panel-2);
-  --color-border: var(--border);
-  --color-text: var(--text);
-  --color-muted: var(--muted);
-  --color-glow: var(--glow);
-  --color-glow-soft: var(--glow-soft);
-  --color-accent: var(--accent);
-  --color-danger: var(--danger);
+  --color-panel-2: var(--panel2);
+  --color-track: var(--track);
+  --color-border: var(--line);
+  --color-border-strong: var(--line2);
+  --color-text: var(--ink);
+  --color-ink-2: var(--ink2);
+  --color-muted: var(--ink3);
+  --color-glow: var(--acc);
+  --color-glow-soft: var(--acc-hi);
+  --color-accent: var(--acc-ink);
+  --color-accent-soft: var(--acc-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-danger: var(--bad);
+  --color-danger-soft: var(--bad-soft);
 
-  --font-sans: var(--font-inter);
-  --font-display: var(--font-space-grotesk);
+  --font-sans: var(--font-onest);
+  --font-display: var(--font-onest);
   --font-mono: var(--font-jetbrains-mono);
 }
 
-/* ---- Gündüz (varsayılan) ---- */
+/* ---- Açık tema (varsayılan) ---- */
 :root {
-  --bg: #eef1f6;
+  --bg: #f7f6f3;
   --panel: #ffffff;
-  --panel-2: #f4f6fa;
-  --border: #dce2ec;
-  --text: #141a28;
-  --muted: #5b6680;
-
-  --glow: #ffb23e;
-  --glow-soft: #ffd18a;
-  --accent: #d9810a; /* gündüzde kontrastlı amber (metin/çizgi) */
-  --danger: #e0533d;
-
-  --sky: radial-gradient(
-    1200px 600px at 50% -10%,
-    #f6e6c4 0%,
-    #eef1f6 45%,
-    #eef1f6 100%
-  );
+  --panel2: #f2f0ec;
+  --track: #e9e6e0;
+  --line: #e8e5df;
+  --line2: #d6d2ca;
+  --ink: #1d1c1a;
+  --ink2: #58554f;
+  /* Tasarımdaki #8a867e küçük metinde AA'nın altında kalıyordu; bir ton koyu. */
+  --ink3: #75716a;
+  --acc: oklch(0.77 0.16 68);
+  --acc-hi: oklch(0.84 0.15 78);
+  --acc-lo: oklch(0.71 0.18 55);
+  --acc-ink: oklch(0.52 0.13 60);
+  --acc-soft: oklch(0.96 0.035 80);
+  --ok: oklch(0.58 0.14 150);
+  --ok-soft: oklch(0.95 0.04 150);
+  --bad: oklch(0.58 0.19 27);
+  --bad-soft: oklch(0.95 0.035 27);
+  --warn: oklch(0.6 0.13 75);
+  --scrim: rgba(29, 28, 26, 0.38);
+  --bg-glow: oklch(0.93 0.07 80 / 0.75);
 }
 
-/* ---- Gece ---- */
+/* ---- Koyu tema ---- */
 .dark {
-  --bg: #0b1020;
-  --panel: #121a2e;
-  --panel-2: #0f1626;
-  --border: #1f2b45;
-  --text: #e6eaf2;
-  --muted: #8590a8;
-
-  --glow: #ffb23e;
-  --glow-soft: #ffd18a;
-  --accent: #ffc164;
-  --danger: #ff6b52;
-
-  --sky: radial-gradient(
-    1100px 700px at 80% -15%,
-    #16213c 0%,
-    #0b1020 55%,
-    #070b16 100%
-  );
+  --bg: #131210;
+  --panel: #1b1a17;
+  --panel2: #23221e;
+  --track: #2f2d28;
+  --line: #2c2a25;
+  --line2: #44413a;
+  --ink: #f3f1ec;
+  --ink2: #b5b0a6;
+  --ink3: #8d887e;
+  --acc: oklch(0.77 0.16 68);
+  --acc-hi: oklch(0.84 0.15 78);
+  --acc-lo: oklch(0.71 0.18 55);
+  --acc-ink: oklch(0.83 0.13 75);
+  --acc-soft: oklch(0.29 0.045 70);
+  --ok: oklch(0.74 0.14 150);
+  --ok-soft: oklch(0.28 0.04 150);
+  --bad: oklch(0.7 0.17 27);
+  --bad-soft: oklch(0.28 0.05 27);
+  --warn: oklch(0.8 0.13 80);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --bg-glow: oklch(0.4 0.09 62 / 0.38);
 }
 
 html {
@@ -73,16 +91,123 @@ html.dark {
 }
 
 body {
-  background: var(--sky);
-  background-attachment: fixed;
-  color: var(--text);
-  font-family: var(--font-inter), system-ui, sans-serif;
-  /* Gündüz <-> gece yumuşak geçiş */
+  background:
+    radial-gradient(1000px 520px at 72% -12%, var(--bg-glow), transparent 70%) fixed,
+    var(--bg);
+  color: var(--ink);
+  font-family: var(--font-onest), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Açık <-> koyu yumuşak geçiş */
   transition: background-color 0.5s ease, color 0.4s ease;
 }
 
-/* İmza "ışık dökülmesi": parlaklıkla orantılı amber radyal ışıma.
-   --lvl (0–1) ve --spread bileşenler tarafından inline atanır. */
+@layer components {
+  /* Birincil eylem: amber degrade + ışıma ("+ Yeni Cihaz", "Başlat"). */
+  .btn-glow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, var(--acc-hi), var(--acc-lo));
+    color: #1d1c1a;
+    font-weight: 600;
+    box-shadow: 0 8px 22px oklch(0.72 0.17 58 / 0.38);
+    transition: filter 0.15s ease, opacity 0.15s ease;
+  }
+  .btn-glow:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+  .btn-glow:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* İkincil eylem: çerçeveli panel düğmesi ("Düzenle", "İptal"). */
+  .btn-line {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 10px;
+    border: 1px solid var(--line2);
+    background: var(--panel);
+    color: var(--ink2);
+    font-weight: 500;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+  .btn-line:hover:not(:disabled) {
+    color: var(--ink);
+    border-color: var(--ink3);
+  }
+  .btn-line:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Form alanı (44px, odakta amber çerçeve + halka). */
+  .field {
+    width: 100%;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--line2);
+    background: var(--panel);
+    color: var(--ink);
+    padding: 0 14px;
+    font-size: 14.5px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field::placeholder {
+    color: var(--ink3);
+  }
+  .field:focus-visible {
+    border-color: var(--acc);
+    box-shadow: 0 0 0 1px var(--acc), 0 0 0 5px var(--acc-soft);
+  }
+  .field:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .field-label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  /* Metrik kartı: üstte amber çizgi, panel degradesi. */
+  .stat-card {
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    border-top: 2px solid oklch(0.77 0.16 68 / 0.7);
+    background: linear-gradient(180deg, var(--panel2), var(--panel));
+    padding: 18px 20px;
+  }
+
+  /* Tablo başlık satırı. */
+  .table-head {
+    background: var(--panel2);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Bölüm etiketi ("AÇIK · 0", "GEÇMİŞ · SON 30 GÜN"). */
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+}
+
+/* "Işık dökülmesi": parlaklıkla orantılı amber radyal ışıma (giriş, admin
+   kartları). --lvl (0–1) ve --spread bileşenler tarafından inline atanır. */
 .glow-spill {
   position: relative;
   isolation: isolate;
@@ -95,7 +220,7 @@ body {
   border-radius: inherit;
   background: radial-gradient(
     closest-side,
-    color-mix(in oklab, var(--glow) 100%, white calc((1 - var(--lvl, 0)) * 35%))
+    color-mix(in oklab, var(--acc) 100%, white calc((1 - var(--lvl, 0)) * 35%))
       calc(var(--lvl, 0) * 55%),
     transparent 100%
   );
@@ -105,15 +230,15 @@ body {
   pointer-events: none;
 }
 
-/* ---- Şiddet slider'ı (input[type=range]) ---- */
+/* ---- Şiddet slider'ı (input[type=range]) ----
+   Dolu kısım amber degrade + ışıma, başparmak beyaz + amber çerçeve. */
 .brightness-range {
-  --track-h: 100%;
   background: linear-gradient(
       to right,
-      var(--glow) 0%,
-      var(--glow-soft) var(--pct, 0%),
-      var(--border) var(--pct, 0%),
-      var(--border) 100%
+      var(--acc-lo) 0%,
+      var(--acc-hi) var(--pct, 0%),
+      var(--track) var(--pct, 0%),
+      var(--track) 100%
     )
     no-repeat;
   border-radius: 9999px;
@@ -121,34 +246,45 @@ body {
 .brightness-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  height: 18px;
-  width: 18px;
+  height: 22px;
+  width: 22px;
   border-radius: 9999px;
-  background: var(--glow);
-  border: 2px solid var(--panel);
-  box-shadow: 0 0 10px var(--glow), 0 1px 3px rgba(0, 0, 0, 0.4);
+  background: #fff;
+  border: 3px solid var(--acc);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18), 0 0 12px oklch(0.77 0.16 68 / 0.45);
   cursor: pointer;
   transition: box-shadow 0.2s ease, transform 0.1s ease;
 }
 .brightness-range:active::-webkit-slider-thumb {
-  transform: scale(1.12);
+  transform: scale(1.1);
 }
 .brightness-range::-moz-range-thumb {
   height: 16px;
   width: 16px;
   border-radius: 9999px;
-  background: var(--glow);
-  border: 2px solid var(--panel);
-  box-shadow: 0 0 10px var(--glow), 0 1px 3px rgba(0, 0, 0, 0.4);
+  background: #fff;
+  border: 3px solid var(--acc);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   cursor: pointer;
 }
 .brightness-range:disabled::-webkit-slider-thumb {
-  background: var(--muted);
+  border-color: var(--ink3);
   box-shadow: none;
 }
 .brightness-range:disabled::-moz-range-thumb {
-  background: var(--muted);
+  border-color: var(--ink3);
   box-shadow: none;
+}
+/* Koyu "Tüm sistem" kartında boş iz koyu kalsın. */
+.brightness-range.on-dark {
+  background: linear-gradient(
+      to right,
+      var(--acc-lo) 0%,
+      var(--acc-hi) var(--pct, 0%),
+      rgba(255, 255, 255, 0.1) var(--pct, 0%),
+      rgba(255, 255, 255, 0.1) 100%
+    )
+    no-repeat;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,8 +1,8 @@
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { ok, fail } from "@/lib/api/respond";
 import { authorizeScope } from "@/lib/auth/guard";
-import type { OpenFault } from "@/app/_lib/types";
+import type { FaultRecord, OpenFault } from "@/app/_lib/types";
 
 export const runtime = "nodejs";
 
@@ -15,13 +15,28 @@ export const runtime = "nodejs";
  * Yalnızca `channel` taşıyan (lamba/donanım) arızalar döner; cihaz seviyesi
  * komut hataları (`channel = NULL`) hariç tutulur — onlar zaten
  * `devices.last_error` üzerinden "komut hatası" olarak gösteriliyor.
+ *
+ * `?days=N` (1-90) → arızalar sayfasının geçmişi: süren arızalara ek olarak
+ * son N günde ÇÖZÜLMÜŞ olanlar da `FaultRecord` (id + resolvedAt) olarak döner.
  */
+const MAX_HISTORY_DAYS = 90;
+
 export async function GET(req: Request) {
   const ctx = await authorizeScope(req, "read");
   if (ctx instanceof Response) return ctx;
+
+  const daysParam = new URL(req.url).searchParams.get("days");
+  const days = daysParam === null ? null : Number(daysParam);
+  if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_HISTORY_DAYS)) {
+    return fail(`days 1-${MAX_HISTORY_DAYS} arası bir tam sayı olmalı`, 422);
+  }
+  const since = days === null ? null : new Date(Date.now() - days * 86_400_000);
+
   try {
     const rows = await db
       .select({
+        id: schema.faultEvents.id,
+        resolvedAt: schema.faultEvents.resolvedAt,
         deviceId: schema.faultEvents.deviceId,
         channel: schema.faultEvents.channel,
         code: schema.faultEvents.code,
@@ -37,7 +52,9 @@ export async function GET(req: Request) {
       .where(
         and(
           eq(schema.zones.customerId, ctx.customer.id),
-          isNull(schema.faultEvents.resolvedAt),
+          since
+            ? or(isNull(schema.faultEvents.resolvedAt), gt(schema.faultEvents.resolvedAt, since))
+            : isNull(schema.faultEvents.resolvedAt),
           isNotNull(schema.faultEvents.channel),
         ),
       )
@@ -53,7 +70,13 @@ export async function GET(req: Request) {
       detail: r.detail,
       startedAt: r.startedAt.toISOString(),
     }));
-    return ok(faults);
+    if (!since) return ok(faults);
+    const history: FaultRecord[] = faults.map((f, i) => ({
+      ...f,
+      id: rows[i].id,
+      resolvedAt: rows[i].resolvedAt ? rows[i].resolvedAt!.toISOString() : null,
+    }));
+    return ok(history);
   } catch (err) {
     return fail("Arızalar okunamadı", 500, String(err));
   }
