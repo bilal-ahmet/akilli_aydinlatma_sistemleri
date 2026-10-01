@@ -70,6 +70,41 @@ export const users = pgTable(
   ],
 );
 
+/**
+ * Mobil cihaz oturumları — bir satır = bir cihazdaki giriş. Refresh token
+ * opak rastgele bir değerdir; yalnızca sha256 özeti saklanır. Her refresh'te
+ * döner (rotasyon): yeni özet `refresh_hash`'e, eskisi `prev_refresh_hash`'e
+ * geçer. Eski token kısa tolerans penceresi dışında tekrar gelirse token
+ * çalınmış sayılır ve oturum iptal edilir (bkz. lib/auth/mobileSession.ts).
+ *
+ * `token_version` oturum açıldığındaki kullanıcı sürümüdür; şifre değişimi
+ * ya da sıfırlama `users.token_version`'ı artırınca refresh reddedilir.
+ * İleride push bildirimi için cihaz token'ı da bu satıra bağlanır.
+ */
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    refreshHash: varchar("refresh_hash", { length: 64 }).notNull().unique(),
+    prevRefreshHash: varchar("prev_refresh_hash", { length: 64 }),
+    tokenVersion: integer("token_version").notNull(),
+    deviceName: varchar("device_name", { length: 100 }),
+    platform: varchar("platform", { length: 20 }), // android | ios
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Son rotasyon anı — eski token'ın tolerans penceresi buna göre hesaplanır. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("idx_auth_sessions_user_id").on(t.userId),
+    index("idx_auth_sessions_prev_hash").on(t.prevRefreshHash),
+  ],
+);
+
 export const zones = pgTable("zones", {
   id: uuid("id").primaryKey().defaultRandom(),
   // [uzantı] MQTT topic ve API route'larında kullanılan stabil public id.
@@ -278,6 +313,7 @@ export const commands = pgTable("commands", {
 
 export type CustomerRow = typeof customers.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
+export type AuthSessionRow = typeof authSessions.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;

@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { CUSTOMER_ROLES, PASSWORD_MAX, PASSWORD_MIN, USERNAME_RE } from "@/lib/auth/roles";
+import {
+  CUSTOMER_ROLES,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
+  USERNAME_RE,
+  type Role,
+} from "@/lib/auth/roles";
 
 /** Giriş, hesap, müşteri ve kullanıcı yönetimi gövde şemaları. */
 
@@ -7,6 +13,48 @@ export const loginSchema = z.object({
   username: z.string().trim().min(1, "Kullanıcı adı gerekli").max(64),
   password: z.string().min(1, "Şifre gerekli").max(PASSWORD_MAX),
 });
+
+// ── Mobil oturum (Bearer) ─────────────────────────────────────
+export const MOBILE_PLATFORMS = ["android", "ios"] as const;
+
+/** POST /api/auth/token — mobil giriş. */
+export const tokenRequestSchema = loginSchema.extend({
+  deviceName: z.string().trim().max(100).optional(),
+  platform: z.enum(MOBILE_PLATFORMS).optional(),
+});
+
+/** POST /api/auth/refresh */
+export const refreshRequestSchema = z.object({
+  refreshToken: z.string().min(1).max(200),
+});
+
+/** POST /api/auth/logout — mobil, access token'ı süresi dolmuşsa refresh ile iptal eder. */
+export const logoutRequestSchema = z.object({
+  refreshToken: z.string().min(1).max(200).optional(),
+});
+
+/** Mobil token çifti. Tarihler ISO (UTC). */
+export type TokenPair = {
+  accessToken: string;
+  accessExpiresAt: string;
+  refreshToken: string;
+  refreshExpiresAt: string;
+};
+
+/**
+ * Oturumdaki kullanıcının istemciye verilen özeti (`GET /api/auth/me`).
+ * Mobil rol/ekran kararlarını YALNIZCA bundan verir; token'ı çözmez.
+ */
+export type Me = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  role: Role;
+  canWrite: boolean;
+  mustChangePassword: boolean;
+  /** Müşteri kullanıcısının müşterisi; admin için null. */
+  customer: { id: string; slug: string; name: string; isActive: boolean } | null;
+};
 
 const password = z
   .string()

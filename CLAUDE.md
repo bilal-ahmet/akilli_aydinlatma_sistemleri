@@ -89,6 +89,23 @@ detay) · `/c/<slug>/cihazlar` · `/c/<slug>/arizalar` · `/c/<slug>/efektler` �
 - Şifre değişimi/sıfırlama `token_version`'ı artırır → eski oturumlar düşer.
   Pasif kullanıcı/müşteri bir sonraki istekte düşer (SSE akışı heartbeat'te).
 
+**Mobil oturum (Bearer, Flutter uygulaması `akilli_aydinlatma_mobil`):**
+
+- İki token türü `typ` claim'iyle ayrılır ve birbirinin yerine GEÇMEZ:
+  `web` (çerez, 7 gün) ve `access` (Bearer, **15 dk**, `sid` = `auth_sessions.id`).
+  `typ`'siz eski çerezler `web` sayılır.
+- `readSession()` (`lib/auth/session.ts`) TEK çözümleyicidir: önce
+  `Authorization: Bearer`, yoksa çerez. Başlık var ama geçersizse çereze
+  düşmez. Guard'lar, DAL ve SSE bunu kullandığı için hepsi iki yolu da kabul eder.
+- Refresh token opak, 30 gün, **her kullanımda döner** (`auth_sessions`, yalnızca
+  sha256 özeti). Rotasyondan sonra eski token 2 dk tolerans penceresinde
+  kabul edilir (mobilde kaybolan yanıt), sonrasında gelirse çalınmış sayılır ve
+  oturum iptal edilir (`auth.refresh_reuse`). Kod: `lib/auth/mobileSession.ts`.
+- İptal: şifre değişimi/sıfırlama `token_version` ile hem access'i hem refresh'i
+  düşürür. Çıkış o cihazın satırını iptal eder ve `lib/auth/revocation.ts`
+  (bellek içi) elde kalan access token'ı anında düşürür.
+- Web ve mobil giriş aynı doğrulamayı kullanır: `lib/auth/credentials.ts → authenticate`.
+
 **İstemci:** `/c/[customer]/layout.tsx` `PanelProvider` kurar
 (`src/app/_lib/panel.tsx`). Panel içindeki her `fetch` `useApi()` ile
 `?customer=<slug>` ekler; `useLiveStatus` akışı müşteriye kapsamlar.
@@ -350,10 +367,18 @@ rafine edilir. `channels` yoksa mevcut tek-lamba davranışı korunur.
 ### Giriş ve Hesap
 
 ```
-POST /api/auth/login      { username, password }  → çerez + { redirect }
-POST /api/auth/logout
-POST /api/auth/password   { currentPassword, newPassword }
+POST /api/auth/login      { username, password }  → çerez + { redirect }      (web)
+POST /api/auth/logout     { refreshToken? }       → çerezi siler; Bearer/refresh ise o mobil oturumu iptal eder
+POST /api/auth/password   { currentPassword, newPassword }  → web: yeni çerez · mobil: { tokens }
+GET  /api/auth/me                                 → Me { id, username, displayName, role, canWrite,
+                                                         mustChangePassword, customer: {id,slug,name,isActive}|null }
+POST /api/auth/token      { username, password, deviceName?, platform? }   (mobil)
+                          → { accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, user: Me }
+POST /api/auth/refresh    { refreshToken }        → yeni çift + user (rotasyon)          (mobil)
 ```
+
+`/api/auth/login`, `/logout`, `/token`, `/refresh` guard'sızdır ve proxy'de public'tir.
+`/api/auth/me` şifre değiştirmesi gereken kullanıcıya da açıktır.
 
 ### Yönetim (admin)
 
@@ -460,6 +485,20 @@ GET /api/events      → Backend'in MQTT'den aldığı status mesajlarını push
 
 Frontend tarafı: `src/app/_lib/useLiveStatus.ts` (`EventSource`). Backend köprüsü: `src/lib/events.ts` (in-memory EventEmitter). **Bu yüzden backend tek instance çalışmalı** (bkz. Kurallar #8).
 
+**Arıza alan olayları (domain events):** `lib/domainEvents.ts` ayrı bir bus'tır.
+Arıza epizodu açılınca/kapanınca `fault.opened` / `fault.resolved` yayınlanır;
+TEK yayın noktası `lib/faultLog.ts → syncFaultEvents` (DB yazımından sonra).
+SSE bunları **isimli olay** olarak iletir:
+
+```
+event: fault
+data: {"type":"fault.opened","id":123,"deviceId":"A842E3123456","channel":2,"code":"lamp_failure","detail":null,"startedAt":"…","resolvedAt":null}
+```
+
+Tarayıcıdaki `EventSource.onmessage` isimli olayları almaz (web etkilenmez);
+mobil uygulama olay adına göre ayrıştırır. İleride push (FCM) göndericisi de
+bu bus'a abone olur — arıza koduna dokunulmaz.
+
 > **SSE tek başına yetmez.** Akış koptuğunda (proxy zaman aşımı, uyuyan sekme)
 > EventSource yeniden bağlanır ama **kaçırdığı olayları tekrar oynatmaz**. Bu
 > yüzden ana sayfadaki bölge kartları ve cihaz listesi `useReconcile` ile
@@ -496,6 +535,10 @@ CREATE TABLE users (
   last_login_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+`auth_sessions(id, user_id FK users ON DELETE CASCADE, refresh_hash UNIQUE,
+prev_refresh_hash, token_version, device_name, platform, created_at, last_used_at,
+expires_at, revoked_at)` — mobil cihaz oturumları (migration `0007_auth_sessions.sql`).
 
 Ayrıca: `retired_zone_slugs(slug PK, customer_id, retired_at)` — silinmiş bölge
 slug'ları, bir daha verilmez. `audit_log(id, at, user_id, username, customer_id,
@@ -749,11 +792,12 @@ NEXT_PUBLIC_SSE_URL=/api/events
 8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
 9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.
 10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar). Yetki kontrolü de DB'ye gitmez: tenancy index'i + JWT (`lib/auth/guard.ts`).
-11. **Her `/api/*` route'u guard ile başlar** (`authorize*`, `lib/auth/guard.ts`); yalnızca `/api/auth/login` ve `/api/auth/logout` hariç. `src/proxy.ts` iyimser kontroldür, tek başına güvenlik sınırı değildir. Yeni route eklerken guard'ı unutma.
+11. **Her `/api/*` route'u guard ile başlar** (`authorize*`, `lib/auth/guard.ts`); yalnızca `/api/auth/login`, `/api/auth/logout`, `/api/auth/token` ve `/api/auth/refresh` hariç. `src/proxy.ts` iyimser kontroldür, tek başına güvenlik sınırı değildir. Yeni route eklerken guard'ı unutma.
 12. **Her sorgu müşteriye göre süzülür.** Liste sorguları `zones.customer_id` (ya da `tenancy` → `customer.macs`) ile kapsamlanır; kayıtsız MAC'lerin telemetrisi hiçbir müşteriye görünmez. Canlı olaylar `customerId` ile etiketlenir, SSE route'u buna göre süzer.
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar.
 
 ---
 

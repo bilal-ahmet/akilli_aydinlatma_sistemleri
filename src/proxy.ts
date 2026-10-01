@@ -2,28 +2,57 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   SESSION_COOKIE,
   SESSION_RENEW_BELOW_S,
+  bearerToken,
   sessionCookieOptions,
   signSession,
+  verifyAccessToken,
   verifySessionToken,
 } from "@/lib/auth/token";
 
 /**
  * Proxy (Next.js 16'da eski `middleware`) — YALNIZCA iyimser kontrol:
- * çerezdeki token'ın imzasını doğrular, DB'ye/tenancy index'ine bakmaz.
+ * token imzasını doğrular, DB'ye/tenancy index'ine bakmaz.
  *
- *  - Token yok/geçersiz → sayfada /login'e yönlendir, /api'de 401.
- *  - Token'ın ömrü azaldıysa yenilenmiş çerezle devam et (kayan oturum).
+ *  - `/api/*` + `Authorization: Bearer` (mobil): access token imzası.
+ *    Geçersizse 401. Çerez yenilemesi yapılmaz.
+ *  - Aksi halde çerez: yok/geçersiz → sayfada /login'e yönlendir, /api'de 401.
+ *    Token'ın ömrü azaldıysa yenilenmiş çerezle devam et (kayan oturum).
  *
  * Asıl yetki (rol, müşteri, iptal) her sayfada `lib/auth/dal.ts`, her API
  * route'unda `lib/auth/guard.ts` ile yapılır — proxy tek başına güvenlik
  * sınırı DEĞİLDİR.
  */
 
-const PUBLIC_PATHS = new Set(["/login", "/api/auth/login"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/api/auth/login",
+  // Guard'sız: oturumu düşmüş istemci de çıkabilmeli (refresh token ile iptal).
+  "/api/auth/logout",
+  // Mobil: giriş ve token yenileme (access token yokken çağrılır).
+  "/api/auth/token",
+  "/api/auth/refresh",
+]);
+
+function unauthorized() {
+  return NextResponse.json({ ok: false, error: "Oturum gerekli" }, { status: 401 });
+}
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+
+  const isApi = pathname.startsWith("/api/");
+
+  const bearer = isApi ? bearerToken(req.headers.get("authorization")) : undefined;
+  if (bearer !== undefined) {
+    let ok = false;
+    try {
+      ok = (await verifyAccessToken(bearer)) !== null;
+    } catch {
+      ok = false; // SESSION_SECRET eksik
+    }
+    return ok ? NextResponse.next() : unauthorized();
+  }
 
   let claims = null;
   try {
@@ -33,9 +62,7 @@ export async function proxy(req: NextRequest) {
   }
 
   if (!claims) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ ok: false, error: "Oturum gerekli" }, { status: 401 });
-    }
+    if (isApi) return unauthorized();
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.search = pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
