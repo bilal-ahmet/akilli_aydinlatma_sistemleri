@@ -29,7 +29,8 @@ function check(name: string, cond: boolean, extra?: unknown) {
   }
 }
 
-type Session = { cookie: string };
+/** Web oturumu çerezle, mobil oturum Bearer access token ile taşınır. */
+type Session = { cookie?: string; bearer?: string };
 
 async function call(
   s: Session | null,
@@ -40,7 +41,8 @@ async function call(
   const res = await fetch(BASE + path, {
     method,
     headers: {
-      ...(s ? { cookie: s.cookie } : {}),
+      ...(s?.cookie ? { cookie: s.cookie } : {}),
+      ...(s?.bearer ? { authorization: `Bearer ${s.bearer}` } : {}),
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -68,12 +70,28 @@ async function changePassword(s: Session, current: string, next: string): Promis
   return { cookie: cookieFrom(r.res) };
 }
 
-/** SSE akışını `ms` boyunca dinler, gelen olayları döner. */
+type MobileTokens = {
+  accessToken: string;
+  refreshToken: string;
+  user: { role: string; canWrite: boolean; mustChangePassword: boolean; customer: { slug: string } | null };
+};
+
+/** Mobil giriş (`/api/auth/token`) — Bearer token çifti. */
+async function mobileLogin(username: string, password: string): Promise<MobileTokens> {
+  const r = await call(null, "POST", "/api/auth/token", { username, password, platform: "android", deviceName: "tenant-check" });
+  if (r.status !== 200) throw new Error(`mobil giriş başarısız ${username}: ${r.status} ${r.json?.error}`);
+  return r.json?.data as MobileTokens;
+}
+
+/** SSE akışını `ms` boyunca dinler, gelen (isimsiz) olayları döner. */
 async function collectEvents(s: Session, customer: string, ms: number): Promise<Record<string, unknown>[]> {
   const ctrl = new AbortController();
   const events: Record<string, unknown>[] = [];
   const res = await fetch(`${BASE}/api/events?customer=${customer}`, {
-    headers: { cookie: s.cookie },
+    headers: {
+      ...(s.cookie ? { cookie: s.cookie } : {}),
+      ...(s.bearer ? { authorization: `Bearer ${s.bearer}` } : {}),
+    },
     signal: ctrl.signal,
   });
   if (!res.body) return events;
@@ -102,6 +120,11 @@ async function collectEvents(s: Session, customer: string, ms: number): Promise<
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Bölge listesi yanıtından ilk bölgenin slug'ı. */
+function firstZoneSlug(r: { json: { data?: unknown } | null }): string {
+  return ((r.json?.data as { id: string }[] | undefined) ?? [])[0]?.id ?? "";
+}
 
 async function main() {
   if (!ADMIN_USER || !ADMIN_PASS) {
@@ -140,6 +163,7 @@ async function main() {
   for (const [slug, username, role] of [
     [A, `a-mgr-${tag}`, "manager"],
     [A, `a-view-${tag}`, "viewer"],
+    [A, `a-mob-${tag}`, "manager"],
     [B, `b-mgr-${tag}`, "manager"],
   ] as const) {
     const u = await call(admin, "POST", `/api/customers/${slug}/users`, { username, role, password: pw });
@@ -201,6 +225,66 @@ async function main() {
   check('A akışı kendi "Tüm Sistem" olayını aldı', evA.some((e) => e.scope === "all" && e.brightness === 43));
   check("B akışına A'nın hiçbir olayı düşmedi", evB.length === 0, evB);
   check("olaylar customerId taşımaz", evA.every((e) => !("customerId" in e)));
+
+  console.log("\n[5b] Mobil oturum (Bearer)");
+  const mobUser = `a-mob-${tag}`;
+  const mob = await mobileLogin(mobUser, pw);
+  check("mobil giriş: şifre değiştirme zorunlu işaretli", mob.user.mustChangePassword === true);
+  check("mobil giriş: müşteri slug'ı yanıtta", mob.user.customer?.slug === A, mob.user);
+  let bearer: Session = { bearer: mob.accessToken };
+  check("şifre değiştirmeden Bearer API → 403", (await call(bearer, "GET", "/api/zones")).status === 403);
+  check("şifre değiştirmeden /api/auth/me açık → 200", (await call(bearer, "GET", "/api/auth/me")).status === 200);
+
+  const pwRes = await call(bearer, "POST", "/api/auth/password", { currentPassword: pw, newPassword: pw2 });
+  const newTokens = (pwRes.json?.data as { tokens?: { accessToken: string; refreshToken: string } })?.tokens;
+  check("Bearer şifre değişimi yeni token çifti döner", pwRes.status === 200 && !!newTokens?.accessToken, pwRes.json);
+  check("şifre değişimi Bearer'da çerez yazmaz", cookieFrom(pwRes.res) === "");
+  check("şifre değişince eski access → 401", (await call(bearer, "GET", "/api/auth/me")).status === 401);
+  check("şifre değişince eski refresh → 401", (await call(null, "POST", "/api/auth/refresh", { refreshToken: mob.refreshToken })).status === 401);
+  bearer = { bearer: newTokens!.accessToken };
+  let refresh = newTokens!.refreshToken;
+
+  const me = await call(bearer, "GET", "/api/auth/me");
+  const meData = me.json?.data as { role: string; canWrite: boolean; customer: { slug: string } | null };
+  check("/api/auth/me rol + müşteri", me.status === 200 && meData.role === "manager" && meData.canWrite && meData.customer?.slug === A, meData);
+  const zonesMob = await call(bearer, "GET", "/api/zones");
+  check("Bearer: kendi bölgeleri → 200", zonesMob.status === 200);
+  check("Bearer: ?customer=B → 403", (await call(bearer, "GET", `/api/zones?customer=${B}`)).status === 403);
+  check("Bearer: B bölgesine komut → 404", (await call(bearer, "POST", `/api/zones/${zoneB}/command`, { action: "on" })).status === 404);
+  check("Bearer: B cihaz telemetrisi → 404", (await call(bearer, "GET", `/api/devices/${macB}/telemetry`)).status === 404);
+  check("Bearer: admin API → 403", (await call(bearer, "GET", "/api/admin/customers")).status === 403);
+
+  check("çerez token'ı Bearer olarak → 401", (await call({ bearer: aMgr.cookie!.split("=")[1] }, "GET", "/api/zones")).status === 401);
+  check("access token çerez olarak → 401", (await call({ cookie: `fener_session=${bearer.bearer}` }, "GET", "/api/zones")).status === 401);
+  check("geçersiz Bearer + geçerli çerez → 401 (çereze düşmez)", (await call({ bearer: "bozuk", cookie: aMgr.cookie }, "GET", "/api/zones")).status === 401);
+  check("rastgele refresh → 401", (await call(null, "POST", "/api/auth/refresh", { refreshToken: "yok-boyle-bir-token" })).status === 401);
+
+  const r1 = await call(null, "POST", "/api/auth/refresh", { refreshToken: refresh });
+  const p1 = r1.json?.data as { accessToken: string; refreshToken: string; user: { customer: { slug: string } } };
+  check("refresh → yeni çift + kullanıcı", r1.status === 200 && p1.refreshToken !== refresh && p1.user.customer.slug === A, r1.json);
+  check("yeni access çalışır", (await call({ bearer: p1.accessToken }, "GET", "/api/zones")).status === 200);
+  // Yanıtı kaybolan istemci eski refresh ile tekrar dener: 2 dk tolerans içinde kabul.
+  const lost = await call(null, "POST", "/api/auth/refresh", { refreshToken: refresh });
+  const p2 = lost.json?.data as { accessToken: string; refreshToken: string };
+  check("döndürülmüş refresh tolerans penceresinde → 200", lost.status === 200 && !!p2?.refreshToken, lost.json);
+  refresh = p2.refreshToken;
+  bearer = { bearer: p2.accessToken };
+
+  const mobStream = collectEvents(bearer, A, 2000);
+  await sleep(400);
+  await call(bearer, "POST", `/api/zones/${firstZoneSlug(zonesMob)}/command`, { action: "dim", value: 41 });
+  const evMob = await mobStream;
+  check("Bearer SSE kendi olayını alır", evMob.some((e) => e.brightness === 41), evMob);
+
+  const second = await mobileLogin(mobUser, pw2);
+  const out = await call(bearer, "POST", "/api/auth/logout", {});
+  check("mobil çıkış → 200", out.status === 200);
+  check("çıkıştan sonra access anında → 401", (await call(bearer, "GET", "/api/zones")).status === 401);
+  check("çıkıştan sonra refresh → 401", (await call(null, "POST", "/api/auth/refresh", { refreshToken: refresh })).status === 401);
+  check("diğer cihaz oturumu etkilenmez", (await call({ bearer: second.accessToken }, "GET", "/api/zones")).status === 200);
+  const out2 = await call(null, "POST", "/api/auth/logout", { refreshToken: second.refreshToken });
+  check("access'siz refresh ile çıkış → 200", out2.status === 200);
+  check("refresh ile çıkıştan sonra access → 401", (await call({ bearer: second.accessToken }, "GET", "/api/zones")).status === 401);
 
   console.log("\n[6] Slug yeniden kullanılmaz");
   check("A bölgesini siler", (await call(aMgr, "DELETE", `/api/zones/${zoneA}`)).status === 200);

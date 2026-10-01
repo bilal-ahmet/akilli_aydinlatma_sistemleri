@@ -1,4 +1,5 @@
 import { onLiveEvent } from "@/lib/events";
+import { onDomainEvent, type DomainEvent } from "@/lib/domainEvents";
 import { authorizeScope } from "@/lib/auth/guard";
 import { peekTenancy } from "@/lib/tenancy";
 import type { LiveEvent } from "@/types/lighting";
@@ -45,14 +46,26 @@ export async function GET(req: Request) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(pub)}\n\n`));
       };
 
+      // Arıza alan olayları İSİMLİ SSE olayı olarak gider (`event: fault`).
+      // Tarayıcıdaki `EventSource.onmessage` isimli olayları almaz → web
+      // paneli etkilenmez; mobil istemci olay adına göre ayrıştırır.
+      const sendDomain = (event: DomainEvent) => {
+        if (event.customerId !== customerId) return;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { customerId: _omit, ...pub } = event;
+        controller.enqueue(encoder.encode(`event: fault\ndata: ${JSON.stringify(pub)}\n\n`));
+      };
+
       // İlk yorum satırı: bağlantıyı aç ve proxy buffer'larını flush et.
       controller.enqueue(encoder.encode(": connected\n\n"));
 
       const unsubscribe = onLiveEvent(send);
+      const unsubscribeDomain = onDomainEvent(sendDomain);
 
       const close = () => {
         clearInterval(heartbeat);
         unsubscribe();
+        unsubscribeDomain();
         try {
           controller.close();
         } catch {

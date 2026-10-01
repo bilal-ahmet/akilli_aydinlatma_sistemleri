@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
+import { emitFaultEvent } from "@/lib/domainEvents";
 
 /**
  * Arıza geçmişini (`fault_events`) güncel duruma göre senkronlar: yalnızca
@@ -9,6 +10,10 @@ import { db, schema } from "@/lib/db";
  *
  * `channel: null` → cihaz seviyesi (komut hatası); o hedefteki açık kayıtlar
  * ayrı bir küme olarak yönetilir, lamba arızalarına dokunmaz.
+ *
+ * Arıza açılış/kapanış alan olaylarının (`fault.opened` / `fault.resolved`)
+ * TEK yayın noktası burasıdır (bkz. lib/domainEvents.ts) — yazım başarılı
+ * olduktan sonra yayınlanır.
  */
 export async function syncFaultEvents(
   deviceId: string,
@@ -33,23 +38,47 @@ export async function syncFaultEvents(
   const activeCodes = new Set(active.map((a) => a.code));
 
   const toOpen = active.filter((a) => !openCodes.has(a.code));
-  if (toOpen.length > 0) {
-    await db.insert(schema.faultEvents).values(
-      toOpen.map((a) => ({
-        deviceId,
-        channel,
-        code: a.code,
-        detail: a.detail?.slice(0, 300) ?? null,
-        startedAt: now,
-      })),
-    );
-  }
+  const opened =
+    toOpen.length > 0
+      ? await db
+          .insert(schema.faultEvents)
+          .values(
+            toOpen.map((a) => ({
+              deviceId,
+              channel,
+              code: a.code,
+              detail: a.detail?.slice(0, 300) ?? null,
+              startedAt: now,
+            })),
+          )
+          .returning()
+      : [];
 
   const toClose = open.filter((r) => !activeCodes.has(r.code)).map((r) => r.id);
-  if (toClose.length > 0) {
-    await db
-      .update(schema.faultEvents)
-      .set({ resolvedAt: now })
-      .where(inArray(schema.faultEvents.id, toClose));
+  const closed =
+    toClose.length > 0
+      ? await db
+          .update(schema.faultEvents)
+          .set({ resolvedAt: now })
+          .where(inArray(schema.faultEvents.id, toClose))
+          .returning()
+      : [];
+
+  for (const [type, rows] of [
+    ["fault.opened", opened],
+    ["fault.resolved", closed],
+  ] as const) {
+    for (const r of rows) {
+      emitFaultEvent({
+        type,
+        id: r.id,
+        deviceId: r.deviceId,
+        channel: r.channel,
+        code: r.code,
+        detail: r.detail,
+        startedAt: r.startedAt.toISOString(),
+        resolvedAt: r.resolvedAt ? r.resolvedAt.toISOString() : null,
+      });
+    }
   }
 }

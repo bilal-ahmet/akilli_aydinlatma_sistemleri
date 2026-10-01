@@ -5,6 +5,7 @@ import { passwordChangeSchema } from "@/types/auth";
 import { authorizeUser } from "@/lib/auth/guard";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { writeSessionCookie } from "@/lib/auth/session";
+import { reissueAfterPasswordChange } from "@/lib/auth/mobileSession";
 import { refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
 
@@ -12,7 +13,8 @@ export const runtime = "nodejs";
 
 /**
  * POST /api/auth/password — kendi şifresini değiştirir. Token sürümü artar:
- * diğer tüm oturumlar düşer, bu oturum yeni çerezle devam eder.
+ * diğer tüm oturumlar düşer, bu oturum yeni çerezle (web) ya da yanıttaki
+ * `tokens` çiftiyle (mobil) devam eder.
  */
 export async function POST(req: Request) {
   const user = await authorizeUser(req, { allowMustChange: true });
@@ -45,13 +47,21 @@ export async function POST(req: Request) {
     .returning({ tokenVersion: schema.users.tokenVersion });
 
   await refreshTenancy();
+  await audit({ req, user, action: "auth.password_change", customerId: user.customerId });
+
+  // Mobil: bu cihazın oturumu yeni sürüme taşınır, yeni token çifti döner.
+  // Diğer cihazlar ve web oturumları sürüm uyuşmazlığıyla düşer.
+  if (user.via === "bearer" && user.sessionId) {
+    const tokens = await reissueAfterPasswordChange(user, user.sessionId, updated.tokenVersion);
+    if (!tokens) return fail("Oturum geçersiz. Lütfen tekrar giriş yapın.", 401);
+    return ok({ redirect: "/", tokens });
+  }
+
   await writeSessionCookie({
     id: user.id,
     role: user.role,
     customerId: user.customerId,
     tokenVersion: updated.tokenVersion,
   });
-  await audit({ req, user, action: "auth.password_change", customerId: user.customerId });
-
   return ok({ redirect: "/" });
 }
