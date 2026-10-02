@@ -21,6 +21,6 @@ export async function GET(
     .where(eq(schema.zones.slug, zoneId))
     .limit(1);
 
-  if (!zone) return fail("Zone bulunamadı", 404);
+  if (!zone) return fail("Bölge bulunamadı", 404);
   return ok(toZone(zone));
 }

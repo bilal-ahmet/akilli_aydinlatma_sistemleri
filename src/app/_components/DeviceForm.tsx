@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { DeviceView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
+import { useTechnical } from "@/app/_lib/panel";
 import { formatMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 
@@ -24,6 +25,7 @@ export function DeviceDialog({
   onClose: () => void;
 }) {
   const { zones, createDevice, updateDevice } = useLighting();
+  const technical = useTechnical();
   const [mac, setMac] = useState("");
   const [zoneSlug, setZoneSlug] = useState(
     device?.zoneSlug ?? presetZone ?? zones[0]?.id ?? "",
@@ -57,9 +59,14 @@ export function DeviceDialog({
       title={device ? "Cihazı düzenle" : "Yeni Cihaz"}
       subtitle={
         device ? (
-          <span className="font-mono">{formatMac(device.deviceId)}</span>
-        ) : (
+          <>
+            {technical ? null : "Cihaz kodu "}
+            <span className="font-mono">{formatMac(device.deviceId)}</span>
+          </>
+        ) : technical ? (
           "ESP32 cihazını bir bölgeye bağlayın."
+        ) : (
+          "Cihazı bir bölgeye bağlayın."
         )
       }
       onSubmit={handleSubmit}
@@ -91,7 +98,12 @@ export function DeviceDialog({
               <option key={z.id} value={z.id}>{z.name}</option>
             ))}
           </select>
-          {device && zoneChanged ? (
+          {device && zoneChanged && !technical ? (
+            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
+              Bu değişiklik, teknik ekip cihazı yeniden ayarlayınca sahada geçerli olur.
+            </p>
+          ) : null}
+          {device && zoneChanged && technical ? (
             <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
               <span className="font-semibold text-accent">Cihazın yeniden flaşlanması gerekir.</span>{" "}
               Cihaz hangi bölge komutlarını dinleyeceğini firmware&apos;deki{" "}
@@ -106,7 +118,9 @@ export function DeviceDialog({
 
         {device ? null : (
           <div>
-            <label className="field-label" htmlFor="dv-mac">MAC adresi</label>
+            <label className="field-label" htmlFor="dv-mac">
+              {technical ? "MAC adresi" : "Cihaz kodu"}
+            </label>
             <input
               id="dv-mac"
               className="field font-mono"
@@ -117,17 +131,23 @@ export function DeviceDialog({
               spellCheck={false}
               autoCapitalize="characters"
             />
-            <p className="mt-2 text-[12.5px] leading-normal text-muted">
-              İki noktalı ya da noktasız girebilirsiniz; sistemde{" "}
-              <span className="font-mono text-ink-2">A842E3123456</span> olarak saklanır. ESP32
-              firmware&apos;i kendi MAC&apos;ini bu formatta kullanır.
-            </p>
+            {technical ? (
+              <p className="mt-2 text-[12.5px] leading-normal text-muted">
+                İki noktalı ya da noktasız girebilirsiniz; sistemde{" "}
+                <span className="font-mono text-ink-2">A842E3123456</span> olarak saklanır. ESP32
+                firmware&apos;i kendi MAC&apos;ini bu formatta kullanır.
+              </p>
+            ) : (
+              <p className="mt-2 text-[12.5px] leading-normal text-muted">
+                Cihazın etiketindeki kodu yazın.
+              </p>
+            )}
           </div>
         )}
 
         <div>
           <label className="field-label" htmlFor="dv-name">
-            İsim <span className="font-normal text-muted">(opsiyonel)</span>
+            İsim <span className="font-normal text-muted">(isteğe bağlı)</span>
           </label>
           <input
             id="dv-name"

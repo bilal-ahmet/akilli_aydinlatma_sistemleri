@@ -224,7 +224,7 @@ export function PanelShell({
 
         {isAdminView ? (
           <div className="border-b border-glow/30 bg-accent-soft px-4 py-2 text-xs text-text sm:px-6 lg:px-9">
-            <span className="font-semibold text-accent">Yönetici görünümü</span> ·{" "}
+            <span className="font-semibold text-accent">Sistem yöneticisi görünümü</span> ·{" "}
             <span className="font-medium">{customerName}</span> müşterisinin panelindesiniz. Yaptığınız
             her işlem bu müşteriye uygulanır ve kayda geçer.
             {customerActive ? null : (
@@ -234,8 +234,8 @@ export function PanelShell({
         ) : null}
         {!canWrite ? (
           <div className="border-b border-border bg-panel-2 px-4 py-2 text-xs text-muted sm:px-6 lg:px-9">
-            <span className="font-semibold text-text">Salt okunur hesap.</span> Durumu ve
-            telemetriyi izleyebilirsiniz; kontrol ve düzenleme için yöneticinize başvurun.
+            <span className="font-semibold text-text">İzleyici hesabı.</span> Durumu ve
+            ölçümleri izleyebilirsiniz; kontrol ve düzenleme için yöneticinize başvurun.
           </div>
         ) : null}
 

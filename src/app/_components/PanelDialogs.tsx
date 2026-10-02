@@ -3,7 +3,9 @@
 import { createContext, useContext, useState } from "react";
 import type { DeviceView, Zone } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
+import { useTechnical } from "@/app/_lib/panel";
 import { formatMac } from "@/lib/mac";
+import { deviceName } from "@/app/_lib/format";
 import { Modal } from "./Modal";
 import { ZoneDialog } from "./ZoneForm";
 import { DeviceDialog } from "./DeviceForm";
@@ -94,11 +96,11 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
           activeFx={zone.activeFx}
           onClose={onClose}
           onPick={(n, text) => {
-            lighting.applyEffect([zone.id], n, text);
+            lighting.applyEffect({ zones: [zone.id] }, n, text);
             onClose();
           }}
           onStop={() => {
-            lighting.stopEffect([zone.id]);
+            lighting.stopEffect({ zones: [zone.id] });
             onClose();
           }}
         />
@@ -193,6 +195,7 @@ function DeleteZone({
   onDeleted?: () => void;
 }) {
   const { devices, deleteZone } = useLighting();
+  const technical = useTechnical();
   const count = devices.filter((d) => d.zoneSlug === zone.id).length;
   return (
     <ConfirmDelete
@@ -207,16 +210,19 @@ function DeleteZone({
         <span className="font-semibold text-text">{zone.name}</span> bölgesi
         {count > 0 ? ` ve bağlı ${count} cihazın kayıtları` : ""} kalıcı olarak silinecek.
       </p>
-      <p className="mt-2 text-[13px] text-muted">
-        Bölgenin kısa adı (<code className="font-mono">{zone.id}</code>) bir daha kullanılmaz: bu
-        adla flaşlanmış cihazlar o topic&apos;i dinlemeye devam eder.
-      </p>
+      {technical ? (
+        <p className="mt-2 text-[13px] text-muted">
+          Bölgenin kısa adı (<code className="font-mono">{zone.id}</code>) bir daha kullanılmaz: bu
+          adla flaşlanmış cihazlar o topic&apos;i dinlemeye devam eder.
+        </p>
+      ) : null}
     </ConfirmDelete>
   );
 }
 
 function DeleteDevice({ device, onClose }: { device: DeviceView; onClose: () => void }) {
   const { deleteDevice } = useLighting();
+  const technical = useTechnical();
   return (
     <ConfirmDelete
       title="Cihazı sil"
@@ -224,9 +230,16 @@ function DeleteDevice({ device, onClose }: { device: DeviceView; onClose: () => 
       onConfirm={() => deleteDevice(device.deviceId)}
     >
       <p>
-        <span className="font-mono text-text">{formatMac(device.deviceId)}</span>
-        {device.name ? ` (${device.name})` : ""} cihazı ve tüm kayıtları (lambalar, telemetri,
-        arıza geçmişi) silinecek.
+        {technical ? (
+          <>
+            <span className="font-mono text-text">{formatMac(device.deviceId)}</span>
+            {device.name ? ` (${device.name})` : ""}
+          </>
+        ) : (
+          <span className="font-semibold text-text">{deviceName(device, false)}</span>
+        )}{" "}
+        cihazı ve tüm kayıtları (lambalar, {technical ? "telemetri" : "ölçümler"}, arıza geçmişi)
+        silinecek.
       </p>
     </ConfirmDelete>
   );

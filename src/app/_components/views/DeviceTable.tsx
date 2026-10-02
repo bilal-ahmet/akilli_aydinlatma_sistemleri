@@ -8,11 +8,14 @@ import { useNow } from "@/app/_lib/useNow";
 import { deviceHealth, formatAgo, formatPower, formatVolt } from "@/app/_lib/deviceHealth";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
+import { deviceName } from "@/app/_lib/format";
+import { isLit } from "@/app/_lib/mockData";
 import { useDialogs } from "../PanelDialogs";
 import { StatusLabel } from "../PanelUi";
 
 /** Satır sonundaki "···" menüsü: düzenle / sil. */
 function RowMenu({ device }: { device: DeviceView }) {
+  const { technical } = usePanel();
   const { openDeviceForm, confirmDeleteDevice, openDevice } = useDialogs();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -41,7 +44,7 @@ function RowMenu({ device }: { device: DeviceView }) {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`${device.name || formatMac(device.deviceId)} işlemleri`}
+        aria-label={`${deviceName(device, technical)} işlemleri`}
         className="grid h-8 w-8 place-items-center rounded-lg text-lg leading-none text-muted transition-colors hover:bg-panel-2 hover:text-text"
       >
         ···
@@ -60,7 +63,7 @@ function RowMenu({ device }: { device: DeviceView }) {
               openDevice(device);
             }}
           >
-            Kontrol ve telemetri
+            {technical ? "Kontrol ve telemetri" : "Kontrol ve ölçümler"}
           </button>
           <button
             type="button"
@@ -107,7 +110,7 @@ export function DeviceTable({
   showLevel?: boolean;
 }) {
   const { zones, live, faultsByDevice } = useLighting();
-  const { canWrite } = usePanel();
+  const { canWrite, technical } = usePanel();
   const { openDevice } = useDialogs();
   const now = useNow(5_000);
 
@@ -120,13 +123,13 @@ export function DeviceTable({
         <thead className="table-head">
           <tr>
             <th className={th}>Cihaz</th>
-            <th className={th}>MAC</th>
+            <th className={th}>{technical ? "MAC" : "Cihaz kodu"}</th>
             {showZone ? <th className={th}>Bölge</th> : null}
             <th className={th}>Durum</th>
             {showLevel ? <th className={th}>Şiddet</th> : null}
             <th className={th}>Güç</th>
             <th className={th}>Gerilim</th>
-            <th className={th}>Son veri</th>
+            <th className={th}>Son bağlantı</th>
             {canWrite ? <th className={`${th} w-12`}><span className="sr-only">İşlemler</span></th> : null}
           </tr>
         </thead>
@@ -138,7 +141,7 @@ export function DeviceTable({
             const zone = zones.find((z) => z.id === d.zoneSlug);
             const measured = m?.powerW != null;
             const valueCls = measured ? "text-text" : "text-muted";
-            const title = d.name || formatMac(d.deviceId);
+            const title = deviceName(d, technical);
             return (
               <tr
                 key={d.id}
@@ -162,9 +165,9 @@ export function DeviceTable({
                           .join(", ")}
                       </span>
                     ) : d.lastError ? (
-                      <span className="text-xs text-danger">{describeDeviceError(d.lastError).title}</span>
+                      <span className="text-xs text-danger">{describeDeviceError(d.lastError, { technical }).title}</span>
                     ) : m ? (
-                      <span className="text-xs text-muted">{m.lamps} lamba raporluyor</span>
+                      <span className="text-xs text-muted">{technical ? `${m.lamps} lamba raporluyor` : `${m.lamps} lamba veri gönderiyor`}</span>
                     ) : null}
                   </button>
                 </td>
@@ -175,7 +178,7 @@ export function DeviceTable({
                 </td>
                 {showLevel ? (
                   <td className={`${td} font-mono text-[13px] text-accent`}>
-                    {zone ? (zone.isOn ? `%${zone.brightness}` : "kapalı") : "—"}
+                    {zone ? (isLit(zone) ? `%${zone.brightness}` : "kapalı") : "—"}
                   </td>
                 ) : null}
                 <td className={`${td} font-mono text-[13px] ${valueCls}`}>

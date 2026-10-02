@@ -207,7 +207,7 @@ export function ZoneDialog({
 
         {showCustomer ? (
           <div>
-            <label className="field-label" htmlFor="zf-customer">Müşteri (yönetici)</label>
+            <label className="field-label" htmlFor="zf-customer">Müşteri</label>
             <select
               id="zf-customer"
               className="field"

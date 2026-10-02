@@ -66,7 +66,7 @@ export async function authorizeAdmin(req: Request): Promise<SessionUser | Respon
 
 function needCheck(user: SessionUser, need: Need): Response | null {
   if (need === "write" && !canWrite(user.role)) {
-    return fail("Salt okunur hesap bu işlemi yapamaz", 403);
+    return fail("İzleyici hesabı bu işlemi yapamaz", 403);
   }
   return null;
 }
@@ -154,7 +154,7 @@ export async function authorizeCustomerManage(
   if (user.role === "admin") return { user, customer };
   if (user.customerId !== customer.id) return fail("Müşteri bulunamadı", 404);
   if (need === "write" && user.role !== "manager") {
-    return fail("Bu işlem müşteri yöneticisine açık", 403);
+    return fail("Bu işlem yöneticiye açık", 403);
   }
   return { user, customer };
 }

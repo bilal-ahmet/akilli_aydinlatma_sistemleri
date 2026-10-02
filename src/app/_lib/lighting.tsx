@@ -51,6 +51,11 @@ function sendZone(api: ApiFn, zoneId: string, body: CommandBody) {
   return postCommand(api, `/api/zones/${zoneId}/command`, body);
 }
 
+/** Tek cihaz (tüm lambaları) → `Meven:<MAC>/cmd`. */
+function sendDevice(api: ApiFn, mac: string, body: CommandBody) {
+  return postCommand(api, `/api/devices/${mac}/command`, body);
+}
+
 /**
  * Müşterinin "Tüm Sistem"i → müşterinin her bölge topic'ine publish (sunucu
  * tarafında fanout; Meven:all/cmd diğer müşterileri de sürerdi).
@@ -99,8 +104,15 @@ export interface DeviceValues {
   name?: string;
 }
 
-/** Efekt hedefi: müşterinin tüm sistemi ya da seçili bölgeler (slug). */
-export type EffectTarget = "all" | string[];
+/**
+ * Efekt hedefi: müşterinin tüm sistemi ya da seçili bölgeler (slug) ve/veya
+ * tek tek cihazlar (MAC). Bölgenin tamamı seçiliyse bölge komutu (tek
+ * publish) gider; bölgenin yalnızca bazı cihazları seçiliyse cihaz komutları.
+ */
+export type EffectTarget = "all" | { zones?: string[]; devices?: string[] };
+
+/** Cihaz komutlarının pending/seq anahtarı — bölge slug'larıyla çakışmaz. */
+const deviceKey = (mac: string) => `dev:${mac}`;
 
 interface LightingValue {
   zones: Zone[];
@@ -290,6 +302,22 @@ export function LightingProvider({
       // Cihaz satırı: `ack` → hata rozeti (başarılı yanıtta temizlenir) + son
       // görülme; cihaz-seviyesi `telemetry` → son görülme ve cihaz agregatı.
       // Kanal bazlı telemetri atlanır (agregatı backend ayrıca gönderir).
+      // Cihaz-seviyesi komut yankısı (kanalsız) → çalışan efekt (Efektler sayfası).
+      if (e.deviceId && e.kind === "command" && typeof e.channel !== "number") {
+        const key = deviceKey(e.deviceId);
+        if ((pendingRef.current.get(key) ?? 0) > 0) return; // daha yeni komut uçuşta
+        if (typeof e.seq === "number") {
+          const lastSeq = lastSeqRef.current.get(key);
+          if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo
+          lastSeqRef.current.set(key, e.seq);
+        }
+        if (typeof e.activeFx !== "undefined") {
+          const fx = e.activeFx;
+          setDevices((ds) => ds.map((d) => (d.deviceId === e.deviceId ? { ...d, activeFx: fx } : d)));
+        }
+        return;
+      }
+
       if (
         e.deviceId &&
         (e.kind === "ack" || (e.kind === "telemetry" && typeof e.channel !== "number"))
@@ -362,6 +390,16 @@ export function LightingProvider({
       .finally(() => endPending(id));
   }
 
+  /** Tek cihaza (tüm lambaları) komut; seq/pending korumasıyla. */
+  function commandDevice(mac: string, body: CommandBody, rollback?: () => void) {
+    const key = deviceKey(mac);
+    beginPending(key);
+    sendDevice(api, mac, body)
+      .then((seq) => applySeq(key, seq))
+      .catch(() => rollback?.())
+      .finally(() => endPending(key));
+  }
+
   /** "Tüm Sistem" komutu; tüm bölgeler + master için pending tutulur. */
   function commandAll(body: CommandBody, rollback?: () => void) {
     const ids = zones.map((z) => z.id);
@@ -425,34 +463,64 @@ export function LightingProvider({
   }
 
   /**
-   * Efekt başlat. Tüm bölgeler seçiliyse tek "Tüm Sistem" isteği (sunucu
-   * fanout'u), değilse her seçili bölgeye ayrı bölge komutu.
+   * Efekt başlat. Tüm sistem → tek "Tüm Sistem" isteği (sunucu fanout'u);
+   * aksi halde her seçili bölgeye bölge komutu, her seçili cihaza cihaz komutu.
+   * Bölge komutu o bölgenin cihazlarını da sürdüğü için cihaz satırları da
+   * optimistic güncellenir (sunucu yalnızca lamba olaylarını yayınlar).
    */
   function applyEffect(target: EffectTarget, number: number, text?: string) {
     const body: CommandBody = { action: "efekt", number, text };
     if (target === "all") {
       setMasterOn(true);
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
+      setDevices((ds) => ds.map((d) => ({ ...d, activeFx: number })));
       commandAll(body);
       return;
     }
-    const set = new Set(target);
-    setZones((zs) => zs.map((z) => (set.has(z.id) ? { ...z, isOn: true, activeFx: number } : z)));
-    for (const id of target) commandZone(id, body);
+    const zoneSet = new Set(target.zones ?? []);
+    const devSet = new Set(target.devices ?? []);
+    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, isOn: true, activeFx: number } : z)));
+    setDevices((ds) =>
+      ds.map((d) =>
+        devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
+          ? { ...d, activeFx: number }
+          : d,
+      ),
+    );
+    for (const id of zoneSet) commandZone(id, body);
+    for (const mac of devSet) commandDevice(mac, body);
   }
 
-  /** Efekti durdur: on/off/dim efekti keser → son şiddete dim gönderilir. */
+  /**
+   * Efekti durdur: on/off/dim efekti keser → son şiddete dim gönderilir. Tek
+   * cihazın "son şiddeti" bölgesinin şiddetidir (cihaz paneliyle aynı kaynak).
+   */
   function stopEffect(target: EffectTarget) {
     if (target === "all") {
       setMasterOn(true);
       setZones((zs) => zs.map((z) => ({ ...z, activeFx: null })));
+      setDevices((ds) => ds.map((d) => ({ ...d, activeFx: null })));
       commandAll({ action: "dim", value: masterBrightness });
       return;
     }
-    const set = new Set(target);
-    setZones((zs) => zs.map((z) => (set.has(z.id) ? { ...z, activeFx: null } : z)));
+    const zoneSet = new Set(target.zones ?? []);
+    const devSet = new Set(target.devices ?? []);
+    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, activeFx: null } : z)));
+    setDevices((ds) =>
+      ds.map((d) =>
+        devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
+          ? { ...d, activeFx: null }
+          : d,
+      ),
+    );
     for (const z of zones) {
-      if (set.has(z.id)) commandZone(z.id, { action: "dim", value: z.brightness });
+      if (zoneSet.has(z.id)) commandZone(z.id, { action: "dim", value: z.brightness });
+    }
+    const zoneBrightness = new Map(zones.map((z) => [z.id, z.brightness]));
+    for (const d of devices) {
+      if (!devSet.has(d.deviceId)) continue;
+      const value = (d.zoneSlug !== null ? zoneBrightness.get(d.zoneSlug) : undefined) ?? 100;
+      commandDevice(d.deviceId, { action: "dim", value });
     }
   }
 

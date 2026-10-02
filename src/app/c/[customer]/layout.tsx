@@ -59,6 +59,7 @@ export default async function CustomerLayout({
     role: user.role,
     canWrite: canWrite(user.role),
     isAdminView: isAdmin,
+    technical: isAdmin,
     customers,
   };
 

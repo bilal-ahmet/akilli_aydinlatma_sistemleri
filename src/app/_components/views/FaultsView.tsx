@@ -3,12 +3,11 @@
 import { useEffect, useState } from "react";
 import type { FaultRecord } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
-import { useApi } from "@/app/_lib/panel";
+import { useApi, useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { openAlerts, type AlertItem } from "@/app/_lib/alerts";
-import { formatDuration } from "@/app/_lib/format";
+import { deviceName, formatDuration } from "@/app/_lib/format";
 import { faultLabel } from "@/lib/faults";
-import { formatMac } from "@/lib/mac";
 import { useDialogs } from "../PanelDialogs";
 import { PageHeader } from "../PanelUi";
 
@@ -37,9 +36,12 @@ function formatSince(iso: string, now: number | null): string {
     : `${formatWhen(iso)}'den beri`;
 }
 
-function where(parts: { deviceId: string; deviceName: string | null; zoneName: string | null; channel: number | null }) {
+function where(
+  parts: { deviceId: string; deviceName: string | null; zoneName: string | null; channel: number | null },
+  technical: boolean,
+) {
   return [
-    parts.deviceName || formatMac(parts.deviceId),
+    deviceName({ name: parts.deviceName, deviceId: parts.deviceId }, technical),
     parts.zoneName,
     parts.channel !== null ? `Lamba ${parts.channel}` : null,
   ]
@@ -62,19 +64,20 @@ function Badge({ tone, children }: { tone: "bad" | "warn"; children: React.React
 function OpenAlert({ alert, now }: { alert: AlertItem; now: number | null }) {
   const { devices } = useLighting();
   const { openDevice } = useDialogs();
+  const technical = useTechnical();
   const device = devices.find((d) => d.deviceId === alert.deviceId);
   const warn = alert.code !== null && WARNING_CODES.has(alert.code);
 
   return (
     <div className="grid items-center gap-4 rounded-[14px] border border-border bg-panel px-5 py-[18px] sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-[18px] sm:px-[22px]">
       <Badge tone={warn ? "warn" : "bad"}>
-        {alert.kind === "command" ? "Komut" : warn ? "Uyarı" : "Arıza"}
+        {alert.kind === "command" ? (technical ? "Komut" : "Komut uygulanamadı") : warn ? "Uyarı" : "Arıza"}
       </Badge>
       <div className="flex min-w-0 flex-col gap-[3px]">
         <p className="text-[15px] font-semibold text-text">{alert.title}</p>
         {alert.cause ? <p className="text-[13px] text-ink-2">{alert.cause}</p> : null}
         <p className="text-[13px] text-muted">
-          {where(alert)}
+          {where(alert, technical)}
           {alert.since ? ` · ${formatSince(alert.since, now)}` : ""}
         </p>
       </div>
@@ -96,7 +99,8 @@ function OpenAlert({ alert, now }: { alert: AlertItem; now: number | null }) {
 export function FaultsView() {
   const api = useApi();
   const { faults, devices } = useLighting();
-  const alerts = openAlerts(faults, devices);
+  const technical = useTechnical();
+  const alerts = openAlerts(faults, devices, technical);
   const [history, setHistory] = useState<FaultRecord[] | null>(null);
   const now = useNow(60_000);
 
@@ -163,8 +167,8 @@ export function FaultsView() {
                     <Badge tone={warn ? "warn" : "bad"}>{warn ? "Uyarı" : "Arıza"}</Badge>
                   </span>
                   <div className="flex min-w-0 flex-col gap-[3px]">
-                    <p className="text-[14.5px] font-semibold text-text">{faultLabel(h.code)}</p>
-                    <p className="text-[13px] text-muted">{where(h)}</p>
+                    <p className="text-[14.5px] font-semibold text-text">{faultLabel(h.code, technical)}</p>
+                    <p className="text-[13px] text-muted">{where(h, technical)}</p>
                   </div>
                   <p className="text-[13px] text-ink-2">{formatWhen(h.startedAt)}</p>
                   <p className="text-[13px] text-ok">Çözüldü · {formatDuration(duration)}</p>

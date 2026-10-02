@@ -18,6 +18,11 @@ export type PanelInfo = {
   canWrite: boolean;
   /** Admin başka bir müşterinin panelini görüntülüyor. */
   isAdminView: boolean;
+  /**
+   * Teknik dil (DALI kanalı, MAC, D4i, sürücü, ham hata metni…) gösterilsin
+   * mi? Yalnızca admin; müşteri kullanıcıları sade dil görür (bkz. useTechnical).
+   */
+  technical: boolean;
   /** Yalnızca admin: bölge taşıma seçicisi için tüm müşteriler. */
   customers: { slug: string; name: string }[];
 };
@@ -38,6 +43,14 @@ export function usePanel(): PanelInfo {
   const ctx = useContext(PanelContext);
   if (!ctx) throw new Error("usePanel yalnızca müşteri paneli içinde kullanılabilir");
   return ctx;
+}
+
+/**
+ * Metin seçimi: admin teknik terimleri görür, müşteri kullanıcıları sade dil.
+ * Kullanım: `const technical = useTechnical(); technical ? "Kanal 3" : "Lamba 3"`.
+ */
+export function useTechnical(): boolean {
+  return usePanel().technical;
 }
 
 /** `/api/...` yoluna `customer=<slug>` sorgu parametresini ekler. */

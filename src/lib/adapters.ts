@@ -48,6 +48,8 @@ export function toDeviceView(row: {
   rssi?: number | null;
   lastError?: string | null;
   lastErrorAt?: Date | null;
+  lampCount?: number;
+  activeFx?: number | null;
 }): DeviceView {
   return {
     id: row.id,
@@ -62,6 +64,8 @@ export function toDeviceView(row: {
     rssi: row.rssi ?? null,
     lastError: row.lastError ?? null,
     lastErrorAt: row.lastErrorAt ? row.lastErrorAt.toISOString() : null,
+    lampCount: row.lampCount ?? 0,
+    activeFx: row.activeFx ?? null,
   };
 }
 

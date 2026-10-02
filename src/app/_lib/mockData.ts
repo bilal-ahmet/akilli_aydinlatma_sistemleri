@@ -84,6 +84,15 @@ export function zonePowerKw(zone: Zone): number {
   return zone.poleCount * (zone.brightness / 100) * KW_PER_POLE_AT_FULL;
 }
 
+/**
+ * Bölge şu an gerçekten ışık veriyor mu? `dim 0` bölgeyi "açık, %0" bırakır
+ * (komut semantiği: dim = aç) ama cihaz söner — görünümler bunu kapalı
+ * saymalı. Efekt çalışırken şiddetten bağımsız olarak yanıyor sayılır.
+ */
+export function isLit(zone: Pick<Zone, "isOn" | "brightness" | "activeFx">): boolean {
+  return zone.isOn && (zone.brightness > 0 || zone.activeFx != null);
+}
+
 /** Özet metrikler zon durumundan türetilir; sabit değildir. */
 export function summarize(zones: Zone[]): SystemSummary {
   let totalPoles = 0;
@@ -93,7 +102,7 @@ export function summarize(zones: Zone[]): SystemSummary {
 
   for (const zone of zones) {
     totalPoles += zone.poleCount;
-    if (zone.isOn) polesOn += zone.poleCount;
+    if (isLit(zone)) polesOn += zone.poleCount;
     powerKw += zonePowerKw(zone);
     if (zone.status !== "ok") alerts += 1;
   }

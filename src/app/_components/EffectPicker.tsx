@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { EFFECTS, MORSE_TEXT_MAX, normalizeMorseText, type Effect } from "@/lib/effects";
+import { useTechnical } from "@/app/_lib/panel";
 import { Modal } from "./Modal";
 
 interface EffectPickerProps {
@@ -39,6 +40,8 @@ function Section({
   lampCount?: number;
   onPick: (fx: Effect) => void;
 }) {
+  // Efektin sıra numarası firmware kontratıdır; müşteriye bir şey anlatmaz.
+  const technical = useTechnical();
   return (
     <section className="mb-4 last:mb-0">
       <h4 className="mb-1.5 text-xs font-semibold text-text">
@@ -58,7 +61,7 @@ function Section({
               onClick={() => onPick(fx)}
               title={
                 short
-                  ? `Bu efekt en az ${fx.minLamps} lamba ister; cihazda ${lampCount} lamba var.`
+                  ? `Bu efekt en az ${fx.minLamps} lambalı cihazlarda çalışır.`
                   : undefined
               }
               className={`flex flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors ${
@@ -70,11 +73,11 @@ function Section({
               }`}
             >
               <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-text">
-                <span className="font-mono text-[11px] text-muted">{fx.number}</span>
+                {technical ? <span className="font-mono text-[11px] text-muted">{fx.number}</span> : null}
                 {fx.label}
                 {fx.needsText ? (
                   <span className="rounded-md bg-panel px-1 py-0.5 text-[9px] font-medium text-muted">
-                    metin
+                    yazı girilir
                   </span>
                 ) : null}
                 {fx.minLamps != null ? (
@@ -83,7 +86,7 @@ function Section({
                       short ? "bg-danger/15 text-danger" : "bg-panel text-muted"
                     }`}
                   >
-                    {fx.minLamps}+ lamba
+                    en az {fx.minLamps} lamba
                   </span>
                 ) : null}
               </span>
@@ -153,14 +156,14 @@ export function EffectPicker({
             />
             <p className="mt-1 flex justify-between gap-2 text-[11px] text-muted">
               <span>
-                Harf, rakam ve boşluk. Türkçe harfler ASCII karşılığına çevrilir (Ş→S).
+                Ş, Ğ gibi harfler S, G olarak yazılır.
               </span>
               <span className="shrink-0 font-mono">
                 {text.length}/{MORSE_TEXT_MAX}
               </span>
             </p>
             <p className="mt-1 text-[11px] text-muted">
-              Boş bırakırsan cihaz en son ayarlanan metni tekrar çalar.
+              Boş bırakırsanız cihaz en son ayarlanan metni tekrar çalar.
             </p>
           </div>
           <div className="mt-1 flex justify-between gap-2">
@@ -194,7 +197,7 @@ export function EffectPicker({
             />
             <Section
               heading="Tüm lambalar"
-              note="Hattın tamamını birlikte sürer, tek lambaya verilemez"
+              note="Cihazdaki tüm lambalar birlikte çalar, tek lambaya verilemez"
               effects={ALL_LAMP_FX}
               activeFx={activeFx}
               lampCount={lampCount}

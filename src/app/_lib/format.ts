@@ -1,5 +1,17 @@
 /** Türkçe biçimlendirme yardımcıları (1.248, 78,4 kW vb.). */
 
+import { formatMac } from "@/lib/mac";
+
+/**
+ * Cihazın görünen adı: girilmiş isim; yoksa admin'e MAC, müşteriye cihaz
+ * kodunun son 4 hanesi ("Cihaz …3456") — müşteri MAC terimini görmez.
+ */
+export function deviceName(d: { name: string | null; deviceId: string }, technical: boolean): string {
+  const name = d.name?.trim();
+  if (name) return name;
+  return technical ? formatMac(d.deviceId) : `Cihaz …${d.deviceId.slice(-4)}`;
+}
+
 const trInt = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
 const trOne = new Intl.NumberFormat("tr-TR", {
   minimumFractionDigits: 1,

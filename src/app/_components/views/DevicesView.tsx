@@ -17,7 +17,7 @@ function normalize(s: string): string {
 
 export function DevicesView() {
   const { zones, devices, devicesLoading } = useLighting();
-  const { canWrite } = usePanel();
+  const { canWrite, technical } = usePanel();
   const { openDeviceForm } = useDialogs();
   const now = useNow(15_000);
   const [query, setQuery] = useState("");
@@ -38,7 +38,7 @@ export function DevicesView() {
   const subtitle =
     devices.length === 0
       ? "Henüz cihaz yok"
-      : `${zoneCount} bölgede ${devices.length} ESP32` +
+      : `${zoneCount} bölgede ${devices.length} ${technical ? "ESP32" : "cihaz"}` +
         (now === null
           ? ""
           : online === devices.length
@@ -78,8 +78,8 @@ export function DevicesView() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="İsim veya MAC ara"
-          aria-label="İsim veya MAC ara"
+          placeholder={technical ? "İsim veya MAC ara" : "İsim veya cihaz kodu ara"}
+          aria-label={technical ? "İsim veya MAC ara" : "İsim veya cihaz kodu ara"}
           className="field !h-[38px] md:!w-[280px]"
         />
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0" role="group" aria-label="Bölge filtresi">
@@ -110,7 +110,9 @@ export function DevicesView() {
         <EmptyBox>
           Henüz cihaz yok.
           {canWrite
-            ? " Gerçek ESP32'yi bağlamadan önce “Yeni Cihaz” ile MAC adresini ve bölgesini tanımlayın."
+            ? technical
+              ? " Gerçek ESP32'yi bağlamadan önce “Yeni Cihaz” ile MAC adresini ve bölgesini tanımlayın."
+              : " Cihazı sahada çalıştırmadan önce “Yeni Cihaz” ile cihaz kodunu ve bölgesini tanımlayın."
             : ""}
         </EmptyBox>
       ) : visible.length === 0 ? (
@@ -121,10 +123,12 @@ export function DevicesView() {
         </div>
       )}
 
-      <p className="text-[12.5px] text-muted">
-        “Veri bekleniyor”: cihaz bağlı, ancak son 10 dakikada gerilim ve güç bilgisi göndermedi.
-        Şiddet, cihazın bölgesine giden son komuttur.
-      </p>
+      {technical ? (
+        <p className="text-[12.5px] text-muted">
+          “Ölçüm bekleniyor”: cihaz bağlı, ancak son 10 dakikada gerilim ve güç bilgisi göndermedi.
+          Şiddet, cihazın bölgesine giden son komuttur.
+        </p>
+      ) : null}
     </div>
   );
 }

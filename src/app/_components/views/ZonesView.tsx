@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Zone } from "@/app/_lib/types";
+import { isLit } from "@/app/_lib/mockData";
 import { useLighting } from "@/app/_lib/lighting";
-import { usePanel } from "@/app/_lib/panel";
+import { usePanel, useTechnical } from "@/app/_lib/panel";
 import { useZoneStats } from "@/app/_lib/useZoneStats";
 import { splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
 import { faultLabel } from "@/lib/faults";
-import { formatMac } from "@/lib/mac";
+import { deviceName } from "@/app/_lib/format";
 import { Toggle } from "../Toggle";
 import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
@@ -22,7 +23,7 @@ const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
 function zoneDot(zone: Zone, faulty: boolean): string {
   if (faulty || zone.status === "fault") return "bg-danger";
   if (zone.status === "warning") return "bg-warn";
-  return zone.isOn ? "bg-ok" : "bg-border-strong";
+  return isLit(zone) ? "bg-ok" : "bg-border-strong";
 }
 
 /** Soldaki bölge listesi (geniş ekran) / yatay şerit (dar ekran). */
@@ -94,6 +95,7 @@ function ZoneList({ selected }: { selected: string | null }) {
 }
 
 function ZoneDetail({ zone }: { zone: Zone }) {
+  const technical = useTechnical();
   const { toggleZone, setZoneBrightness, faultsByDevice } = useLighting();
   const { customerSlug, canWrite } = usePanel();
   const { openZoneForm, confirmDeleteZone, openZoneEffects, openDeviceForm } = useDialogs();
@@ -155,7 +157,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
             disabled={!canWrite}
           />
           <div className="flex flex-col gap-0.5">
-            <span className="text-[15px] font-semibold text-text">{zone.isOn ? "Açık" : "Kapalı"}</span>
+            <span className="text-[15px] font-semibold text-text">{isLit(zone) ? "Açık" : "Kapalı"}</span>
             {canWrite ? (
               <button
                 type="button"
@@ -208,7 +210,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           }
         />
         <StatCard
-          label="Yük gücü"
+          label={technical ? "Yük gücü" : "Lamba gücü"}
           value={load?.value ?? "—"}
           unit={load?.unit}
           hint={load ? "LED'e giden güç" : noData}
@@ -220,8 +222,8 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           <p className="text-sm font-semibold text-danger">Bu bölgede süren arıza</p>
           {faultGroups.map(([deviceId, fs]) => (
             <p key={deviceId} className="text-[13px] text-ink-2">
-              <span className="font-semibold text-text">{fs[0].deviceName || formatMac(deviceId)}</span> ·{" "}
-              {fs.map((f) => `Lamba ${f.channel} — ${faultLabel(f.code)}`).join(", ")}
+              <span className="font-semibold text-text">{deviceName({ name: fs[0].deviceName, deviceId }, technical)}</span> ·{" "}
+              {fs.map((f) => `Lamba ${f.channel} — ${faultLabel(f.code, technical)}`).join(", ")}
             </p>
           ))}
         </section>
@@ -243,7 +245,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
         {devices.length === 0 ? (
           <p className="border-t border-border px-[22px] py-6 text-sm text-muted">
             Bu bölgede tanımlı cihaz yok.
-            {canWrite ? " “+ Cihaz ekle” ile bu bölgeye bir ESP32 bağlayabilirsiniz." : ""}
+            {canWrite ? " “+ Cihaz ekle” ile bu bölgeye bir cihaz bağlayabilirsiniz." : ""}
           </p>
         ) : (
           <DeviceTable devices={devices} />

@@ -58,6 +58,25 @@ aittir** (`zones.customer_id`); cihazın müşterisi bölgesinden türetilir.
 | `manager` | Müşteri yöneticisi: kendi panelinde tam yetki (bölge/cihaz/lamba/kullanıcı + komut). |
 | `viewer` | Müşteri izleyicisi: salt okunur. |
 
+Arayüzdeki adlar (`ROLE_LABELS`): admin **"Sistem yöneticisi"**, manager
+**"Yönetici"**, viewer **"İzleyici"**.
+
+**Dil: admin teknik, müşteri sade.** Admin her şeyi teknik terimlerle görür
+(kanal/ch3, DALI, MAC, D4i, sürücü, ham firmware hata metni, Teknik detay).
+Müşteri kullanıcıları (manager/viewer) sade dil görür: "Lamba 3 / Lamba
+numarası", "Cihaz kodu", "Ölçümler", "Güç ünitesi"; Teknik detay ve arc seviyeleri gizli.
+İstemcide `useTechnical()` (`_lib/panel.tsx`, `PanelInfo.technical = role === "admin"`),
+kataloglarda `describeDeviceError(raw, { technical })` ve `faultLabel(code, technical)`
+(teknik metin varsayılan; sunucu ve mobil kontratı değişmez), API hata
+metinlerinde `msg(user, teknik, sade)` (`lib/api/respond.ts`). Yeni metin eklerken
+müşteriye görünecekse bu ayrımı koru.
+
+Müşteri metni ölçütü: belediye çalışanı açıklama istemeden anlamalı. İç kurallar
+(0-63 aralığı, bağlantı numarası, toplu komut/topic), yer tutucular (`<numara>`)
+ve efekt sıra numaraları müşteriye gösterilmez. Ölçümler sekmesinde müşteri
+önce sade özeti (seviye, güç, enerji, sıcaklık, çalışma süresi, Durum) görür;
+güç ünitesi/LED ayrıntıları ve arıza sayaçları kapalı "Ayrıntılar"dadır.
+
 **Sayfalar:** `/login` · `/` (role göre yönlendirir) · `/admin` (müşteri kartları,
 global acil komut) · `/admin/customers/<slug>` (bilgiler, pasifleştirme,
 kullanıcılar, denetim kaydı) · `/hesap` (şifre değiştirme; ilk girişte zorunlu).
@@ -229,6 +248,20 @@ tek lamba seçilse bile `channel` alanını hiç koymaz,
 tek cihaz hedefinde bilinir; bölge/"tüm sistem"de efekt sunulur, yetersiz cihaz
 kendi hatasını döner). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
 — dolduğunda `efekt baslatilamadi (bos slot yok…)` döner.
+
+**Çok lambalı efekt cihaz geneli durur.** Böyle bir efekt çalışırken bir lambada
+yapılan her işlem (efekti durdur, aç/kapa, şiddet, tek lamba efekti) efekti önce
+cihazın TAMAMINDA durdurur: `DeviceControlModal` kanalsız `dim` (son "Tüm cihaz"
+şiddeti) gönderir, lamba komutu bu isteğin yanıtını bekleyip ardından gider
+(iki POST paralel gitseydi sıra bozulabilirdi). Sunucu da aynı kuralı snapshot'a
+uygular (`recordCommand`): kanal taşıyan allLamps efekti tüm lambalara yazılır,
+allLamps efektindeki lambaya gelen kanal komutu diğer lambaların `active_fx`'ini
+temizler (`clearGroupEffect`) — mobil/API istemcileri de tutarlı kalır.
+
+**Efektler sayfası** bölge altında cihaz seçimi sunar: bölgenin tamamı seçiliyse
+bölge komutu (tek publish), yalnızca bazı cihazları seçiliyse her birine cihaz
+komutu (`EffectTarget = "all" | { zones, devices }`). Cihazın lamba sayısı ve
+çalışan efekti `GET /api/devices` → `lampCount`, `activeFx` (fixtures'tan).
 
 **Mors efekti (no 22):** ek `text` alanı alır —
 `{ "action": "efekt", "number": 22, "text": "MERHABA" }` (tek lambaya verilecekse
@@ -456,7 +489,7 @@ GET    /api/devices/:deviceId/faults?limit=100  → arıza geçmişi (süren + �
 GET /api/zones/:zoneId/status        → Son bilinen zone durumu (DB'den)
 GET /api/devices/:deviceId/status    → Cihaz son durumu
 GET /api/zones                       → Tüm zone listesi
-GET /api/devices                     → Tüm cihaz listesi
+GET /api/devices                     → Tüm cihaz listesi (+ lampCount, activeFx: fixtures'tan)
 GET /api/summary                     → Dashboard üst şeridi: ölçülmüş sistem özeti
 ```
 
@@ -797,7 +830,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı.
 
 ---
 

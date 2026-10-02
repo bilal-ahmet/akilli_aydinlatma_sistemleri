@@ -5,6 +5,9 @@ import type { LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { describeDeviceError, type DeviceErrorInfo } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
+import { useLighting } from "@/app/_lib/lighting";
+import { useTechnical } from "@/app/_lib/panel";
+import { deviceName } from "@/app/_lib/format";
 
 /** Bildirim ekranda bu kadar kalır. */
 const TOAST_TTL_MS = 8000;
@@ -27,6 +30,10 @@ type Toast = {
 export function ErrorToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(0);
+  // Admin ham firmware metnini, MAC'i ve kanal no'sunu görür; müşteri cihaz
+  // adını, "Lamba N"i ve sade açıklamayı.
+  const technical = useTechnical();
+  const { devices } = useLighting();
 
   const dismiss = useCallback((id: number) => {
     setToasts((ts) => ts.filter((t) => t.id !== id));
@@ -40,12 +47,12 @@ export function ErrorToasts() {
         id,
         deviceId: e.deviceId,
         channel: e.channel,
-        info: describeDeviceError(e.error),
+        info: describeDeviceError(e.error, { technical }),
       };
       setToasts((ts) => [...ts, toast].slice(-MAX_TOASTS));
       setTimeout(() => dismiss(id), TOAST_TTL_MS);
     },
-    [dismiss],
+    [dismiss, technical],
   );
   useLiveStatus(onLive);
 
@@ -82,12 +89,26 @@ export function ErrorToasts() {
             {t.info.hint ? (
               <p className="mt-1 text-[11px] break-words text-muted">{t.info.hint}</p>
             ) : null}
-            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-muted">
-              {t.deviceId ? <span>{formatMac(t.deviceId)}</span> : null}
-              {typeof t.channel === "number" ? <span>· ch{t.channel}</span> : null}
-              {/* Katalogda olmayan hatada ham metin zaten sebep satırında. */}
-              {t.info.known ? <span className="opacity-70">· {t.info.raw}</span> : null}
-            </p>
+            {technical ? (
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-muted">
+                {t.deviceId ? <span>{formatMac(t.deviceId)}</span> : null}
+                {typeof t.channel === "number" ? <span>· ch{t.channel}</span> : null}
+                {/* Katalogda olmayan hatada ham metin zaten sebep satırında. */}
+                {t.info.known ? <span className="opacity-70">· {t.info.raw}</span> : null}
+              </p>
+            ) : (
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted">
+                {t.deviceId ? (
+                  <span>
+                    {deviceName(
+                      { name: devices.find((d) => d.deviceId === t.deviceId)?.name ?? null, deviceId: t.deviceId },
+                      false,
+                    )}
+                  </span>
+                ) : null}
+                {typeof t.channel === "number" ? <span>· Lamba {t.channel}</span> : null}
+              </p>
+            )}
           </div>
           <button
             type="button"

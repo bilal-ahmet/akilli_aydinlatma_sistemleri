@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toFixture } from "@/lib/adapters";
-import { ok, fail } from "@/lib/api/respond";
+import { ok, fail, msg } from "@/lib/api/respond";
 import { authorizeDevice } from "@/lib/auth/guard";
 import { fixtureCreateSchema } from "@/types/lighting";
 
@@ -62,7 +62,7 @@ export async function POST(
       ),
     )
     .limit(1);
-  if (dup) return fail("Bu kanal zaten tanımlı", 409);
+  if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu Lamba numarası zaten kayıtlı"), 409);
 
   try {
     const [row] = await db

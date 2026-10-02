@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FaultEvent } from "@/app/_lib/types";
 import { formatDateTime, formatDuration } from "@/app/_lib/format";
+import { useTechnical } from "@/app/_lib/panel";
 import { faultLabel } from "@/lib/faults";
 import { describeDeviceError } from "@/lib/deviceErrors";
 
@@ -13,17 +14,17 @@ import { describeDeviceError } from "@/lib/deviceErrors";
  */
 
 /** Komut hataları için başlık + sebep, ham metin yerine katalogdan okunur. */
-function describe(e: FaultEvent): { title: string; cause: string | null } {
+function describe(e: FaultEvent, technical: boolean): { title: string; cause: string | null } {
   if (e.code.startsWith("command") && e.detail) {
-    const info = describeDeviceError(e.detail);
+    const info = describeDeviceError(e.detail, { technical });
     return { title: info.title, cause: info.cause };
   }
-  return { title: faultLabel(e.code), cause: e.detail };
+  return { title: faultLabel(e.code, technical), cause: technical ? e.detail : null };
 }
 
 function Item({ e, name, now }: { e: FaultEvent; name: string; now: number | null }) {
   const ongoing = e.resolvedAt === null;
-  const { title, cause } = describe(e);
+  const { title, cause } = describe(e, useTechnical());
   const started = new Date(e.startedAt).getTime();
   const ended = e.resolvedAt ? new Date(e.resolvedAt).getTime() : now;
 
@@ -90,6 +91,7 @@ export function FaultHistory({
   const ongoing = rows.filter((e) => e.resolvedAt === null);
   const past = rows.filter((e) => e.resolvedAt !== null);
 
+  const technical = useTechnical();
   const nameOf = (ch: number | null) =>
     ch === null ? "Cihaz" : names.get(ch) || `Lamba ${ch}`;
 
@@ -119,7 +121,9 @@ export function FaultHistory({
         <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
           {loading
             ? "Yükleniyor…"
-            : "Bu cihazda kayıtlı arıza yok. Cihazdan arıza bildirimi geldiğinde (lamba arızası, sürücü/LED bayrağı ya da komut hatası) buraya başlangıç ve bitiş zamanıyla yazılır."}
+            : technical
+              ? "Bu cihazda kayıtlı arıza yok. Cihazdan arıza bildirimi geldiğinde (lamba arızası, sürücü/LED bayrağı ya da komut hatası) buraya başlangıç ve bitiş zamanıyla yazılır."
+              : "Bu cihazda kayıtlı arıza yok. Cihaz bir sorun bildirdiğinde (lamba arızası, aşırı ısınma, uygulanamayan komut vb.) buraya başlangıç ve bitiş zamanıyla yazılır."}
         </p>
       ) : (
         <div className="space-y-4">

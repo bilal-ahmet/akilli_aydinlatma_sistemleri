@@ -35,7 +35,7 @@ export function isOnline(d: DeviceView, now: number | null): boolean {
 
 /**
  * Cihaz satırındaki tek durum etiketi — en ciddi olan kazanır:
- * lamba arızası → komut hatası → hiç bağlanmadı → yanıt yok → veri bekleniyor
+ * lamba arızası → komut uygulanamadı → hiç bağlanmadı → bağlantı yok → ölçüm bekleniyor
  * (bağlı ama son 10 dk'da D4i ölçümü yok) → çevrimiçi.
  */
 export function deviceHealth(
@@ -44,12 +44,12 @@ export function deviceHealth(
 ): DeviceHealth {
   const faultyLamps = new Set((opts.faults ?? []).map((f) => f.channel)).size;
   if (faultyLamps > 0) return { label: `Arıza · ${faultyLamps} lamba`, tone: "bad" };
-  if (d.lastError) return { label: "Komut hatası", tone: "bad" };
+  if (d.lastError) return { label: "Komut uygulanamadı", tone: "bad" };
   if (!d.lastSeen) return { label: "Hiç bağlanmadı", tone: "idle" };
   // Saat henüz yoksa (ilk render) yargıya varma.
   if (opts.now === null) return { label: "…", tone: "idle" };
-  if (!isOnline(d, opts.now)) return { label: "Yanıt yok", tone: "bad" };
-  if (!opts.measure || opts.measure.powerW === null) return { label: "Veri bekleniyor", tone: "warn" };
+  if (!isOnline(d, opts.now)) return { label: "Bağlantı yok", tone: "bad" };
+  if (!opts.measure || opts.measure.powerW === null) return { label: "Ölçüm bekleniyor", tone: "warn" };
   return { label: "Çevrimiçi", tone: "ok" };
 }
 

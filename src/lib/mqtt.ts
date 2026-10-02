@@ -624,6 +624,43 @@ async function patchFixtures(
 }
 
 /**
+ * Tek lambaya komut (on/off/dim/tek lamba efekti) gelince: o lamba tüm hattı süren bir efektteyse
+ * (Chase vb.) efekt cihazın tamamında durmuş sayılır — aynı efekti taşıyan
+ * diğer lambaların `active_fx`'i de temizlenir. Web paneli bu durumda önce
+ * kanalsız durdurma gönderir; bu, kanal komutunu doğrudan gönderen
+ * istemcilerde (mobil, API) de snapshot'ın tutarlı kalmasını sağlar.
+ */
+async function clearGroupEffect(deviceId: string, channel: number, at: string, seq: number) {
+  const [cur] = await db
+    .select({ activeFx: schema.fixtures.activeFx })
+    .from(schema.fixtures)
+    .where(and(eq(schema.fixtures.deviceId, deviceId), eq(schema.fixtures.channel, channel)))
+    .limit(1);
+  const fx = cur?.activeFx;
+  if (fx == null || !effectByNumber(fx)?.allLamps) return;
+
+  const rows = await db
+    .update(schema.fixtures)
+    .set({ activeFx: null })
+    .where(and(eq(schema.fixtures.deviceId, deviceId), eq(schema.fixtures.activeFx, fx)))
+    .returning();
+  for (const f of rows) {
+    if (f.channel === channel) continue; // hedef lambanın olayı ayrıca yayınlanır
+    emitLiveEvent({
+      deviceId,
+      channel: f.channel,
+      isOn: f.isOn,
+      brightness: f.brightness,
+      activeFx: null,
+      status: "ok",
+      kind: "command",
+      at,
+      seq,
+    });
+  }
+}
+
+/**
  * publishCommand sonrası DB kaydı + snapshot (bölge veya lamba) + canlı event.
  * Publish yolundan çıkarıldığı için gecikmesi kullanıcıya yansımaz; route'lar
  * bunu `after()` içinde çağırır.
@@ -636,7 +673,12 @@ export async function recordCommand(
   cmd: CommandInput,
   meta: CommandMeta,
 ): Promise<void> {
-  const { action, value, number, channel } = cmd;
+  const { action, value, number } = cmd;
+  // Tüm hattı süren efekt kabloda kanalsız gider (buildPayload) → cihazın
+  // TÜM lambaları başlar. Snapshot da öyle işaretlensin; aksi halde istemci
+  // kanal gönderdiğinde yalnızca o lamba "efektte" görünürdü.
+  const groupFx = action === "efekt" && !!effectByNumber(number)?.allLamps;
+  const channel = groupFx ? undefined : cmd.channel;
   const at = new Date().toISOString();
 
   await db.insert(schema.commands).values({
@@ -655,6 +697,7 @@ export async function recordCommand(
     // Optimistic lamba snapshot'ı: tek kanal ya da cihazın tüm bilinen lambaları.
     const patch = patchFor(action, value, number);
     if (channel != null) {
+      await clearGroupEffect(id, channel, at, seq);
       const fx = await upsertFixture(id, channel, patch);
       if (fx) {
         emitLiveEvent({

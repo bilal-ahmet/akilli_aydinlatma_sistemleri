@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toFixture } from "@/lib/adapters";
-import { ok, fail } from "@/lib/api/respond";
+import { ok, fail, msg } from "@/lib/api/respond";
 import { authorizeDevice } from "@/lib/auth/guard";
 import { fixtureUpdateSchema } from "@/types/lighting";
 
@@ -23,7 +23,7 @@ export async function PATCH(
   const ctx = await authorizeDevice(req, deviceId, "write");
   if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
-  if (!Number.isInteger(ch)) return fail("Geçersiz kanal", 422);
+  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir Lamba numarası girin"), 422);
 
   const parsed = fixtureUpdateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -45,7 +45,7 @@ export async function PATCH(
         ),
       )
       .limit(1);
-    if (dup) return fail("Bu kanal zaten tanımlı", 409);
+    if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu Lamba numarası zaten kayıtlı"), 409);
     patch.channel = newChannel;
   }
 
@@ -84,7 +84,7 @@ export async function DELETE(
   const ctx = await authorizeDevice(req, deviceId, "write");
   if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
-  if (!Number.isInteger(ch)) return fail("Geçersiz kanal", 422);
+  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir Lamba numarası girin"), 422);
 
   try {
     const deleted = await db

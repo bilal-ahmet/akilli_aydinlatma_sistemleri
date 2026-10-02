@@ -32,6 +32,10 @@ export interface DeviceView {
   /** Cihazın son komut yanıtı hataysa metni; sonraki başarılı yanıtta temizlenir. */
   lastError: string | null;
   lastErrorAt: string | null;
+  /** Cihaza kayıtlı lamba (fixtures) sayısı — çok lambalı efektlerin `minLamps` kontrolü. */
+  lampCount: number;
+  /** Lambalarından birinde çalışan efekt (kanal sırasıyla ilki); yoksa null. */
+  activeFx: number | null;
 }
 
 /**

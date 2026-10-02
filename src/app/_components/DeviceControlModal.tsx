@@ -8,6 +8,7 @@ import { useApi, usePanel } from "@/app/_lib/panel";
 import { effectByNumber } from "@/lib/effects";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
+import { deviceName } from "@/app/_lib/format";
 import { Modal } from "./Modal";
 import { Toggle } from "./Toggle";
 import { BrightnessSlider } from "./BrightnessSlider";
@@ -85,7 +86,9 @@ export function DeviceControlModal({
 }) {
   const deviceId = device.deviceId;
   const api = useApi();
-  const { canWrite } = usePanel();
+  const { canWrite, technical } = usePanel();
+  // Admin "Kanal 3 / ch3" görür, müşteri "Lamba 3" (DALI adresi terimi yok).
+  const lampRef = (ch: number) => (technical ? `Kanal ${ch}` : `Lamba ${ch}`);
 
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [loading, setLoading] = useState(true);
@@ -313,22 +316,62 @@ export function DeviceControlModal({
     debounce("__device__", () => sendDeviceCommand(api, deviceId, { action: "dim", value }));
   }
 
+  // ── Tüm hattı süren efektin durdurulması ──────────────────
+  // Chase gibi efektler cihazın TÜM lambalarında birlikte başlar (kanal
+  // kabul etmezler), bu yüzden bir lambada yapılan her işlem (durdur, aç/kapa,
+  // şiddet, başka efekt) önce efekti cihazın tamamında durdurur — yoksa yalnızca
+  // o lamba durur, diğerleri efekte devam ederdi.
+  //
+  // Durdurma kanalsız bir `dim` komutudur ("Tüm cihaz" durdurmasıyla aynı).
+  // Ardından gelen lamba komutu bu isteğin yanıtını bekler: iki POST paralel
+  // gitseydi sunucuya ters sırada ulaşıp lamba komutunu ezebilirdi.
+  const fxStopRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  function runsGroupEffect(ch: number): boolean {
+    return !!effectByNumber(fixtures.find((f) => f.channel === ch)?.activeFx)?.allLamps;
+  }
+
+  /** Cihazın tamamında efekti durdur; lambalar "Tüm cihaz" şiddetine döner. */
+  function stopDeviceEffect() {
+    const value = deviceBrightness;
+    setDeviceOn(true);
+    // Sunucunun `dim` yaması (patchFor) ile aynı: tüm lambalar açık, aynı şiddet.
+    setFixtures((fs) => fs.map((f) => ({ ...f, isOn: true, brightness: value, activeFx: null })));
+    beginPending("__device__");
+    fxStopRef.current = sendDeviceCommand(api, deviceId, { action: "dim", value })
+      .then((seq) => applySeq("__device__", seq))
+      .catch(() => {})
+      .finally(() => endPending("__device__"));
+  }
+
+  /** Lamba komutundan önce: lamba tüm hattı süren bir efektteyse önce onu durdur. */
+  function stopGroupEffectFor(ch: number) {
+    if (runsGroupEffect(ch)) stopDeviceEffect();
+  }
+
+  /** Tek lamba komutu — varsa uçuştaki efekt durdurmasının ardından gider. */
+  function sendFixtureCommand(body: Parameters<typeof sendDeviceCommand>[2]) {
+    return fxStopRef.current.then(() => sendDeviceCommand(api, deviceId, body));
+  }
+
   // ── Tek lamba (kanal) ─────────────────────────────────────
   function toggleFixture(ch: number, on: boolean) {
+    stopGroupEffectFor(ch);
     setFixtures((fs) => fs.map((f) => (f.channel === ch ? { ...f, isOn: on, activeFx: null } : f)));
     const key = `ch-${ch}`;
     beginPending(key);
-    sendDeviceCommand(api, deviceId, { action: on ? "on" : "off", channel: ch })
+    sendFixtureCommand({ action: on ? "on" : "off", channel: ch })
       .then((seq) => applySeq(key, seq))
       .catch(() => {})
       .finally(() => endPending(key));
   }
 
   function setFixtureDim(ch: number, value: number) {
+    stopGroupEffectFor(ch);
     setFixtures((fs) =>
       fs.map((f) => (f.channel === ch ? { ...f, brightness: value, isOn: true, activeFx: null } : f)),
     );
-    debounce(`ch-${ch}`, () => sendDeviceCommand(api, deviceId, { action: "dim", value, channel: ch }));
+    debounce(`ch-${ch}`, () => sendFixtureCommand({ action: "dim", value, channel: ch }));
   }
 
   // ── Efektler ──────────────────────────────────────────────
@@ -347,10 +390,11 @@ export function DeviceControlModal({
         .catch(() => {})
         .finally(() => endPending("__device__"));
     } else {
+      stopGroupEffectFor(t);
       setFixtures((fs) => fs.map((f) => (f.channel === t ? { ...f, isOn: true, activeFx: number } : f)));
       const key = `ch-${t}`;
       beginPending(key);
-      sendDeviceCommand(api, deviceId, { action: "efekt", number, channel: t, text })
+      sendFixtureCommand({ action: "efekt", number, channel: t, text })
         .then((seq) => applySeq(key, seq))
         .catch(() => {})
         .finally(() => endPending(key));
@@ -361,13 +405,9 @@ export function DeviceControlModal({
   function stopEffect() {
     const t = effectTarget;
     if (t === null) return;
-    if (t === "device") {
-      setFixtures((fs) => fs.map((f) => ({ ...f, activeFx: null })));
-      beginPending("__device__");
-      sendDeviceCommand(api, deviceId, { action: "dim", value: deviceBrightness })
-        .then((seq) => applySeq("__device__", seq))
-        .catch(() => {})
-        .finally(() => endPending("__device__"));
+    // Tüm hattı süren efekt tek lambadan da durdurulsa cihazın tamamında durur.
+    if (t === "device" || runsGroupEffect(t)) {
+      stopDeviceEffect();
     } else {
       const f = fixtures.find((x) => x.channel === t);
       setFixtures((fs) => fs.map((x) => (x.channel === t ? { ...x, activeFx: null } : x)));
@@ -401,7 +441,11 @@ export function DeviceControlModal({
     if (!form) return;
     const ch = Number(formChannel);
     if (!Number.isInteger(ch) || ch < 0 || ch > MAX_CHANNEL) {
-      setFormError(`Kanal 0-${MAX_CHANNEL} arası bir sayı olmalı`);
+      setFormError(
+        technical
+          ? `Kanal 0-${MAX_CHANNEL} arası bir sayı olmalı`
+          : "Geçerli bir Lamba numarası girin",
+      );
       return;
     }
     setSubmitting(true);
@@ -421,7 +465,9 @@ export function DeviceControlModal({
         ),
       });
       const j = await res.json();
-      if (!res.ok) throw new Error(j.error ?? `Hata (${res.status})`);
+      if (!res.ok) {
+        throw new Error(j.error ?? (technical ? `Hata (${res.status})` : "İşlem tamamlanamadı, tekrar deneyin."));
+      }
       const saved = j.data as Fixture;
       setFixtures((fs) =>
         (form.mode === "add"
@@ -451,13 +497,19 @@ export function DeviceControlModal({
 
   const effectTitle =
     effectTarget === "device"
-      ? `${formatMac(deviceId)} — Efektler`
+      ? `${deviceName(device, technical)} — Efektler`
       : effectTarget !== null
-        ? `Kanal ${effectTarget} — Efektler`
+        ? `${lampRef(effectTarget)} — Efektler`
         : "Efektler";
+  // "Tüm cihaz": bütün lambalarda aynı efekt çalışıyorsa (tüm hattı süren
+  // efektler böyle başlar) o efekt etkin gösterilir.
+  const deviceFx =
+    fixtures.length > 0 && fixtures.every((f) => f.activeFx === fixtures[0].activeFx)
+      ? fixtures[0].activeFx
+      : null;
   const effectActiveFx =
     effectTarget === "device"
-      ? null
+      ? deviceFx
       : effectTarget !== null
         ? (fixtures.find((f) => f.channel === effectTarget)?.activeFx ?? null)
         : null;
@@ -467,7 +519,7 @@ export function DeviceControlModal({
 
   const TABS: Array<{ id: Tab; label: string }> = [
     { id: "control", label: "Kontrol" },
-    { id: "telemetry", label: "Telemetri" },
+    { id: "telemetry", label: technical ? "Telemetri" : "Ölçümler" },
     { id: "faults", label: "Arıza geçmişi" },
   ];
 
@@ -477,10 +529,11 @@ export function DeviceControlModal({
         open
         onClose={onClose}
         size="lg"
-        title={device.name || formatMac(deviceId)}
+        title={deviceName(device, technical)}
         subtitle={
-          <span className="font-mono text-xs">
-            {formatMac(deviceId)}
+          <span className="text-xs">
+            {technical ? null : "Cihaz kodu "}
+            <span className="font-mono">{formatMac(deviceId)}</span>
             {device.zoneName ? ` · ${device.zoneName}` : ""}
           </span>
         }
@@ -488,7 +541,7 @@ export function DeviceControlModal({
         {/* Cihazın son komut yanıtı hata ise: başarılı bir yanıt gelene kadar durur */}
         {lastError ? (
           (() => {
-            const info = describeDeviceError(lastError);
+            const info = describeDeviceError(lastError, { technical });
             return (
               <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
                 <p className="font-semibold">{info.title}</p>
@@ -556,7 +609,9 @@ export function DeviceControlModal({
         {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
         <div className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-base font-semibold text-text">Tüm cihaz</span>
+            <span className="text-base font-semibold text-text">
+              {technical ? "Tüm cihaz" : "Tüm lambalar"}
+            </span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -603,8 +658,9 @@ export function DeviceControlModal({
             <p className="py-3 text-sm text-muted">Yükleniyor…</p>
           ) : fixtures.length === 0 ? (
             <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
-              Bu cihazda tanımlı lamba yok. &quot;Lamba ekle&quot; ile kanal tanımla; cihaz
-              çok-lamba verisi yayınladığında lambalar otomatik da eklenir.
+              {technical
+                ? "Bu cihazda tanımlı lamba yok. “Lamba ekle” ile kanal tanımla; cihaz çok-lamba verisi yayınladığında lambalar otomatik da eklenir."
+                : "Bu cihazın lambaları, cihaz çalışmaya başlayınca burada görünür. İsterseniz “Lamba ekle” ile kendiniz de ekleyebilirsiniz."}
             </p>
           ) : (
             fixtures.map((f) => {
@@ -616,7 +672,9 @@ export function DeviceControlModal({
                       <span className="truncate text-sm font-semibold text-text">
                         {f.name || `Lamba ${f.channel}`}
                       </span>
-                      <span className="shrink-0 font-mono text-xs text-muted">ch{f.channel}</span>
+                      {technical ? (
+                        <span className="shrink-0 font-mono text-xs text-muted">ch{f.channel}</span>
+                      ) : null}
                       {fx ? (
                         <span className="shrink-0 rounded-md bg-glow/20 px-2 py-0.5 text-xs font-semibold text-glow">
                           {fx.label}
@@ -632,7 +690,7 @@ export function DeviceControlModal({
                       <button
                         type="button"
                         onClick={() => setEffectTarget(f.channel)}
-                        aria-label={`Kanal ${f.channel} efekti`}
+                        aria-label={`${lampRef(f.channel)} efekti`}
                         title="Efektler"
                         className={iconBtn}
                       >
@@ -643,7 +701,7 @@ export function DeviceControlModal({
                       <button
                         type="button"
                         onClick={() => openEditForm(f)}
-                        aria-label={`Kanal ${f.channel} düzenle`}
+                        aria-label={`${lampRef(f.channel)} düzenle`}
                         title="Lambayı düzenle"
                         className={iconBtn}
                       >
@@ -654,7 +712,7 @@ export function DeviceControlModal({
                       <button
                         type="button"
                         onClick={() => deleteFixture(f.channel)}
-                        aria-label={`Kanal ${f.channel} sil`}
+                        aria-label={`${lampRef(f.channel)} sil`}
                         title="Lambayı sil"
                         className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-danger/15 hover:text-danger"
                       >
@@ -665,14 +723,14 @@ export function DeviceControlModal({
                       <Toggle
                         checked={f.isOn}
                         onChange={(on) => toggleFixture(f.channel, on)}
-                        label={`Kanal ${f.channel} aç/kapat`}
+                        label={`${lampRef(f.channel)} aç/kapat`}
                       />
                     </div>
                   </div>
                   <BrightnessSlider
                     value={f.isOn ? f.brightness : 0}
                     onChange={(v) => setFixtureDim(f.channel, v)}
-                    label={`Kanal ${f.channel} parlaklığı`}
+                    label={`${lampRef(f.channel)} parlaklığı`}
                   />
                 </div>
               );
@@ -691,8 +749,9 @@ export function DeviceControlModal({
         title={form?.mode === "edit" ? "Lambayı düzenle" : "Lamba ekle"}
         subtitle={
           form?.mode === "edit" ? (
-            <span className="font-mono text-xs">
-              {form.original.name || `Lamba ${form.original.channel}`} · ch{form.original.channel}
+            <span className="text-xs">
+              {form.original.name || `Lamba ${form.original.channel}`}
+              {technical ? <span className="font-mono"> · ch{form.original.channel}</span> : null}
             </span>
           ) : undefined
         }
@@ -705,7 +764,7 @@ export function DeviceControlModal({
         <form onSubmit={submitForm} className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted" htmlFor="fx-ch">
-              Kanal (DALI adresi) *
+              {technical ? "Kanal (DALI adresi) *" : "Lamba numarası"}
             </label>
             <input
               id="fx-ch"
@@ -715,21 +774,27 @@ export function DeviceControlModal({
               className="w-full rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm text-text outline-none focus-visible:border-accent"
               value={formChannel}
               onChange={(e) => setFormChannel(e.target.value)}
-              placeholder={`0 - ${MAX_CHANNEL}`}
+              placeholder={technical ? `0 - ${MAX_CHANNEL}` : "Örn. 3"}
             />
             {/* Kanal = cihazın DALI adresi; değiştirmek komutu başka lambaya yollar. */}
             {form?.mode === "edit" && formChannel !== String(form.original.channel) ? (
               <p className="mt-1.5 rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
-                Kanal cihazın DALI adresidir; değiştirirsen komutlar artık{" "}
-                <span className="font-mono">ch{formChannel || "?"}</span> adresindeki lambaya
-                gider. Eski adresin D4i geçmişi ch{form.original.channel} altında kalır ve cihaz
-                o adresi raporlamayı sürdürürse lamba listede yeniden belirir.
+                {technical ? (
+                  <>
+                    Kanal cihazın DALI adresidir; değiştirirsen komutlar artık{" "}
+                    <span className="font-mono">ch{formChannel || "?"}</span> adresindeki lambaya
+                    gider. Eski adresin D4i geçmişi ch{form.original.channel} altında kalır ve cihaz
+                    o adresi raporlamayı sürdürürse lamba listede yeniden belirir.
+                  </>
+                ) : (
+                  <>Numarayı yalnızca yanlış girildiyse değiştirin.</>
+                )}
               </p>
             ) : null}
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted" htmlFor="fx-name">
-              İsim (opsiyonel)
+              İsim (isteğe bağlı)
             </label>
             <input
               id="fx-name"
@@ -738,10 +803,12 @@ export function DeviceControlModal({
               onChange={(e) => setFormName(e.target.value)}
               placeholder="Örn. Sol kol"
             />
-            <p className="mt-1 text-xs text-muted">
-              Lamba listesinde ve D4i telemetrisinde bu isim görünür. Boş bırakılırsa{" "}
-              <span className="font-mono">Lamba {formChannel || "<kanal>"}</span> yazılır.
-            </p>
+            {technical ? (
+              <p className="mt-1 text-xs text-muted">
+                Lamba listesinde ve D4i telemetrisinde bu isim görünür. Boş bırakılırsa{" "}
+                <span className="font-mono">Lamba {formChannel || "<kanal>"}</span> yazılır.
+              </p>
+            ) : null}
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button

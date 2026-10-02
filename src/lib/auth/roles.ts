@@ -12,9 +12,9 @@ export const CUSTOMER_ROLES = ["manager", "viewer"] as const;
 export type CustomerRole = (typeof CUSTOMER_ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Yönetici (platform)",
-  manager: "Müşteri yöneticisi",
-  viewer: "İzleyici (salt okunur)",
+  admin: "Sistem yöneticisi",
+  manager: "Yönetici",
+  viewer: "İzleyici",
 };
 
 /** Bu rol verilen müşteride yazma (komut, CRUD) yapabilir mi? */

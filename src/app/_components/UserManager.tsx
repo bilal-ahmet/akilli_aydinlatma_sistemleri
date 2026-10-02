@@ -133,7 +133,7 @@ export function UserManager({
         });
       }
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.error ?? `İşlem başarısız (${res.status})`);
+      if (!res.ok) throw new Error(j?.error ?? "İşlem tamamlanamadı, tekrar deneyin.");
       const saved = j.data as CustomerUser;
       setUsers((us) =>
         (form.mode === "create" ? [...us, saved] : us.map((u) => (u.id === saved.id ? saved : u))).sort(
@@ -230,7 +230,7 @@ export function UserManager({
                     <span className="font-mono text-sm text-text">{u.username}</span>
                     {u.displayName ? <span className="text-sm text-muted">· {u.displayName}</span> : null}
                     <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${u.role === "manager" ? "bg-glow/20 text-accent" : "bg-panel-2 text-muted"}`}>
-                      {u.role === "manager" ? "Yönetici" : "İzleyici"}
+                      {ROLE_LABELS[u.role]}
                     </span>
                     {!u.isActive ? (
                       <span className="rounded-md bg-danger/15 px-1.5 py-0.5 text-[10px] font-semibold text-danger">pasif</span>
@@ -267,7 +267,7 @@ export function UserManager({
 
       <p className="mt-2 text-[11px] text-muted">
         <span className="font-medium text-text">Yönetici</span>: bölge, cihaz, lamba ve kullanıcıları yönetir, komut verir.{" "}
-        <span className="font-medium text-text">İzleyici</span>: yalnızca durumu ve telemetriyi görür.
+        <span className="font-medium text-text">İzleyici</span>: yalnızca durumu ve ölçümleri görür, değişiklik yapamaz.
       </p>
 
       <Modal
@@ -296,7 +296,7 @@ export function UserManager({
                 autoCapitalize="none"
                 spellCheck={false}
                 onChange={(e) => setUsername(e.target.value.toLowerCase())}
-                placeholder="orn. ahmet.yilmaz"
+                placeholder="örn. ahmet.yilmaz"
               />
               <p className="mt-1 text-[11px] text-muted">3-64 karakter: küçük harf, rakam, nokta, alt çizgi, tire.</p>
             </div>
@@ -304,7 +304,7 @@ export function UserManager({
 
           {form?.mode !== "reset" ? (
             <div>
-              <label className={labelCls} htmlFor="um-name">Ad soyad (opsiyonel)</label>
+              <label className={labelCls} htmlFor="um-name">Ad soyad (isteğe bağlı)</label>
               <input id="um-name" className={inputCls} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
             </div>
           ) : null}

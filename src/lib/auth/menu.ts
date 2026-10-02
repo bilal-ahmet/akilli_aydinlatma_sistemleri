@@ -18,12 +18,12 @@ export function menuLinksFor(user: SessionUser, customerSlug?: string): MenuLink
   const links: MenuLink[] = [];
   if (user.role === "admin") links.push({ href: "/admin", label: "Müşteriler" });
   if (customerSlug) {
-    links.push({ href: `/c/${customerSlug}`, label: "Dashboard" });
+    links.push({ href: `/c/${customerSlug}`, label: "Panel" });
     if (user.role === "admin" || user.role === "manager") {
       links.push({ href: `/c/${customerSlug}/kullanicilar`, label: "Kullanıcılar" });
     }
   } else if (user.customer) {
-    links.push({ href: `/c/${user.customer.slug}`, label: "Dashboard" });
+    links.push({ href: `/c/${user.customer.slug}`, label: "Panel" });
   }
   links.push({ href: "/hesap", label: "Hesabım ve şifre" });
   return links;

@@ -23,12 +23,17 @@ export interface AlertItem {
   since: string | null;
 }
 
-export function openAlerts(faults: OpenFault[], devices: DeviceView[]): AlertItem[] {
+/** `technical: false` → müşteri kullanıcılarına sade başlık/sebep (bkz. useTechnical). */
+export function openAlerts(
+  faults: OpenFault[],
+  devices: DeviceView[],
+  technical = true,
+): AlertItem[] {
   const items: AlertItem[] = faults.map((f) => ({
     key: `f:${f.deviceId}:${f.channel}:${f.code}`,
     kind: "fault",
     code: f.code,
-    title: faultLabel(f.code),
+    title: faultLabel(f.code, technical),
     cause: null,
     deviceId: f.deviceId,
     deviceName: f.deviceName,
@@ -38,7 +43,7 @@ export function openAlerts(faults: OpenFault[], devices: DeviceView[]): AlertIte
   }));
   for (const d of devices) {
     if (!d.lastError) continue;
-    const info = describeDeviceError(d.lastError);
+    const info = describeDeviceError(d.lastError, { technical });
     items.push({
       key: `c:${d.deviceId}`,
       kind: "command",

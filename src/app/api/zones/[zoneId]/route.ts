@@ -43,7 +43,7 @@ export async function PATCH(
 
   if (Object.keys(patch).length === 0) {
     const [row] = await db.select().from(schema.zones).where(eq(schema.zones.slug, zoneId)).limit(1);
-    return row ? ok({ ...toZone(row), movedTo: null }) : fail("Zone bulunamadı", 404);
+    return row ? ok({ ...toZone(row), movedTo: null }) : fail("Bölge bulunamadı", 404);
   }
 
   const [row] = await db
@@ -52,7 +52,7 @@ export async function PATCH(
     .where(eq(schema.zones.slug, zoneId))
     .returning();
 
-  if (!row) return fail("Zone bulunamadı", 404);
+  if (!row) return fail("Bölge bulunamadı", 404);
 
   if (movedTo) {
     await refreshTenancy();
@@ -91,7 +91,7 @@ export async function DELETE(
     .from(schema.zones)
     .where(eq(schema.zones.slug, zoneId))
     .limit(1);
-  if (!zone) return fail("Zone bulunamadı", 404);
+  if (!zone) return fail("Bölge bulunamadı", 404);
 
   try {
     await db.transaction(async (tx) => {
@@ -141,6 +141,6 @@ export async function DELETE(
     });
     return ok({ deleted: zoneId });
   } catch (err) {
-    return fail("Zone silinemedi", 500, String(err));
+    return fail("Bölge silinemedi", 500, String(err));
   }
 }

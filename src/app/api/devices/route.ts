@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toDeviceView } from "@/lib/adapters";
-import { ok, fail } from "@/lib/api/respond";
+import { ok, fail, msg } from "@/lib/api/respond";
 import { deviceCreateSchema } from "@/types/lighting";
 import { normalizeMac } from "@/lib/mac";
 import { authorizeScope } from "@/lib/auth/guard";
@@ -56,7 +56,27 @@ export async function GET(req: Request) {
       }
     }
 
-    return ok(rows.map((r) => toDeviceView({ ...r, ...latest.get(r.deviceId) })));
+    // Lamba sayısı + çalışan efekt (Efektler sayfasındaki cihaz seçimi için).
+    const lamps = new Map<string, { lampCount: number; activeFx: number | null }>();
+    if (ids.length > 0) {
+      const fixtures = await db
+        .select({ deviceId: schema.fixtures.deviceId, activeFx: schema.fixtures.activeFx })
+        .from(schema.fixtures)
+        .where(inArray(schema.fixtures.deviceId, ids))
+        .orderBy(asc(schema.fixtures.channel));
+      for (const f of fixtures) {
+        const cur = lamps.get(f.deviceId) ?? { lampCount: 0, activeFx: null };
+        cur.lampCount += 1;
+        cur.activeFx ??= f.activeFx;
+        lamps.set(f.deviceId, cur);
+      }
+    }
+
+    return ok(
+      rows.map((r) =>
+        toDeviceView({ ...r, ...latest.get(r.deviceId), ...lamps.get(r.deviceId) }),
+      ),
+    );
   } catch (err) {
     return fail("Cihazlar okunamadı", 500, String(err));
   }
@@ -73,7 +93,16 @@ export async function POST(req: Request) {
   }
 
   const mac = normalizeMac(parsed.data.mac);
-  if (!mac) return fail("Geçersiz MAC adresi (12 hane hex bekleniyor)", 422);
+  if (!mac) {
+    return fail(
+      msg(
+        ctx.user,
+        "Geçersiz MAC adresi (12 hane hex bekleniyor)",
+        "Geçersiz cihaz kodu: 12 karakter olmalı (rakamlar ve A-F harfleri)",
+      ),
+      422,
+    );
+  }
   const { zoneSlug, name } = parsed.data;
 
   // Bölge bu müşterinin mi?
@@ -99,7 +128,7 @@ export async function POST(req: Request) {
           .limit(1)
       : [];
     if (dupZone?.customerId === ctx.customer.id) {
-      return fail("Bu MAC adresi zaten kayıtlı", 409);
+      return fail(msg(ctx.user, "Bu MAC adresi zaten kayıtlı", "Bu cihaz kodu zaten kayıtlı"), 409);
     }
     await audit({
       req,
@@ -108,7 +137,14 @@ export async function POST(req: Request) {
       action: "device.create_conflict",
       target: mac,
     });
-    return fail("Bu MAC adresi başka bir hesapta kayıtlı. Yöneticinize başvurun.", 409);
+    return fail(
+      msg(
+        ctx.user,
+        "Bu MAC adresi başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+        "Bu cihaz kodu başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+      ),
+      409,
+    );
   }
 
   try {

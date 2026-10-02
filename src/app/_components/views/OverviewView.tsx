@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRef } from "react";
 import { useLighting } from "@/app/_lib/lighting";
-import { usePanel } from "@/app/_lib/panel";
+import { usePanel, useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { useZoneStats } from "@/app/_lib/useZoneStats";
 import { openAlerts } from "@/app/_lib/alerts";
-import { summarize } from "@/app/_lib/mockData";
+import { isLit, summarize } from "@/app/_lib/mockData";
 import { formatInt, formatKw } from "@/app/_lib/format";
 import { formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
@@ -65,7 +65,9 @@ function OnlinePill() {
 
 /** Tek direk: lamba başı + ışık konisi; şiddet konide opaklık olarak görünür. */
 function Pole({ zone }: { zone: Zone }) {
-  const lvl = zone.isOn ? Math.max(0.15, zone.brightness / 100) : 0;
+  // %0 = sönük (dim 0 bölgeyi "açık" bırakır ama lamba yanmaz); taban %15
+  // yalnızca loş ama yanan lambanın görünür kalması için.
+  const lvl = isLit(zone) ? Math.max(0.15, zone.brightness / 100) : 0;
   return (
     <div className="relative flex h-28 min-w-[136px] flex-1 flex-col items-center">
       <div className="absolute bottom-0 top-1.5 w-[3px] rounded-sm bg-[#3a352c]" />
@@ -232,7 +234,8 @@ function SystemHero() {
   const { zones, masterOn, masterBrightness, setAll, setAllBrightness } = useLighting();
   const { canWrite, customerSlug } = usePanel();
   const shown = masterOn ? masterBrightness : 0;
-  const onZones = zones.filter((z) => z.isOn).length;
+  const onZones = zones.filter(isLit).length;
+  const systemLit = masterOn && (masterBrightness > 0 || zones.some(isLit));
   const fx = new Set(zones.filter((z) => z.isOn && z.activeFx).map((z) => z.activeFx));
   const fxName = fx.size === 1 ? effectByNumber([...fx][0])?.label : null;
 
@@ -252,7 +255,7 @@ function SystemHero() {
             Tüm sistem · canlı
           </p>
           <h2 className="text-[30px] font-bold leading-[1.05] tracking-[-0.025em] sm:text-4xl">
-            {masterOn ? "Aydınlatma açık" : "Aydınlatma kapalı"}
+            {systemLit ? "Aydınlatma açık" : "Aydınlatma kapalı"}
           </h2>
           <p className="text-sm text-[#c9c3b6]">
             {zones.length === 0
@@ -332,6 +335,7 @@ function SystemHero() {
 /** Amber kart: şebekeden çekilen ölçülmüş güç + sürücü verimi. */
 function PowerCard() {
   const { zones, live } = useLighting();
+  const gear = useTechnical() ? "Sürücü" : "Güç ünitesi";
   const measured = live?.powerW ?? null;
   const load = live?.loadPowerW ?? null;
   const efficiency =
@@ -380,11 +384,11 @@ function PowerCard() {
             <div
               className="h-1.5 overflow-hidden rounded-[3px] bg-[rgba(29,28,26,.15)]"
               role="img"
-              aria-label={`Sürücü verimi yüzde ${efficiency}`}
+              aria-label={`${gear} verimi yüzde ${efficiency}`}
             >
               <div className="h-full rounded-[3px] bg-[#1d1c1a]" style={{ width: `${efficiency}%` }} />
             </div>
-            <p className="text-xs font-medium text-[#3a2a10]">Sürücü verimi %{efficiency}</p>
+            <p className="text-xs font-medium text-[#3a2a10]">{gear} verimi %{efficiency}</p>
           </div>
         ) : null}
       </div>
@@ -412,14 +416,15 @@ function ZoneLevels() {
         <div className="scroll-x flex items-end gap-3 overflow-x-auto pb-2 sm:gap-[18px]">
           {zones.map((z) => {
             const pct = z.isOn ? z.brightness : 0;
+            const level = isLit(z) ? `%${z.brightness}` : "kapalı";
             return (
               <Link
                 key={z.id}
                 href={`/c/${customerSlug}/bolgeler/${z.id}`}
-                title={`${z.name} — ${z.isOn ? `%${z.brightness}` : "kapalı"}`}
+                title={`${z.name} — ${level}`}
                 className="group flex min-w-[76px] flex-1 flex-col items-center gap-2"
               >
-                <span className="font-mono text-xs text-ink-2">{z.isOn ? `%${z.brightness}` : "kapalı"}</span>
+                <span className="font-mono text-xs text-ink-2">{level}</span>
                 <span className="flex h-[150px] w-full max-w-14 items-end overflow-hidden rounded-lg bg-track transition-[filter] group-hover:brightness-95">
                   <span
                     className="block w-full rounded-lg bg-[linear-gradient(180deg,oklch(0.84_0.15_78),oklch(0.71_0.18_55))] shadow-[0_0_22px_oklch(0.77_0.16_68/.5)] transition-[height] duration-500"
@@ -488,8 +493,9 @@ function ZoneList() {
 export function OverviewView() {
   const { zones, devices, faults, live } = useLighting();
   const { date, time } = useToday();
+  const technical = useTechnical();
   const summary = summarize(zones);
-  const alerts = openAlerts(faults, devices);
+  const alerts = openAlerts(faults, devices, technical);
   const faultyLamps = new Set(faults.map((f) => `${f.deviceId}:${f.channel}`)).size;
   const commandErrors = alerts.length - faults.length;
 
@@ -518,7 +524,7 @@ export function OverviewView() {
           hint={summary.polesOff === 0 ? "Kapalı direk yok" : `${formatInt(summary.polesOff)} direk kapalı`}
         />
         <StatCard
-          label="Yük gücü"
+          label={technical ? "Yük gücü" : "Lamba gücü"}
           value={live?.loadPowerW != null ? splitPower(live.loadPowerW).value : "—"}
           unit={live?.loadPowerW != null ? splitPower(live.loadPowerW).unit : undefined}
           hint={live?.loadPowerW != null ? "LED'e giden güç" : "Cihaz henüz bildirmedi"}
@@ -546,7 +552,11 @@ export function OverviewView() {
               ? "Tüm cihazlar normal"
               : [
                   faultyLamps > 0 ? `${faultyLamps} lambada arıza` : null,
-                  commandErrors > 0 ? `${commandErrors} komut hatası` : null,
+                  commandErrors > 0
+                    ? technical
+                      ? `${commandErrors} komut hatası`
+                      : `${commandErrors} uygulanamayan komut`
+                    : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")
