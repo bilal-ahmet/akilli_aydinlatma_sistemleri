@@ -172,7 +172,8 @@ MAC'e göre üretilir (`src/lib/topics.ts`).
 Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
 Meven:<slug>/cmd   ← Backend publish, o bölgedeki ESP32'ler subscribe (bölge komutu)
 Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
-Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
+Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri + komut yanıtı)
+Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürümü, OTA durumu)
 ```
 
 - **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
@@ -189,8 +190,9 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
   `retired_zone_slugs`'a yazılır ve **bir daha verilmez**: o slug ile flaşlanmış
   cihazlar topic'i dinlemeye devam eder, slug başka müşteriye verilseydi onun
   komutlarını alırdı.
-- Backend veri aboneliği `+/data` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
-  gömülemez); MAC payload'daki `deviceId`'den okunur.
+- Backend veri aboneliği `+/data` ve `+/health` (MQTT `+` joker'i `Meven:` ile
+  aynı seviyeye gömülemez); MAC topic'ten (`parseUplinkTopic`), eski kontratta
+  payload'daki `deviceId`'den okunur.
 - **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
   topic'lerine ayrıca fanout yapmaz. Bu yüzden tüm cihazlar `ZONE_SLUG` ile
   flash'lanmış olmalı — flash'lanmamış cihaz bölge komutu almaz. (Geçiş
@@ -209,13 +211,17 @@ Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri)
 ### Command Payload (Backend → ESP32, `Meven:<MAC>/cmd` veya `Meven:all/cmd`)
 
 ```json
-{ "action": "dim", "value": 75, "channel": 3 }
+{ "action": "dim", "value": 75, "channel": 3, "id": "51f2d445-ec29-42d7-a2a9-901682322c49" }
 ```
 
-`action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"`
+`action` değerleri: `"on"` | `"off"` | `"dim"` | `"efekt"` (+ bakım: `"commission"` | `"ota_check"`, aşağıda)
 `value`: 0–100 arası integer (yalnızca dim için kullanılır)
 `channel`: hedef **DALI kanalı (lamba)** — 0–63. Bir ESP'ye birden çok bağımsız
-aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür.
+aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür. Firmware 1.0.9
+sahada cihaz başına en fazla 5 lamba, kanal **0–4** kullanır (taramada atanır).
+`id`: komut kimliği = `commands.request_id`. `publishCommand` publish'ten ÖNCE
+üretir ve **her** komuta koyar; cihaz yanıtında aynen geri yollar (bkz. Komut
+yanıtı). Bölge/"Tüm Sistem" komutunda tek id, her cihaz onunla yanıtlar.
 
 > **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
 > "Tüm cihaz"ı, bölge, "Tüm Sistem") payload'da `channel` **bulunmaz**; cihaz
@@ -224,6 +230,17 @@ aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür.
 > (`"bilinmeyen action"`), o yüzden 255 tamamen kaldırıldı (`buildPayload`).
 > API kontratı zaten aynıydı: `channel` yokluğu = tüm cihaz. Sahada doğrulamak
 > için: `npm run watch:cmd`.
+
+**Bakım komutları (firmware 1.0.9+):** `{ "action": "commission", "id": "…" }`
+(DALI taraması: adressiz yeni lambalara boş kanal verir, ışık değişmez) ve
+`{ "action": "ota_check", "id": "…" }` (OTA kontrolü; yeni sürüm varsa cihaz
+indirip **yeniden başlar**). YALNIZCA `Meven:<MAC>/cmd`'ye gider
+(`publishMaintenance`, `POST /api/devices/:mac/maintenance`); bölge/`all`
+karşılığı yoktur (Kural #17). Işık `ACTIONS`'ına girmez → snapshot'a dokunmaz.
+`"ok"` yanıtı yalnızca **kabul** demektir: tarama sonucu `d4i_periodic`
+raporlarıyla (yeni kanal → `upsertFixture`), OTA ilerlemesi `/health` ile gelir.
+Tarama admin + manager, OTA yalnızca admin. UI: cihaz modalinin **Bakım**
+sekmesi (`_components/DeviceMaintenance.tsx`).
 
 **Efekt komutu:** `{ "action": "efekt", "number": 10 }` — `number`
 1-tabanlı efekt sıra no, donmuş katalog `src/lib/effects.ts`. `channel` ile tek
@@ -281,14 +298,23 @@ topic'ten çözülür (`macFromDataTopic`).
 **1. Komut yanıtı** — cihaz her komuttan sonra sonucu yayınlar:
 
 ```json
-{ "status": "ok" }
-{ "status": "error", "error": "bilinmeyen action" }
+{ "action": "dim", "id": "51f2d445-…", "status": "ok" }
+{ "action": "dim", "id": "51f2d445-…", "status": "error", "error": "bilinmeyen action" }
+{ "status": "error", "error": "gecersiz json" }      // eski firmware / bozuk JSON: action, id yok
 ```
 
 Hata metni SSE ile dashboard'a gider: sağ altta bildirim + cihaz kartında rozet
-(`devices.last_error`, sonraki `ok` yanıtında temizlenir). En son bekleyen komut
-`commands.status='failed'` olur ve o komutun `channel`'ı olaya eklenir (yanıt
-kanal taşımıyor; kanala özgü hatalarda hangi lamba olduğunu göstermek için).
+(`devices.last_error`, sonraki `ok` yanıtında temizlenir). Yanıt **`id` ile o
+komuta** bağlanır (`commands.status` → `delivered` / `failed`) ve komutun
+`channel`'ı olaya eklenir. `id` yoksa (ya da UUID değilse) eski tahmin: o
+cihaza giden en son bekleyen komut `failed` olur.
+
+> **Ack, `commands` satırından önce gelebilir** (INSERT `after()`'ta, Kural #10).
+> Bu yüzden `publishCommand` id'yi bellek içi `inflight` haritasına yazar
+> (kanal + bakım türü, ~10 dk TTL); satır yoksa sonuç oraya bırakılır ve
+> `insertCommandRow` INSERT'te onu kullanır. Bakım yanıtları (`commission`,
+> `ota_check`) rozete / `fault_events`'e YAZILMAZ; SSE'ye `kind:"maintenance"`
+> olarak gider ve yalnızca Bakım sekmesinde gösterilir (`ErrorToasts` atlar).
 
 Ham metinler `src/lib/deviceErrors.ts` kataloğunda okunur başlık + sebep +
 ipucuna çevrilir (`describeDeviceError`); UI ham metin yerine bunu gösterir.
@@ -508,6 +534,19 @@ GET /api/faults             → süren lamba arızaları (cihaz + bölge bilgisi
 GET /api/faults?days=30     → + son N günde (1-90) çözülenler (id, resolvedAt)
 ```
 
+### Cihaz Bakımı
+
+```
+POST /api/devices/:deviceId/maintenance   { "action": "commission" | "ota_check" }  → 202 { requestId }
+```
+
+Yalnızca tek cihaz. `ota_check` admin dışında 403. OTA koruması
+(`lib/otaGuard.ts`, bellek içi, `/health`'ten beslenir): cihaz zaten
+güncelleniyorsa ya da aynı bölgede başka bir cihaz güncelleniyor / son 3 dk
+içinde OTA isteği aldıysa **409** (bölge eşlemesi: tenancy `deviceZone`).
+Kayıt `commands` (`target_type:'device'`) + `audit_log` (`device.commission` /
+`device.ota_check`).
+
 ### Dashboard Real-time (SSE)
 
 Dashboard cihaz durumlarını real-time takip etmek için **SSE** (Server-Sent Events) kullanır — Next.js App Router'da native çalışır, custom server gerekmez:
@@ -614,9 +653,16 @@ CREATE TABLE devices (
   last_seen     TIMESTAMPTZ,
   last_error    VARCHAR(200),   -- son komut yanıtı hatası (ok gelince NULL'lanır)
   last_error_at TIMESTAMPTZ,
+  firmware_version VARCHAR(32), -- son /health mesajındaki sürüm
+  health        JSONB,          -- son /health mesajı (ham; OTA durumu dahil)
+  health_at     TIMESTAMPTZ,    -- son /health zamanı
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+> `health*` sütunları migration `0008_device_health.sql`. `/health` mesaj başına
+> satır açmaz, `devices` satırını günceller. `GET /api/devices` bunları
+> `firmwareVersion`, `resetReason`, `ota`, `healthAt` olarak döner.
 
 ### `fixtures`
 
@@ -831,6 +877,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı.
+17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 
 ---
 

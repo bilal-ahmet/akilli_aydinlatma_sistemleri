@@ -9,6 +9,21 @@ import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/eff
 export const ACTIONS = ["on", "off", "dim", "efekt"] as const;
 export type Action = (typeof ACTIONS)[number];
 
+/**
+ * Bakım komutları (firmware 1.0.9+). Işık komutlarından AYRI tutulur: lamba
+ * snapshot'ına (patchFor) dokunmazlar ve YALNIZCA tek cihaza (Meven:<MAC>/cmd)
+ * gönderilirler — bkz. lib/mqtt.ts publishMaintenance.
+ *   - "commission": DALI hattını tarar, adressiz yeni lambalara kanal verir.
+ *   - "ota_check":  OTA kontrolünü hemen başlatır; yeni sürüm varsa cihaz
+ *                   indirip yeniden başlar. Toplu gönderilmez (Thread ağı tıkanır).
+ */
+export const MAINTENANCE_ACTIONS = ["commission", "ota_check"] as const;
+export type MaintenanceAction = (typeof MAINTENANCE_ACTIONS)[number];
+
+export function isMaintenanceAction(a: unknown): a is MaintenanceAction {
+  return typeof a === "string" && (MAINTENANCE_ACTIONS as readonly string[]).includes(a);
+}
+
 // Kanal (DALI lambası) no: bir ESP'ye bağlı bağımsız aydınlatma adresi.
 // 0-63 (DALI kısa adres). Komutta yoksa "tüm cihaz" (bütün lambalar) hedeflenir.
 export const MAX_CHANNEL = 63;
@@ -46,6 +61,9 @@ export const commandPayloadSchema = z.object({
   // Mors efektinin (no 22) çalacağı metin. Gönderilmezse cihaz son ayarlanan
   // metni tekrar çalar — bu yüzden boş metin gönderilmez, alan hiç konmaz.
   text: z.string().max(MORSE_TEXT_MAX).optional(),
+  // Komut kimliği = commands.request_id. Cihaz cevabında (ack) aynen geri
+  // yollar; hata doğru komuta/lambaya bu id ile bağlanır.
+  id: z.string().optional(),
 });
 export type CommandPayload = z.infer<typeof commandPayloadSchema>;
 
@@ -173,12 +191,15 @@ export function d4iHasFault(d: D4iPeriodic): boolean {
 }
 
 // ── Komut yanıtı (ESP32 → Backend, aynı /data topic'i) ───────
-// Cihaz her komuttan sonra işleme sonucunu yayınlar. Korelasyon alanı yok —
-// MAC topic'ten, hedef komut ise "o cihazın en son bekleyen komutu" olarak
-// eşleştirilir (bkz. lib/mqtt.ts handleAck).
+// Cihaz her komuttan sonra işleme sonucunu yayınlar. Firmware 1.0.9+ komutun
+// `action`'ını ve gönderilen `id`'yi aynen geri yollar; komut bu id ile
+// eşleştirilir. id'siz (eski firmware / "gecersiz json") yanıtta hedef komut
+// "o cihazın en son bekleyen komutu" olarak tahmin edilir (bkz. lib/mqtt.ts handleAck).
 export const commandAckSchema = z.object({
   status: z.enum(["ok", "error"]),
   error: z.string().optional(),
+  action: z.string().optional(),
+  id: z.union([z.string(), z.number()]).optional(),
 });
 export type CommandAck = z.infer<typeof commandAckSchema>;
 
@@ -208,6 +229,42 @@ export function parseUplink(raw: unknown): Uplink | null {
   return p.success ? { kind: "ack", data: p.data } : null;
 }
 
+// ── Sağlık mesajı (ESP32 → Backend, Meven:<MAC>/health) ──────
+// Firmware 1.0.9+ ~30 sn'de bir yayınlar. OTA ilerlemesi buradan okunur.
+// Bilinmeyen alanlar korunur (passthrough) — ham mesaj devices.health'e yazılır.
+export const OTA_STATES = [
+  "idle",
+  "waiting_network",
+  "checking",
+  "downloading",
+  "verifying",
+  "updated",
+  "failed",
+] as const;
+
+const nstr = z.string().nullable().optional();
+
+export const otaStatusSchema = z
+  .object({
+    state: nstr, // OTA_STATES — yeni değerler gelirse reddedilmesin diye string
+    last_result: nstr, // up_to_date | updated | blocked | failed
+    busy: z.boolean().nullable().optional(),
+    last_target_version: nstr,
+    last_message: nstr,
+  })
+  .passthrough();
+export type OtaStatus = z.infer<typeof otaStatusSchema>;
+
+export const deviceHealthSchema = z
+  .object({
+    type: z.literal("health").optional(),
+    firmware_version: nstr,
+    reset_reason: nstr,
+    ota: otaStatusSchema.nullable().optional(),
+  })
+  .passthrough();
+export type DeviceHealth = z.infer<typeof deviceHealthSchema>;
+
 // ── API request body (dashboard → backend) ───────────────────
 // { action, value?, number? } — value "dim" için, number "efekt" için zorunlu.
 export const commandRequestSchema = z
@@ -235,6 +292,12 @@ export const commandRequestSchema = z
     path: ["number"],
   });
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
+
+// POST /api/devices/:mac/maintenance — yalnızca tek cihaz.
+export const maintenanceRequestSchema = z.object({
+  action: z.enum(MAINTENANCE_ACTIONS),
+});
+export type MaintenanceRequest = z.infer<typeof maintenanceRequestSchema>;
 
 // ── Zone CRUD (dashboard → backend) ──────────────────────────
 export const ZONE_STATUSES = ["ok", "warning", "fault"] as const;
@@ -354,8 +417,18 @@ export type LiveEvent = {
   error?: string;
   /** `describeDeviceError` kodu (örn. "channel-not-found") — UI dallanması için. */
   errorCode?: string;
-  /** Olayın kaynağı: cihaz komut yanıtı mı, telemetri mi, komut echo'su mu. */
-  kind?: "ack" | "telemetry" | "command";
+  /**
+   * Olayın kaynağı: cihaz komut yanıtı mı, telemetri mi, komut echo'su mu,
+   * bakım komutu yanıtı mı (commission/ota_check), sağlık mesajı mı.
+   */
+  kind?: "ack" | "telemetry" | "command" | "maintenance" | "health";
+  /** Komut kimliği (commands.request_id) — ack/maintenance olaylarında, cihaz geri yolladıysa. */
+  requestId?: string;
+  /** kind:"maintenance" — yanıtın ait olduğu bakım komutu. */
+  maintenanceAction?: MaintenanceAction;
+  /** kind:"health" — cihazın bildirdiği firmware sürümü ve OTA durumu. */
+  firmwareVersion?: string | null;
+  ota?: OtaStatus | null;
   brightness?: number;
   activeFx?: number | null; // aktif efekt numarası (null = efekt yok)
   at: string;

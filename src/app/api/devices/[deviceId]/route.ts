@@ -16,6 +16,9 @@ const selectShape = {
   lastSeen: schema.devices.lastSeen,
   lastError: schema.devices.lastError,
   lastErrorAt: schema.devices.lastErrorAt,
+  firmwareVersion: schema.devices.firmwareVersion,
+  health: schema.devices.health,
+  healthAt: schema.devices.healthAt,
   zoneSlug: schema.zones.slug,
   zoneName: schema.zones.name,
 };

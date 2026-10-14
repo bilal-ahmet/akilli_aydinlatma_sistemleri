@@ -15,6 +15,7 @@ import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
 import { D4iPanel } from "./D4iPanel";
 import { FaultHistory } from "./FaultHistory";
+import { DeviceMaintenance } from "./DeviceMaintenance";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
@@ -57,7 +58,7 @@ function fetchFaults(api: ApiFn, deviceId: string): Promise<FaultEvent[]> {
     .then((j) => (j.data ?? []) as FaultEvent[]);
 }
 
-type Tab = "control" | "telemetry" | "faults";
+type Tab = "control" | "telemetry" | "faults" | "maintenance";
 
 const iconBtn =
   "shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text";
@@ -86,7 +87,9 @@ export function DeviceControlModal({
 }) {
   const deviceId = device.deviceId;
   const api = useApi();
-  const { canWrite, technical } = usePanel();
+  const { canWrite, technical, role } = usePanel();
+  // Bakım sekmesi: tarama admin + manager, OTA yalnızca admin (DeviceMaintenance).
+  const showMaintenance = role === "admin" || role === "manager";
   // Admin "Kanal 3 / ch3" görür, müşteri "Lamba 3" (DALI adresi terimi yok).
   const lampRef = (ch: number) => (technical ? `Kanal ${ch}` : `Lamba ${ch}`);
 
@@ -160,14 +163,27 @@ export function DeviceControlModal({
     else pendingRef.current.set(key, n);
   }
 
-  useEffect(() => {
-    // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
+  const loadFixtures = useCallback(() => {
     fetch(api(`/api/devices/${deviceId}/fixtures`))
       .then((r) => r.json())
       .then((j) => setFixtures((j.data ?? []) as Fixture[]))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [api, deviceId]);
+
+  useEffect(() => {
+    // Bileşen `key={deviceId}` ile remount olur; loading başlangıçta true.
+    loadFixtures();
+  }, [loadFixtures]);
+
+  // Listede olmayan bir kanaldan rapor gelirse (lamba taraması yeni adres
+  // verdi, cihaz yeni lamba buldu) lamba listesi sonraki tazelemede yeniden
+  // çekilir — SSE olayı yalnızca bilinen satırları günceller.
+  const knownChannels = useRef<Set<number>>(new Set());
+  const fixturesStale = useRef(false);
+  useEffect(() => {
+    knownChannels.current = new Set(fixtures.map((f) => f.channel));
+  }, [fixtures]);
 
   /**
    * Telemetriyi arka planda tazeler — "Yükleniyor…" göstergesini KENDİSİ
@@ -210,8 +226,12 @@ export function DeviceControlModal({
       refreshTimer.current = null;
       loadTelemetry();
       loadFaults();
+      if (fixturesStale.current) {
+        fixturesStale.current = false;
+        loadFixtures();
+      }
     }, TELEMETRY_REFRESH_MS);
-  }, [loadTelemetry, loadFaults]);
+  }, [loadTelemetry, loadFaults, loadFixtures]);
 
   useEffect(() => {
     const timer = refreshTimer;
@@ -239,6 +259,8 @@ export function DeviceControlModal({
       }
 
       if (e.deviceId !== deviceId) return;
+      // Bakım yanıtı ve sağlık mesajı Bakım sekmesinde işlenir; lamba durumu taşımaz.
+      if (e.kind === "maintenance" || e.kind === "health") return;
       // Komut yanıtı: durum taşımaz, yalnızca hata bandını günceller. Aşağıdaki
       // in-flight guard'ından ÖNCE ele alınmalı — ack tam da komut uçuştayken gelir.
       if (e.kind === "ack") {
@@ -249,7 +271,12 @@ export function DeviceControlModal({
       // Cihazın periyodik raporu: paneller DB'den okuduğu için event'in kendisi
       // arıza ayrıntısını taşımaz — tazele. Aşağıdaki in-flight guard'ı
       // yalnızca optimistic UI state'i içindir, tazelemeyi kapsamaz.
-      if (e.kind === "telemetry") scheduleRefresh();
+      if (e.kind === "telemetry") {
+        if (typeof e.channel === "number" && !knownChannels.current.has(e.channel)) {
+          fixturesStale.current = true;
+        }
+        scheduleRefresh();
+      }
       const seqKey = typeof e.channel === "number" ? `ch-${e.channel}` : "__device__";
       if ((pendingRef.current.get(seqKey) ?? 0) > 0) return; // yanıtı beklenen daha yeni bir komut var
       if (typeof e.seq === "number") {
@@ -521,6 +548,7 @@ export function DeviceControlModal({
     { id: "control", label: "Kontrol" },
     { id: "telemetry", label: technical ? "Telemetri" : "Ölçümler" },
     { id: "faults", label: "Arıza geçmişi" },
+    ...(showMaintenance ? [{ id: "maintenance" as const, label: "Bakım" }] : []),
   ];
 
   return (
@@ -581,7 +609,15 @@ export function DeviceControlModal({
           ))}
         </div>
 
-        {tab === "telemetry" ? (
+        {tab === "maintenance" ? (
+          <DeviceMaintenance
+            device={device}
+            onScanAccepted={() => {
+              // Tarama sonrası gelen raporlarla lamba listesi de tazelensin.
+              fixturesStale.current = true;
+            }}
+          />
+        ) : tab === "telemetry" ? (
           <D4iPanel
             rows={telemetry}
             names={fixtureNames}

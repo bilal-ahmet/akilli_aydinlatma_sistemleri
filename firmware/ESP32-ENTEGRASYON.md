@@ -25,11 +25,12 @@ Bu değer hem topic'lerde hem data payload'ındaki `deviceId` alanında kullanı
 | `Meven:<MAC>/cmd`  | **subscribe** | Bu cihaza özel komut |
 | `Meven:<slug>/cmd` | **subscribe** | Cihazın bölgesine toplu komut |
 | `Meven:all/cmd`    | **subscribe** | Tüm cihazlara toplu komut |
-| `Meven:<MAC>/data` | **publish**   | Bu cihazın durum/veri raporu |
+| `Meven:<MAC>/data` | **publish**   | Bu cihazın durum/veri raporu + komut yanıtı |
+| `Meven:<MAC>/health` | **publish** | ~30 sn'de bir sağlık mesajı: firmware sürümü, OTA durumu (firmware 1.0.9+, §5.4) |
 
 Cihaz açılışta **üç** topic'e subscribe olur: `Meven:<MAC>/cmd`,
 `Meven:<ZONE_SLUG>/cmd` ve `Meven:all/cmd`.
-**QoS:** komutlara subscribe → 1 · data publish → 0.
+**QoS:** komutlara subscribe → 1 · data/health publish → 0.
 
 ### ZONE_SLUG provisioning (cihaz başına, zorunlu)
 `secrets.h` içine cihazın bulunduğu bölgenin slug'ı yazılır:
@@ -63,11 +64,39 @@ Cihazdaki **tüm lambalar** — `channel` alanı hiç yok:
 - `value`: 0-100 (yalnız `dim`'de).
 - `channel`: DALI adresi **0-63**. **Alan yoksa komut cihazdaki tüm lambalara
   uygulanır.**
+- `id`: komut kimliği (UUID, backend'de `commands.request_id`). Backend **her**
+  komuta ekler; cihaz yanıtında aynen geri yollar (§5.1). Bölge / "Tüm Sistem"
+  komutunda tek id vardır, o topic'i dinleyen her cihaz aynı id ile yanıtlar.
+  ```json
+  { "action": "dim", "value": 40, "channel": 1, "id": "51f2d445-ec29-42d7-a2a9-901682322c49" }
+  ```
+  > Eski firmware'ler bilinmeyen `id` alanını yok saymalı (ArduinoJson varsayılanı).
 
 > **⚠ Broadcast 255 KALDIRILDI.** Eskiden "tüm lambalar" için `"channel": 255`
 > gönderiliyordu; firmware bunu artık kabul etmiyor ve `bilinmeyen action`
 > döndürüyor. Toplu komutlarda (tüm cihaz / bölge / tüm sistem) backend artık
 > `channel` alanını payload'a **hiç koymuyor** (`buildPayload`, src/lib/mqtt.ts).
+
+### Bakım komutları (firmware 1.0.9+) — YALNIZCA `Meven:<MAC>/cmd`
+Dashboard'daki cihaz panelinin **Bakım** sekmesinden gönderilir
+(`POST /api/devices/:mac/maintenance`). Bölge veya `Meven:all/cmd` karşılığı
+**yoktur**.
+
+| Komut | Payload | Ne yapar | Kim |
+|---|---|---|---|
+| Lambaları tara | `{"action":"commission","id":"…"}` | DALI hattını tarar; adressiz yeni lambalara boş kanal (**0-4**, cihaz başına en fazla 5 lamba) verir. Mevcut kanallar korunur, ışık seviyesi değişmez. Yeni lamba yoksa ~1 sn sürer. | admin + manager |
+| Güncellemeyi kontrol et | `{"action":"ota_check","id":"…"}` | OTA kontrolünü hemen başlatır. Yeni sürüm varsa indirir, SHA256 ile doğrular, **yeniden başlar**. Cihaz ~5 dk'da bir kendisi de kontrol eder. | yalnızca admin |
+
+- `"ok"` yanıtı işin **bittiği değil, isteğin kabul edildiği** anlamına gelir.
+  Tarama sonucu ayrı mesajla gelmez: bulunan her lamba ~30 sn içinde
+  `d4i_periodic` raporuyla görünür ve backend lamba listesine ekler. OTA
+  ilerlemesi `/health` mesajından okunur (§5.4).
+- **OTA asla toplu gönderilmez**: aynı anda indiren cihazlar Thread ağını
+  tıkıyor (sahada görüldü). Backend ayrıca aynı bölgede bir cihaz güncellenirken
+  ya da son 3 dk içinde OTA isteği aldıysa yeni isteği 409 ile reddeder
+  (`src/lib/otaGuard.ts`).
+- Kanal belirten komutlar yalnızca **son taramada bulunan** kanallarda kabul
+  edilir; taranmamış kanala gelen komut `bu channel DALI hattinda bulunamadi` döner.
 
 ### Efekt komutu
 ```json
@@ -147,9 +176,15 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 `deviceId` **yoktur** — backend MAC'i topic'ten okur (`macFromDataTopic`).
 
 ### 5.1) Komut yanıtı (her komuttan sonra)
+Firmware 1.0.9+ komutun `action`'ını ve gönderilen `id`'yi aynen geri yollar:
+```json
+{ "action": "dim", "id": "51f2d445-…", "status": "ok" }
+{ "action": "commission", "id": "ca984710-…", "status": "error", "error": "commissioning servisi henuz hazir degil" }
+```
+Eski firmware'ler / geçersiz JSON yanıtı `action` ve `id` taşımaz:
 ```json
 { "status": "ok" }
-{ "status": "error", "error": "bilinmeyen action" }
+{ "status": "error", "error": "gecersiz json" }
 ```
 
 **Hata metinleri (ESP ekibinin tablosu):**
@@ -167,6 +202,8 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 | `chase efekti tum lambalari surer, channel gondermeyin` | Çok lambalı efekte kanal verildi | `effect-no-channel` |
 | `bu efekt en az N lamba ister, hatta M lamba var` | Yetersiz lamba | `not-enough-lamps` |
 | `efekt baslatilamadi (bos slot yok veya bellek yetersiz)` | 4 kanal efekt sınırı doldu | `effect-slots-full` |
+| `commissioning servisi henuz hazir degil` | Cihaz yeni açıldı, tarama servisi hazır değil (birkaç sn sonra tekrar dene) | `commission-not-ready` |
+| `ota servisi henuz hazir degil` | Cihaz ağa yeni bağlanıyor | `ota-not-ready` |
 
 Kod sütunu `src/lib/deviceErrors.ts` kataloğundan gelir: her metin okunur bir
 başlık + sebep + ipucuna çevrilir, dashboard bunu gösterir. **Tanınmayan metin
@@ -174,9 +211,11 @@ yutulmaz**, olduğu gibi gösterilir — firmware yeni bir hata eklerse görürs
 
 Hata dashboard'da bildirim olarak çıkar ve cihaz kartında rozet olarak kalır
 (`devices.last_error`); sonraki `{"status":"ok"}` yanıtı rozeti temizler.
-Payload'da korelasyon alanı olmadığından hata, o cihaza giden **en son bekleyen**
-komuta yazılır; o komutun `channel`'ı da bildirime eklenir (kanala özgü
-hatalarda hangi lamba olduğunu göstermek için).
+Yanıt `id` ile **o komuta** bağlanır (`commands.status` → `delivered`/`failed`)
+ve komutun `channel`'ı bildirime eklenir (kanala özgü hatalarda hangi lamba
+olduğunu göstermek için). `id` yoksa hata o cihaza giden **en son bekleyen**
+komuta yazılır (eski davranış). Bakım komutlarının yanıtı rozete / arıza
+geçmişine yazılmaz; yalnızca Bakım sekmesinde butonun yanında gösterilir.
 
 ### 5.2) D4i periyodik rapor (adres başına, ~30 sn)
 ```json
@@ -244,6 +283,28 @@ Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → h
 - Backend bu formatı `deviceId` alanının varlığından tanır; yeni cihazlarda
   kullanılmaz.
 
+### 5.4) Sağlık mesajı (`Meven:<MAC>/health`, ~30 sn, firmware 1.0.9+)
+```json
+{
+  "type": "health",
+  "firmware_version": "1.0.9",
+  "reset_reason": "ESP_RST_POWERON",
+  "ota": {
+    "state": "downloading",
+    "last_result": "up_to_date",
+    "busy": true,
+    "last_target_version": "1.0.10",
+    "last_message": "..."
+  }
+}
+```
+- `ota.state`: `idle` · `waiting_network` · `checking` · `downloading` · `verifying` · `updated` · `failed`
+- `ota.last_result`: `up_to_date` · `updated` · `blocked` · `failed`
+- Backend mesajı `devices.firmware_version / health (ham JSON) / health_at`
+  sütunlarına yazar (mesaj başına satır açmaz) ve SSE ile `kind:"health"`
+  olarak panele iletir. OTA bitti mi: yeniden başlamadan sonraki ilk health'te
+  `firmware_version` yeni sürümü gösterir.
+
 ## 6) Akış özeti
 - Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
 - Dashboard bölge komutu → `Meven:<slug>/cmd`'e **tek publish** (o bölgedeki her cihaz alır).
@@ -251,15 +312,19 @@ Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → h
   publish (`Meven:<slug>/cmd`). Cihaz tarafında fark yok; bölge komutu gibi gelir.
 - Admin'in global acil komutu → `Meven:all/cmd`'e tek publish (TÜM müşterilerin
   her cihazı alır). Firmware bu topic'e abone kalmalı.
-- Cihaz komutu işler → `{"status":...}` yanıtını `Meven:<MAC>/data`'ya publish →
-  backend hatayı dashboard'a bildirim + rozet olarak yansıtır.
+- Cihaz komutu işler → `{"action","id","status":...}` yanıtını `Meven:<MAC>/data`'ya
+  publish → backend yanıtı `id` ile komuta bağlar, hatayı dashboard'a bildirim +
+  rozet olarak yansıtır.
+- Cihaz ~30 sn'de bir `Meven:<MAC>/health` publish → firmware sürümü + OTA durumu
+  panelde canlı görünür.
 - Cihaz durum bildirir → `Meven:<MAC>/data`'ya `d4i_periodic` publish → backend
   MAC'i **topic'ten** çözüp lamba/bölge snapshot'ını ve telemetriyi günceller.
   (Cihazın MAC'i önceden dashboard'dan `devices` tablosuna kayıtlı olmalı; aksi
   halde veri loglanır ama bölgeyle eşleşmez.)
 
 Donanımsız uçtan uca test: `npm run mock:device <MAC> <kanal sayısı> <bölge slug>`
-— sanal cihaz bu sözleşmenin tamamını (doğrulama hataları dahil) taklit eder.
+— sanal cihaz bu sözleşmenin tamamını (doğrulama hataları, `id` yankısı,
+commission/ota_check ve `/health` dahil) taklit eder.
 
 ## 7) Kütüphaneler / notlar (Arduino)
 - **PubSubClient** + **ArduinoJson v7** + `WiFiClientSecure` (ESP32 core'da).

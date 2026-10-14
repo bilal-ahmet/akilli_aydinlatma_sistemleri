@@ -2,10 +2,14 @@
  * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin güncel kontratını
  * birebir taklit eder:
  *   - subscribe Meven:<MAC>/cmd , Meven:<ZONE>/cmd , Meven:all/cmd
- *   - gelen { action, value, number, channel } komutunu DOĞRULAR ve sonucu
- *     Meven:<MAC>/data'ya {"status":"ok"} / {"status":"error","error":"..."}
- *     olarak yayınlar (hata metinleri firmware'dekiyle aynı)
+ *   - gelen { action, value, number, channel, id } komutunu DOĞRULAR ve sonucu
+ *     Meven:<MAC>/data'ya {"action","id","status":"ok"} / {...,"status":"error","error":"..."}
+ *     olarak yayınlar (firmware 1.0.9: action + id aynen geri gelir; hata
+ *     metinleri firmware'dekiyle aynı)
  *   - her DALI adresi için periyodik {"type":"d4i_periodic", ...} raporu
+ *   - bakım komutları: "commission" (yeni lamba bulur, boş kanala koyar) ve
+ *     "ota_check" (checking → downloading → verifying → updated, sürüm artar)
+ *   - Meven:<MAC>/health'e ~30 sn'de bir sağlık mesajı (OTA durumu dahil)
  *
  * Çalıştır:
  *   npm run mock:device                              # 2 kanal, MAC A842E3123456
@@ -31,6 +35,7 @@ const ZONE_SLUG = process.argv[4];
 const T_CMD = `Meven:${MAC}/cmd`;
 const T_ALL = "Meven:all/cmd";
 const T_DATA = `Meven:${MAC}/data`;
+const T_HEALTH = `Meven:${MAC}/health`;
 const TOPICS = [T_CMD, T_ALL, ...(ZONE_SLUG ? [`Meven:${ZONE_SLUG}/cmd`] : [])];
 
 /** Kanal durumu — firmware gibi 0-254 DALI arc level tutulur. */
@@ -40,6 +45,24 @@ for (let i = 0; i < CH_COUNT; i++) channels.set(i, { level: 0, on: false, fx: nu
 
 /** Mors efektinin son ayarlanan metni — komutta `text` yoksa bu tekrar çalınır. */
 let morseText = "";
+
+/** Firmware sürümü + OTA durumu (health mesajında yayınlanır). */
+let firmwareVersion = "1.0.9";
+const ota = {
+  state: "idle",
+  last_result: "up_to_date" as string,
+  busy: false,
+  last_target_version: null as string | null,
+  last_message: null as string | null,
+};
+/** Commissioning servisi açılıştan bu kadar sonra hazır olur (firmware gibi). */
+const SERVICE_READY_MS = 3000;
+const bootAt = Date.now();
+/** Firmware sınırı: cihaz başına en fazla 5 lamba, kanallar 0-4. */
+const MAX_COMMISSION_CH = 4;
+
+/** Komutun action + id'si — yanıtta aynen geri gönderilir (firmware 1.0.9). */
+let current: { action?: unknown; id?: unknown } = {};
 
 const client = mqtt.connect({
   protocol: "mqtts",
@@ -52,7 +75,11 @@ const client = mqtt.connect({
 });
 
 function ack(error?: string) {
-  const payload = error ? { status: "error", error } : { status: "ok" };
+  const echo = {
+    ...(current.action !== undefined ? { action: current.action } : {}),
+    ...(current.id !== undefined ? { id: current.id } : {}),
+  };
+  const payload = error ? { ...echo, status: "error", error } : { ...echo, status: "ok" };
   client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
   console.log(error ? `  → ack: HATA "${error}"` : "  → ack: ok");
 }
@@ -240,6 +267,39 @@ function validChannel(c: unknown): c is number | undefined {
   );
 }
 
+function publishHealth() {
+  const payload = {
+    type: "health",
+    firmware_version: firmwareVersion,
+    reset_reason: "ESP_RST_POWERON",
+    ota: { ...ota },
+  };
+  client.publish(T_HEALTH, JSON.stringify(payload), { qos: 0 });
+  console.log(`  → health fw=${firmwareVersion} ota=${ota.state}`);
+}
+
+/** OTA simülasyonu: yeni sürüm varmış gibi davranır, adım başına health yayınlar. */
+function runOta() {
+  const target = firmwareVersion.replace(/(\d+)$/, (n) => String(Number(n) + 1));
+  const steps: Array<[number, () => void]> = [
+    [500, () => Object.assign(ota, { state: "checking", busy: true })],
+    [2000, () => Object.assign(ota, { state: "downloading", last_target_version: target })],
+    [6000, () => Object.assign(ota, { state: "verifying" })],
+    [8000, () => Object.assign(ota, { state: "updated", last_result: "updated", busy: false })],
+    // "yeniden başladı": yeni sürüm, durum idle
+    [11000, () => {
+      firmwareVersion = target;
+      Object.assign(ota, { state: "idle", last_message: null });
+    }],
+  ];
+  for (const [ms, fn] of steps) {
+    setTimeout(() => {
+      fn();
+      publishHealth();
+    }, ms);
+  }
+}
+
 client.on("connect", () => {
   console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)`);
   client.subscribe(TOPICS, { qos: 1 }, (err) => {
@@ -247,6 +307,7 @@ client.on("connect", () => {
     console.log(`  dinleniyor:\n    ${TOPICS.join("\n    ")}`);
     console.log("\nDashboard'dan komut gönder → burada görünecek, yanıtı dashboard'a dönecek.\n");
     for (const ch of channels.keys()) publishD4i(ch);
+    publishHealth();
   });
 });
 
@@ -257,13 +318,16 @@ client.on("message", (topic, raw) => {
     number?: number;
     channel?: number;
     text?: string;
+    id?: string | number;
   };
   try {
     cmd = JSON.parse(raw.toString());
   } catch {
     console.warn("◀ geçersiz JSON");
+    current = {}; // geçersiz JSON'da action/id geri gelmez
     return ack("gecersiz json");
   }
+  current = { action: cmd.action, id: cmd.id };
 
   const via = topic === T_ALL ? "all" : topic === T_CMD ? "MAC" : "bölge";
   const { action, value, number, channel, text } = cmd;
@@ -371,6 +435,36 @@ client.on("message", (topic, raw) => {
     return;
   }
 
+  if (action === "commission") {
+    if (Date.now() - bootAt < SERVICE_READY_MS) {
+      return ack("commissioning servisi henuz hazir degil");
+    }
+    console.log(`◀ commission (${via}) — DALI taraması`);
+    ack();
+    // Boş bir kanala "yeni lamba" yerleştir (0-4); taramadan sonra raporlanır.
+    let added: number | undefined;
+    for (let c = 0; c <= MAX_COMMISSION_CH; c++) {
+      if (!channels.has(c)) {
+        channels.set(c, { level: 0, on: false, fx: null });
+        added = c;
+        break;
+      }
+    }
+    setTimeout(() => {
+      console.log(added === undefined ? "  tarama bitti: yeni lamba yok" : `  tarama bitti: yeni lamba ch${added}`);
+      for (const ch of channels.keys()) publishD4i(ch);
+    }, 1500);
+    return;
+  }
+
+  if (action === "ota_check") {
+    if (Date.now() - bootAt < SERVICE_READY_MS) return ack("ota servisi henuz hazir degil");
+    console.log(`◀ ota_check (${via})`);
+    ack();
+    if (!ota.busy) runOta();
+    return;
+  }
+
   if (action === "d4i_read") {
     if (typeof channel !== "number" || channel < 0 || channel > MAX_CHANNEL) {
       console.warn(`◀ d4i_read reddedildi (channel=${channel})`);
@@ -391,6 +485,7 @@ client.on("error", (e) => console.error("MQTT hata:", e.message));
 // Periyodik rapor — her adres için sırayla.
 setInterval(() => {
   for (const ch of channels.keys()) publishD4i(ch);
+  publishHealth();
 }, 30000);
 
 process.on("SIGINT", () => {

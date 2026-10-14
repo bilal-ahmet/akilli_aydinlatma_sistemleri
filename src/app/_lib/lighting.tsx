@@ -318,6 +318,24 @@ export function LightingProvider({
         return;
       }
 
+      // Sağlık mesajı (~30 sn): firmware sürümü + OTA durumu + son görülme.
+      if (e.deviceId && e.kind === "health") {
+        setDevices((ds) =>
+          ds.map((d) =>
+            d.deviceId === e.deviceId
+              ? {
+                  ...d,
+                  lastSeen: e.at,
+                  healthAt: e.at,
+                  firmwareVersion: e.firmwareVersion ?? d.firmwareVersion,
+                  ota: e.ota ?? null,
+                }
+              : d,
+          ),
+        );
+        return;
+      }
+
       if (
         e.deviceId &&
         (e.kind === "ack" || (e.kind === "telemetry" && typeof e.channel !== "number"))

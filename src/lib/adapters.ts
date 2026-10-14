@@ -6,6 +6,7 @@ import type {
   UserRow,
 } from "@/lib/db/schema";
 import type { CustomerUser } from "@/types/admin";
+import { deviceHealthSchema } from "@/types/lighting";
 import type { CustomerRole } from "@/lib/auth/roles";
 import type {
   Zone,
@@ -50,7 +51,14 @@ export function toDeviceView(row: {
   lastErrorAt?: Date | null;
   lampCount?: number;
   activeFx?: number | null;
+  firmwareVersion?: string | null;
+  health?: Record<string, unknown> | null;
+  healthAt?: Date | null;
 }): DeviceView {
+  // Ham health mesajından yalnızca panelin kullandığı alanlar (şema dışı
+  // alanlar DB'de kalır).
+  const health = row.health ? deviceHealthSchema.safeParse(row.health) : null;
+  const h = health?.success ? health.data : null;
   return {
     id: row.id,
     deviceId: row.deviceId,
@@ -66,6 +74,10 @@ export function toDeviceView(row: {
     lastErrorAt: row.lastErrorAt ? row.lastErrorAt.toISOString() : null,
     lampCount: row.lampCount ?? 0,
     activeFx: row.activeFx ?? null,
+    firmwareVersion: row.firmwareVersion ?? null,
+    resetReason: h?.reset_reason ?? null,
+    ota: h?.ota ?? null,
+    healthAt: row.healthAt ? row.healthAt.toISOString() : null,
   };
 }
 

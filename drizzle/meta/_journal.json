@@ -57,6 +57,13 @@
       "when": 1790604059376,
       "tag": "0007_auth_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791964599782,
+      "tag": "0008_device_health",
+      "breakpoints": true
     }
   ]
 }

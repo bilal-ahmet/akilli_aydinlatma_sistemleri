@@ -1,4 +1,5 @@
 import type { D4iBlock } from "@/lib/d4i";
+import type { OtaStatus } from "@/types/lighting";
 
 export type ThemeMode = "light" | "dark" | "auto";
 
@@ -36,6 +37,11 @@ export interface DeviceView {
   lampCount: number;
   /** Lambalarından birinde çalışan efekt (kanal sırasıyla ilki); yoksa null. */
   activeFx: number | null;
+  /** Son `/health` mesajı (firmware 1.0.9+): sürüm, yeniden başlama sebebi, OTA durumu. */
+  firmwareVersion: string | null;
+  resetReason: string | null;
+  ota: OtaStatus | null;
+  healthAt: string | null;
 }
 
 /**

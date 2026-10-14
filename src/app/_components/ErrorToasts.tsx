@@ -41,7 +41,8 @@ export function ErrorToasts() {
 
   const onLive = useCallback(
     (e: LiveEvent) => {
-      if (!e.error) return;
+      // Bakım komutu (tarama/OTA) yanıtı cihaz panelinde, butonun yanında gösterilir.
+      if (!e.error || e.kind === "maintenance") return;
       const id = nextId.current++;
       const toast: Toast = {
         id,

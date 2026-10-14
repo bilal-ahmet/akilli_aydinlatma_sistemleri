@@ -40,6 +40,7 @@ export type TenancyIndex = {
   customersBySlug: Map<string, CustomerInfo>;
   zoneOwner: Map<string, string>; // zone slug → customer id
   deviceOwner: Map<string, string>; // MAC → customer id
+  deviceZone: Map<string, string>; // MAC → zone slug (OTA'nın bölge bazlı sıralanması için)
   users: Map<string, UserState>;
   loadedAt: number;
 };
@@ -89,24 +90,36 @@ async function load(): Promise<TenancyIndex> {
 
   const zoneOwner = new Map<string, string>();
   const zoneCustomerById = new Map<string, string>();
+  const zoneSlugById = new Map<string, string>();
   for (const z of zoneRows) {
     zoneOwner.set(z.slug, z.customerId);
     zoneCustomerById.set(z.id, z.customerId);
+    zoneSlugById.set(z.id, z.slug);
     customersById.get(z.customerId)?.zoneSlugs.push(z.slug);
   }
 
   const deviceOwner = new Map<string, string>();
+  const deviceZone = new Map<string, string>();
   for (const d of deviceRows) {
     const cid = d.zoneId ? zoneCustomerById.get(d.zoneId) : undefined;
     if (!cid) continue;
     deviceOwner.set(d.mac, cid);
+    deviceZone.set(d.mac, zoneSlugById.get(d.zoneId!)!);
     customersById.get(cid)?.macs.push(d.mac);
   }
 
   const users = new Map<string, UserState>();
   for (const u of userRows) users.set(u.id, { ...u, role: u.role as Role });
 
-  return { customersById, customersBySlug, zoneOwner, deviceOwner, users, loadedAt: Date.now() };
+  return {
+    customersById,
+    customersBySlug,
+    zoneOwner,
+    deviceOwner,
+    deviceZone,
+    users,
+    loadedAt: Date.now(),
+  };
 }
 
 /**

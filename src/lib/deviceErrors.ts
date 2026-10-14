@@ -111,6 +111,30 @@ const EXACT: Record<string, Entry> = {
       hint: "Efekti tek lamba yerine cihazın tamamına uygulayın.",
     },
   },
+  // Bakım komutları (firmware 1.0.9+). Cihaz yeni açıldığında servisler
+  // birkaç saniye hazır olmaz; geçici, tekrar denenebilir.
+  "commissioning servisi henuz hazir degil": {
+    code: "commission-not-ready",
+    title: "Lamba taraması başlatılamadı",
+    cause: "Cihazın DALI commissioning servisi henüz hazır değil (cihaz yeni açılmış olabilir).",
+    hint: "Birkaç saniye sonra tekrar deneyin.",
+    plain: {
+      title: "Lamba taraması başlatılamadı",
+      cause: "Cihaz henüz hazır değil; yeni açılmış olabilir.",
+      hint: "Birkaç saniye sonra tekrar deneyin.",
+    },
+  },
+  "ota servisi henuz hazir degil": {
+    code: "ota-not-ready",
+    title: "Güncelleme kontrolü başlatılamadı",
+    cause: "Cihazın OTA servisi henüz hazır değil; cihaz ağa yeni bağlanıyor.",
+    hint: "Bir süre sonra tekrar deneyin. Cihaz ~5 dakikada bir kendisi de kontrol ediyor.",
+    plain: {
+      title: "Güncelleme kontrolü başlatılamadı",
+      cause: "Cihaz ağa yeni bağlanıyor.",
+      hint: "Bir süre sonra tekrar deneyin.",
+    },
+  },
   "efekt baslatilamadi (bos slot yok veya bellek yetersiz)": {
     code: "effect-slots-full",
     title: "Efekt başlatılamadı",

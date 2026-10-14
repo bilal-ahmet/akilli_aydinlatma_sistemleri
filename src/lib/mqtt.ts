@@ -9,12 +9,14 @@ import { describeDeviceError } from "@/lib/deviceErrors";
 import { activeFaultCodes } from "@/lib/faults";
 import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
+import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import {
   cmdTopic,
   zoneCmdTopic,
-  macFromDataTopic,
+  parseUplinkTopic,
   ALL_CMD,
   DATA_WILDCARD,
+  HEALTH_WILDCARD,
 } from "@/lib/topics";
 import {
   parseUplink,
@@ -22,11 +24,15 @@ import {
   flagToBool,
   d4iIsOn,
   d4iHasFault,
+  deviceHealthSchema,
+  isMaintenanceAction,
   type Action,
   type CommandAck,
   type CommandPayload,
   type D4iPeriodic,
   type DataPayload,
+  type DeviceHealth,
+  type MaintenanceAction,
 } from "@/types/lighting";
 
 /**
@@ -35,6 +41,7 @@ import {
  *
  * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
  *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
+ *  - subscribe "+/health"       → Meven:<MAC>/health (firmware sürümü, OTA durumu)
  *  - publish   Meven:<MAC>/cmd  → tekil komut
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
  *  - publish   Meven:all/cmd    → toplu komut
@@ -60,7 +67,7 @@ export function getMqttClient(): MqttClient {
 
   client.on("connect", () => {
     console.log("[mqtt] connected (HiveMQ Cloud, TLS)");
-    client.subscribe(DATA_WILDCARD, { qos: 0 }, (err) => {
+    client.subscribe([DATA_WILDCARD, HEALTH_WILDCARD], { qos: 0 }, (err) => {
       if (err) console.error("[mqtt] subscribe error:", err.message);
     });
   });
@@ -79,8 +86,8 @@ export function getMqttClient(): MqttClient {
 }
 
 /**
- * Meven:<MAC>/data mesajını işle. Topic'te üç ayrı kontrat akıyor (bkz.
- * types/lighting.ts parseUplink):
+ * Meven:<MAC>/data ve Meven:<MAC>/health mesajlarını işle. /data'da üç ayrı
+ * kontrat akıyor (bkz. types/lighting.ts parseUplink):
  *   - `{"type":"d4i_periodic", ...}` → DALI adresi başına durum + D4i telemetrisi
  *   - `{"status":"ok"|"error", ...}` → komutun cihazda işlenme sonucu
  *   - `{"deviceId": ...}`           → ilk kontrattaki tek/çok-lamba raporu
@@ -95,6 +102,16 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
     return;
   }
 
+  const parsedTopic = parseUplinkTopic(topic);
+  if (parsedTopic?.suffix === "health") {
+    const h = deviceHealthSchema.safeParse(json);
+    if (!h.success) {
+      console.warn(`[mqtt] bilinmeyen health payload (${topic})`);
+      return;
+    }
+    return handleHealth(parsedTopic.mac, h.data);
+  }
+
   const uplink = parseUplink(json);
   if (!uplink) {
     console.warn(`[mqtt] bilinmeyen payload (${topic})`);
@@ -102,8 +119,7 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
   }
 
   // Eski kontratta MAC payload'da, yenilerde yalnızca topic'te.
-  const mac =
-    uplink.kind === "legacy" ? uplink.data.deviceId : macFromDataTopic(topic);
+  const mac = uplink.kind === "legacy" ? uplink.data.deviceId : (parsedTopic?.mac ?? null);
   if (!mac) {
     console.warn(`[mqtt] MAC çözülemedi (${topic})`);
     return;
@@ -122,7 +138,12 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
 async function touchDevice(
   mac: string,
   now: Date,
-  patch?: { lastError?: string | null; lastErrorAt?: Date | null },
+  patch?: Partial<
+    Pick<
+      typeof schema.devices.$inferInsert,
+      "lastError" | "lastErrorAt" | "firmwareVersion" | "health" | "healthAt"
+    >
+  >,
 ) {
   const [device] = await db
     .update(schema.devices)
@@ -288,21 +309,32 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
 
 /**
  * Komut yanıtı: `{"status":"ok"}` ya da `{"status":"error","error":"..."}`.
- * Payload'da korelasyon alanı yok — hata, o cihaza (ya da bölgesine) giden EN
- * SON bekleyen komuta yazılır ve `devices.last_error`'da rozet için saklanır.
- * Olaya bilerek `zoneSlug` konmaz: geçici bir komut hatası bölgeyi arızalı
- * göstermemeli (bölge durumu telemetriden gelir).
+ * Firmware 1.0.9+ komutun `action`'ını ve gönderilen `id`'yi (= commands.
+ * request_id) geri yollar → yanıt doğru komuta ve lambaya bağlanır. id'siz
+ * yanıtta (eski firmware, "gecersiz json") hata o cihaza (ya da bölgesine)
+ * giden EN SON bekleyen komuta yazılır. Hata `devices.last_error`'da rozet için
+ * saklanır. Olaya bilerek `zoneSlug` konmaz: geçici bir komut hatası bölgeyi
+ * arızalı göstermemeli (bölge durumu telemetriden gelir).
+ *
+ * Bakım komutlarının (commission/ota_check) yanıtı ayrı yoldan gider
+ * (handleMaintenanceAck): lamba hatası değildir, rozete/arıza geçmişine yazılmaz.
  */
 async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   const now = new Date();
   const at = now.toISOString();
+  const requestId = ack.id != null && UUID_RE.test(String(ack.id)) ? String(ack.id) : undefined;
+  const flight = requestId ? inflight.get(requestId) : undefined;
+
+  const maintenance = isMaintenanceAction(ack.action) ? ack.action : flight?.maintenance;
+  if (maintenance) return handleMaintenanceAck(mac, ack, maintenance, requestId, now);
 
   if (ack.status === "ok") {
+    if (requestId) await settleCommand(requestId, "delivered", now);
     const { zone } = await touchDevice(mac, now, { lastError: null, lastErrorAt: null });
     await markDelivered(mac, zone, now);
     // Başarılı yanıt rozeti temizler; geçmişteki açık komut hatasını da kapatır.
     await syncFaultEvents(mac, null, [], now);
-    emitLiveEvent({ deviceId: mac, status: "ok", kind: "ack", at });
+    emitLiveEvent({ deviceId: mac, status: "ok", kind: "ack", requestId, at });
     return;
   }
 
@@ -311,42 +343,119 @@ async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   console.warn(`[mqtt] komut hatası (${mac}) [${info.code}]: ${message}`);
 
   const { zone } = await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
-  const targets = commandTargets(mac, zone);
-  const [latest] = await db
-    .select({ id: schema.commands.id, channel: schema.commands.channel })
-    .from(schema.commands)
-    .where(
-      and(
-        inArray(schema.commands.targetId, targets),
-        eq(schema.commands.status, "pending"),
-      ),
-    )
-    .orderBy(desc(schema.commands.createdAt))
-    .limit(1);
-  if (latest) {
-    await db
-      .update(schema.commands)
-      .set({ status: "failed" })
-      .where(eq(schema.commands.id, latest.id));
+
+  // Önce id ile birebir eşleşme; satır henüz yazılmadıysa (recordCommand
+  // after()'ta) kanal bellek içi uçuş kaydından gelir.
+  let channel: number | null | undefined;
+  let matched = false;
+  if (requestId) {
+    const row = await settleCommand(requestId, "failed", now);
+    if (row || flight) {
+      matched = true;
+      channel = row ? row.channel : (flight?.channel ?? null);
+    }
   }
 
-  // Geçmişe cihaz seviyesinde (channel = null) yazılır: yanıt hangi lambaya
-  // ait olduğunu taşımıyor, kanal yalnızca "en iyi tahmin". Aynı anda tek bir
+  // Yedek: id yok ya da tanınmıyor → o cihaza giden en son bekleyen komut.
+  if (!matched) {
+    const targets = commandTargets(mac, zone);
+    const [latest] = await db
+      .select({ id: schema.commands.id, channel: schema.commands.channel })
+      .from(schema.commands)
+      .where(
+        and(
+          inArray(schema.commands.targetId, targets),
+          eq(schema.commands.status, "pending"),
+        ),
+      )
+      .orderBy(desc(schema.commands.createdAt))
+      .limit(1);
+    if (latest) {
+      await db
+        .update(schema.commands)
+        .set({ status: "failed" })
+        .where(eq(schema.commands.id, latest.id));
+    }
+    channel = latest?.channel;
+  }
+
+  // Geçmişe cihaz seviyesinde (channel = null) yazılır. Aynı anda tek bir
   // komut hatası açık kalır — farklı bir hata gelirse öncekini kapatır
   // (devices.last_error ile aynı semantik).
   await syncFaultEvents(mac, null, [{ code: `command.${info.code}`, detail: message }], now);
 
-  // Hangi lambanın komutu reddedildiğini yanıt taşımıyor; başarısız sayılan
-  // komutun kanalı en iyi tahmin ("bu channel DALI hattinda bulunamadi" gibi
-  // kanala özgü hatalarda kullanıcıya hangi kanal olduğunu göstermek için).
+  // Reddedilen komutun kanalı: id ile eşleştiyse kesin, değilse en iyi tahmin
+  // ("bu channel DALI hattinda bulunamadi" gibi kanala özgü hatalarda
+  // kullanıcıya hangi lamba olduğunu göstermek için).
   emitLiveEvent({
     deviceId: mac,
-    channel: latest?.channel ?? undefined,
+    channel: channel ?? undefined,
     status: "error",
     error: message,
     errorCode: info.code,
     kind: "ack",
+    requestId,
     at,
+  });
+}
+
+/**
+ * Bakım komutunun (commission / ota_check) yanıtı. `"ok"` işin bittiği değil,
+ * cihazın isteği KABUL ettiği anlamına gelir: tarama sonucu d4i_periodic
+ * raporlarıyla, OTA ilerlemesi /health ile gelir. Lamba hatası olmadığı için
+ * `devices.last_error`'a ve arıza geçmişine yazılmaz.
+ */
+async function handleMaintenanceAck(
+  mac: string,
+  ack: CommandAck,
+  action: MaintenanceAction,
+  requestId: string | undefined,
+  now: Date,
+): Promise<void> {
+  await touchDevice(mac, now);
+  if (requestId) await settleCommand(requestId, ack.status === "ok" ? "delivered" : "failed", now);
+
+  const error =
+    ack.status === "error" ? (ack.error ?? "cihaz isteği reddetti").slice(0, 200) : undefined;
+  if (error) console.warn(`[mqtt] bakım komutu reddedildi (${mac}, ${action}): ${error}`);
+
+  emitLiveEvent({
+    deviceId: mac,
+    status: ack.status,
+    kind: "maintenance",
+    maintenanceAction: action,
+    requestId,
+    error,
+    errorCode: error ? describeDeviceError(error).code : undefined,
+    at: now.toISOString(),
+  });
+}
+
+/**
+ * Sağlık mesajı (Meven:<MAC>/health, ~30 sn): firmware sürümü + OTA durumu.
+ * Mesaj başına satır açılmaz — `devices` satırı güncellenir. OTA koruması
+ * (lib/otaGuard.ts) için bellek içi kopya da tutulur.
+ */
+async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
+  const now = new Date();
+  const firmwareVersion = h.firmware_version?.slice(0, 32) ?? null;
+  const ota = h.ota ?? null;
+  noteHealth(mac, { firmwareVersion, ota }, now.getTime());
+
+  await touchDevice(mac, now, {
+    // Sürüm alanı gelmediyse eski değer ezilmez.
+    ...(firmwareVersion ? { firmwareVersion } : {}),
+    health: h as Record<string, unknown>,
+    healthAt: now,
+  });
+
+  emitLiveEvent({
+    deviceId: mac,
+    status: "ok",
+    kind: "health",
+    firmwareVersion,
+    ota,
+    at: now.toISOString(),
   });
 }
 
@@ -497,8 +606,15 @@ export type CommandInput = {
  * `channel` HİÇ konmaz — broadcast 255 bile gönderilse cihaz
  * "chase efekti tum lambalari surer, channel gondermeyin" ile reddeder.
  */
-function buildPayload({ action, value, number, channel, text }: CommandInput): string {
-  const fx = action === "efekt" && number != null ? effectByNumber(number) : undefined;
+function buildPayload({
+  action,
+  value,
+  number,
+  channel,
+  text,
+  id,
+}: CommandInput & { id?: string }): string {
+  const ch = wireChannel({ action, number, channel });
 
   const payload: CommandPayload = {
     action,
@@ -509,9 +625,101 @@ function buildPayload({ action, value, number, channel, text }: CommandInput): s
     // cihaz / bölge / tüm sistem) alan hiç gönderilmez — firmware broadcast
     // için 255'i kabul etmiyor, alanın yokluğunu bekliyor. Tüm hattı süren
     // efektler zaten kanal kabul etmez.
-    ...(channel != null && !fx?.allLamps ? { channel } : {}),
+    ...(ch != null ? { channel: ch } : {}),
+    // Cihaz yanıtında aynen geri gelir → hata doğru komuta bağlanır (handleAck).
+    ...(id ? { id } : {}),
   };
   return JSON.stringify(payload);
+}
+
+/** Kabloya gidecek kanal: tüm hattı süren efektlerde yok (tüm lambalar). */
+function wireChannel({
+  action,
+  number,
+  channel,
+}: Pick<CommandInput, "action" | "number" | "channel">): number | undefined {
+  if (channel == null) return undefined;
+  const fx = action === "efekt" && number != null ? effectByNumber(number) : undefined;
+  return fx?.allLamps ? undefined : channel;
+}
+
+// ── Uçuştaki komutlar (ack ↔ komut eşleştirmesi) ─────────────
+// Komut id'si (= commands.request_id) publish anında kabloya konur ve burada
+// tutulur. Neden bellekte: `commands` INSERT'i after()'ta yapılır (Kural #10),
+// cihazın yanıtı satır yazılmadan önce gelebilir. O durumda sonuç buraya
+// yazılır ve INSERT 'pending' yerine onu kullanır (insertCommandRow).
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INFLIGHT_TTL_MS = 10 * 60_000;
+
+type CommandOutcome = "delivered" | "failed";
+type Inflight = {
+  /** Kabloya giden kanal (yoksa tüm lambalar) — hata olayına kesin kanal. */
+  channel?: number;
+  maintenance?: MaintenanceAction;
+  /** Satır yazılmadan gelen yanıtın sonucu. */
+  outcome?: CommandOutcome;
+  /** commands satırı yazıldı mı. */
+  recorded?: boolean;
+  at: number;
+};
+
+const globalForInflight = globalThis as unknown as { __fenerInflight?: Map<string, Inflight> };
+const inflight = (globalForInflight.__fenerInflight ??= new Map<string, Inflight>());
+
+function rememberInflight(requestId: string, entry: Omit<Inflight, "at">): void {
+  const now = Date.now();
+  for (const [id, e] of inflight) {
+    if (now - e.at > INFLIGHT_TTL_MS) inflight.delete(id);
+  }
+  inflight.set(requestId, { ...entry, at: now });
+}
+
+/**
+ * Komut satırının sonucunu id ile yazar. `delivered` yalnızca bekleyen satırı
+ * günceller (bölgedeki başka bir cihazın hatası ezilmesin); `failed` her
+ * durumda yazılır. Satır henüz yoksa sonuç uçuş kaydına bırakılır.
+ */
+async function settleCommand(
+  requestId: string,
+  outcome: CommandOutcome,
+  now: Date,
+): Promise<{ channel: number | null } | undefined> {
+  const where =
+    outcome === "delivered"
+      ? and(eq(schema.commands.requestId, requestId), eq(schema.commands.status, "pending"))
+      : eq(schema.commands.requestId, requestId);
+  const [row] = await db
+    .update(schema.commands)
+    .set(outcome === "delivered" ? { status: "delivered", deliveredAt: now } : { status: "failed" })
+    .where(where)
+    .returning({ channel: schema.commands.channel });
+
+  if (!row) {
+    const e = inflight.get(requestId);
+    if (e && !e.recorded && e.outcome !== "failed") e.outcome = outcome;
+  }
+  return row;
+}
+
+/**
+ * `commands` satırını yazar; yanıt satırdan önce geldiyse onun sonucunu
+ * kullanır. INSERT beklenirken gelen yanıt kaybolmasın diye ardından bir kez
+ * daha bakılır.
+ */
+async function insertCommandRow(values: typeof schema.commands.$inferInsert): Promise<void> {
+  const flight = inflight.get(values.requestId);
+  const initial = flight?.outcome;
+  await db.insert(schema.commands).values({
+    ...values,
+    status: initial ?? "pending",
+    deliveredAt: initial === "delivered" ? new Date() : undefined,
+  });
+  if (!flight) return;
+  flight.recorded = true;
+  if (flight.outcome && flight.outcome !== initial) {
+    await settleCommand(values.requestId, flight.outcome, new Date());
+  }
 }
 
 /**
@@ -571,12 +779,48 @@ export function publishCommand(
           ? (zoneSlugs ?? []).map(zoneCmdTopic)
           : [ALL_CMD];
 
+  // Komut id'si publish'ten ÖNCE üretilir: kablodaki `id` = commands.request_id.
+  const requestId = randomUUID();
   // Tüm hedeflerde on/off → dim çevrilir (firmware on/off tanımıyor).
-  const payload = buildPayload(toWireCmd(cmd));
+  const payload = buildPayload({ ...toWireCmd(cmd), id: requestId });
   const client = getMqttClient();
   for (const topic of topics) client.publish(topic, payload, { qos: 1 });
+  rememberInflight(requestId, { channel: wireChannel(cmd) });
 
-  return { requestId: randomUUID(), seq: ++cmdSeq };
+  return { requestId, seq: ++cmdSeq };
+}
+
+/**
+ * Bakım komutu (commission / ota_check) — YALNIZCA tek cihaza (Meven:<MAC>/cmd).
+ * Bölge ya da `all` hedefi bilerek yoktur: aynı anda OTA indiren cihazlar
+ * Thread ağını tıkıyor (firmware ekibinin saha notu). Senkron, DB'ye dokunmaz;
+ * kayıt için recordMaintenance'ı after()'ta çağır.
+ */
+export function publishMaintenance(mac: string, action: MaintenanceAction): { requestId: string } {
+  const requestId = randomUUID();
+  getMqttClient().publish(cmdTopic(mac), JSON.stringify({ action, id: requestId }), { qos: 1 });
+  rememberInflight(requestId, { maintenance: action });
+  if (action === "ota_check") noteOtaSent(mac);
+  return { requestId };
+}
+
+/** publishMaintenance sonrası `commands` kaydı (route'larda after() içinde). */
+export async function recordMaintenance(
+  mac: string,
+  requestId: string,
+  action: MaintenanceAction,
+  meta: CommandMeta,
+): Promise<void> {
+  await insertCommandRow({
+    requestId,
+    targetType: "device",
+    targetId: mac,
+    userId: meta.userId,
+    customerId: meta.customerId,
+    channel: null,
+    action,
+    value: null,
+  });
 }
 
 /** Komutu kimin, hangi müşteri adına verdiği (commands tablosu için). */
@@ -681,7 +925,7 @@ export async function recordCommand(
   const channel = groupFx ? undefined : cmd.channel;
   const at = new Date().toISOString();
 
-  await db.insert(schema.commands).values({
+  await insertCommandRow({
     requestId,
     targetType: target,
     targetId: id,
@@ -690,7 +934,6 @@ export async function recordCommand(
     channel: channel ?? null,
     action,
     value: action === "efekt" ? number : value, // commands log
-    status: "pending",
   });
 
   if (target === "device") {

@@ -171,6 +171,11 @@ export const devices = pgTable("devices", {
   // Sonraki `{"status":"ok"}` yanıtında temizlenir.
   lastError: varchar("last_error", { length: 200 }),
   lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  // Firmware 1.0.9+ `Meven:<MAC>/health` mesajı (~30 sn): son sürüm, ham mesaj
+  // (OTA durumu dahil) ve zamanı. Mesaj başına satır değil, tek UPDATE.
+  firmwareVersion: varchar("firmware_version", { length: 32 }),
+  health: jsonb("health").$type<Record<string, unknown>>(),
+  healthAt: timestamp("health_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
