@@ -175,7 +175,10 @@ export function d4iIsOn(d: D4iPeriodic): boolean | undefined {
   const flag = flagToBool(s.lamp_power_on);
   if (typeof flag === "boolean") return flag;
   if (typeof s.status === "number") return (s.status & STATUS_BIT_LAMP_POWER_ON) !== 0;
-  if (typeof s.actual_level === "number") return s.actual_level > 0;
+  // 255 = MASK (bilinmiyor), açık/kapalı hakkında bilgi vermez.
+  if (typeof s.actual_level === "number" && s.actual_level <= MAX_ARC_LEVEL) {
+    return s.actual_level > 0;
+  }
   return undefined;
 }
 

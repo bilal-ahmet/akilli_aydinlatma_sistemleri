@@ -25,6 +25,7 @@ import {
 import {
   parseUplink,
   levelToPercent,
+  MAX_ARC_LEVEL,
   flagToBool,
   d4iIsOn,
   d4iHasFault,
@@ -213,6 +214,22 @@ async function markDelivered(
     );
 }
 
+const INT32_MIN = -2_147_483_648;
+const INT32_MAX = 2_147_483_647;
+
+/**
+ * Postgres INTEGER sütununa yazılacak değer: tam sayıya yuvarlanır, int32
+ * dışındaki değer null olur. Sürücü bellek bankası okunamayınca DALI "bilinmiyor"
+ * için 0xFF.. döndürür (örn. operating_time_s = 4294967295); firmware ölçeklenmiş
+ * değerleri ondalıklı da gönderebilir (sahada `input_voltage_v: 237.2`). İkisi de INSERT'i düşürür ve
+ * o lambanın telemetrisi hiç yazılmaz — raporun tamamı yine `raw`'da kalır.
+ */
+function toInt(v: number | null | undefined): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const r = Math.round(v);
+  return r >= INT32_MIN && r <= INT32_MAX ? r : null;
+}
+
 /**
  * D4i periyodik raporu: bir DALI adresinin (lambanın) durumu + sürücü/LED
  * telemetrisi. Cihaz-seviyesi (bölge snapshot'ı, device_status) değerler tek
@@ -222,7 +239,10 @@ async function markDelivered(
 async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<void> {
   const now = new Date();
   const ch = d.address;
-  const level = d.status?.actual_level;
+  // 255 = DALI "MASK" (bilinmiyor / yanıt yok), bir seviye değil: arızalı
+  // lambada gelir ve %100 sayılırsa sönük lamba tam açık görünür.
+  const rawLevel = d.status?.actual_level;
+  const level = typeof rawLevel === "number" && rawLevel <= MAX_ARC_LEVEL ? rawLevel : undefined;
   const isOn = d4iIsOn(d);
   const fault = d4iHasFault(d);
   const brightness = typeof level === "number" ? levelToPercent(level) : undefined;
@@ -236,32 +256,42 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
   if (typeof brightness === "number") fxPatch.brightness = brightness;
   await upsertFixture(mac, ch, fxPatch);
 
-  // 2) Ham D4i telemetrisi (detay paneli + ileride grafikler)
+  // 2) Ham D4i telemetrisi (detay paneli + ileride grafikler). Tam sayı
+  // sütunları `toInt`'ten geçer. Yazım yine de başarısız olursa rapor loglanır
+  // ama arıza geçmişi, cihaz özeti ve canlı yayın atlanmaz.
   const drv = d.d4i?.driver;
   const led = d.d4i?.led;
-  await db.insert(schema.d4iTelemetry).values({
-    deviceId: mac,
-    channel: ch,
-    online: d.online ?? null,
-    d4iSupported: d.d4i_supported ?? false,
-    statusByte: d.status?.status ?? null,
-    actualLevel: level ?? null,
-    minLevel: d.status?.min_level ?? null,
-    maxLevel: d.status?.max_level ?? null,
-    physicalMinLevel: d.status?.physical_min_level ?? null,
-    lampFailure: flagToBool(d.status?.lamp_failure) ?? null,
-    lampPowerOn: flagToBool(d.status?.lamp_power_on) ?? null,
-    controlGearPresent: flagToBool(d.status?.control_gear_present) ?? null,
-    energyWh: d.d4i?.energy?.value ?? null,
-    powerW: d.d4i?.power?.value ?? null,
-    driverTemperatureC: drv?.temperature_c ?? null,
-    driverVoltageV: drv?.input_voltage_v ?? null,
-    driverOperatingTimeS: drv?.operating_time_s ?? null,
-    ledTemperatureC: led?.temperature_c ?? null,
-    ledVoltageV: led?.voltage_v ?? null,
-    ledCurrentA: led?.current_a ?? null,
-    raw: (raw as Record<string, unknown>) ?? null,
-  });
+  try {
+    await db.insert(schema.d4iTelemetry).values({
+      deviceId: mac,
+      channel: ch,
+      online: d.online ?? null,
+      d4iSupported: d.d4i_supported ?? false,
+      statusByte: toInt(d.status?.status),
+      actualLevel: toInt(level),
+      minLevel: toInt(d.status?.min_level),
+      maxLevel: toInt(d.status?.max_level),
+      physicalMinLevel: toInt(d.status?.physical_min_level),
+      lampFailure: flagToBool(d.status?.lamp_failure) ?? null,
+      lampPowerOn: flagToBool(d.status?.lamp_power_on) ?? null,
+      controlGearPresent: flagToBool(d.status?.control_gear_present) ?? null,
+      energyWh: d.d4i?.energy?.value ?? null,
+      powerW: d.d4i?.power?.value ?? null,
+      driverTemperatureC: toInt(drv?.temperature_c),
+      driverVoltageV: toInt(drv?.input_voltage_v),
+      driverOperatingTimeS: toInt(drv?.operating_time_s),
+      ledTemperatureC: toInt(led?.temperature_c),
+      ledVoltageV: led?.voltage_v ?? null,
+      ledCurrentA: led?.current_a ?? null,
+      raw: (raw as Record<string, unknown>) ?? null,
+    });
+  } catch (err) {
+    console.error(
+      `[mqtt] d4i_telemetry yazılamadı (${mac} ch${ch}):`,
+      err instanceof Error ? err.message : err,
+      JSON.stringify(raw).slice(0, 2000),
+    );
+  }
 
   // 3) Arıza geçmişi: yalnızca durum değiştiğinde satır açılır/kapanır.
   await syncFaultEvents(
@@ -298,7 +328,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
     deviceId: mac,
     brightness: aggBrightness,
     relayStatus: aggIsOn ? "on" : "off",
-    temperature: drv?.temperature_c ?? null,
+    temperature: toInt(drv?.temperature_c),
     status: aggFault ? "error" : "ok",
   });
 
@@ -610,7 +640,7 @@ async function handleLegacyData(mac: string, d: DataPayload): Promise<void> {
     deviceId: mac,
     brightness: aggBrightness,
     relayStatus: aggRelay,
-    temperature: d.temperature,
+    temperature: toInt(d.temperature),
     rssi: d.rssi,
     status: d.status,
   });
