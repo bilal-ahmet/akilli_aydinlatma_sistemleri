@@ -1,6 +1,6 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
 import { getEnv } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
@@ -10,6 +10,9 @@ import { activeFaultCodes } from "@/lib/faults";
 import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
+import { isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
+import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
+import { normalizeMac } from "@/lib/mac";
 import {
   cmdTopic,
   zoneCmdTopic,
@@ -17,6 +20,7 @@ import {
   ALL_CMD,
   DATA_WILDCARD,
   HEALTH_WILDCARD,
+  type UplinkSuffix,
 } from "@/lib/topics";
 import {
   parseUplink,
@@ -25,6 +29,7 @@ import {
   d4iIsOn,
   d4iHasFault,
   deviceHealthSchema,
+  gatewayUplinkSchema,
   isMaintenanceAction,
   type Action,
   type CommandAck,
@@ -42,6 +47,8 @@ import {
  * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
  *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
  *  - subscribe "+/health"       → Meven:<MAC>/health (firmware sürümü, OTA durumu)
+ *  Gateway'ler de AYNI topic'leri kullanır (Meven:<GW_ID>/data|health); ayrım
+ *  payload'daki `type` ile yapılır (bkz. handleUplink, lib/gateways.ts).
  *  - publish   Meven:<MAC>/cmd  → tekil komut
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
  *  - publish   Meven:all/cmd    → toplu komut
@@ -103,6 +110,18 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
   }
 
   const parsedTopic = parseUplinkTopic(topic);
+
+  // Gateway'ler cihazlarla aynı topic'lere basar. Ayrım payload'dan (`type`
+  // gateway türü) ya da kimlik kayıtlı bir gateway'e aitse ondan yapılır —
+  // ikincisi kontrata uymayan (type'sız) bir gateway mesajını cihaz yoluna
+  // düşürmemek için.
+  if (
+    parsedTopic &&
+    (isGatewayPayload(json) || peekTenancy()?.gatewayOwner.has(parsedTopic.mac))
+  ) {
+    return handleGatewayUplink(parsedTopic.mac, parsedTopic.suffix, json);
+  }
+
   if (parsedTopic?.suffix === "health") {
     const h = deviceHealthSchema.safeParse(json);
     if (!h.success) {
@@ -141,7 +160,7 @@ async function touchDevice(
   patch?: Partial<
     Pick<
       typeof schema.devices.$inferInsert,
-      "lastError" | "lastErrorAt" | "firmwareVersion" | "health" | "healthAt"
+      "lastError" | "lastErrorAt" | "firmwareVersion" | "health" | "healthAt" | "gatewayId"
     >
   >,
 ) {
@@ -440,11 +459,15 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   const now = new Date();
   const firmwareVersion = h.firmware_version?.slice(0, 32) ?? null;
   const ota = h.ota ?? null;
+  // Cihaz bağlı olduğu gateway'i kendisi bildirebilir (gateway `nodes`
+  // listesi veremiyorsa). Alan gelmezse mevcut bağ korunur.
+  const gatewayId = h.gateway ? normalizeMac(h.gateway) : null;
   noteHealth(mac, { firmwareVersion, ota }, now.getTime());
 
   await touchDevice(mac, now, {
     // Sürüm alanı gelmediyse eski değer ezilmez.
     ...(firmwareVersion ? { firmwareVersion } : {}),
+    ...(gatewayId ? { gatewayId } : {}),
     health: h as Record<string, unknown>,
     healthAt: now,
   });
@@ -457,6 +480,109 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
     ota,
     at: now.toISOString(),
   });
+}
+
+/**
+ * Son yazılan `nodes` eşleşmesi (gateway başına) — rapor ~30 sn'de bir gelir,
+ * liste değişmedikçe `devices` tablosuna yazılmaz.
+ */
+const globalForGw = globalThis as unknown as { __fenerGwNodes?: Map<string, string> };
+const lastNodeSig = (globalForGw.__fenerGwNodes ??= new Map());
+
+/**
+ * Gateway mesajı (Meven:<GW_ID>/health veya /data). Kayıtsız gateway DB'ye
+ * yazılmaz, yalnızca admin'in "keşfedilen" listesine düşer. Kayıtlıysa
+ * `gateways` satırı tek UPDATE ile güncellenir (mesaj başına satır yok):
+ *   - health → firmware + son health; `online:false` (LWT) yalnızca durumu düşürür
+ *   - data   → son rapor; `nodes` varsa cihaz ↔ gateway eşleşmesi
+ */
+async function handleGatewayUplink(
+  gatewayId: string,
+  suffix: UplinkSuffix,
+  json: unknown,
+): Promise<void> {
+  const parsed = gatewayUplinkSchema.safeParse(json);
+  if (!parsed.success) {
+    console.warn(`[mqtt] bilinmeyen gateway payload (${gatewayId}/${suffix})`);
+    return;
+  }
+  const m = parsed.data;
+  const now = new Date();
+  const firmwareVersion = m.fw?.slice(0, 32) ?? null;
+
+  const ownerId = (await getTenancy()).gatewayOwner.get(gatewayId);
+  if (!ownerId) {
+    noteDiscoveredGateway(gatewayId, { type: m.type ?? null, firmwareVersion }, now);
+    return;
+  }
+
+  // LWT: bağlantı koptu. Son görülme ve son health ezilmez — panel "en son ne
+  // zaman haber aldık"ı göstermeye devam eder.
+  const lwt = m.online === false;
+  const patch: Partial<typeof schema.gateways.$inferInsert> = lwt
+    ? { online: false }
+    : {
+        lastSeen: now,
+        online: true,
+        ...(firmwareVersion ? { firmwareVersion } : {}),
+        ...(suffix === "health"
+          ? { health: m as Record<string, unknown>, healthAt: now }
+          : { report: m as Record<string, unknown>, reportAt: now }),
+      };
+  await db.update(schema.gateways).set(patch).where(eq(schema.gateways.gatewayId, gatewayId));
+
+  if (!lwt && suffix === "data") await syncGatewayNodes(gatewayId, ownerId, m);
+
+  emitLiveEvent({
+    kind: "gateway",
+    gatewayId,
+    customerId: ownerId,
+    status: "ok",
+    online: !lwt,
+    firmwareVersion,
+    at: now.toISOString(),
+  });
+}
+
+/**
+ * `nodes` listesi → `devices.gateway_id`. Yalnızca gateway'in müşterisine ait
+ * cihazlar eşlenir (başka müşterinin cihazı listede olsa bile ona gateway
+ * bilgisi yazılmaz). Liste yetkilidir: listede olmayan cihazın bu gateway'e
+ * bağı kaldırılır (Thread cihazı başka border router'a geçmiş olabilir).
+ */
+async function syncGatewayNodes(gatewayId: string, ownerId: string, report: unknown) {
+  const macs = nodeMacsFromReport(report);
+  if (macs === null) return; // liste yok → bilgi yok, mevcut bağlar korunur
+  const idx = peekTenancy();
+  const own = macs.filter((mac) => idx?.deviceOwner.get(mac) === ownerId).sort();
+  const sig = own.join(",");
+  if (lastNodeSig.get(gatewayId) === sig) return;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(schema.devices)
+      .set({ gatewayId: null })
+      .where(
+        own.length > 0
+          ? and(
+              eq(schema.devices.gatewayId, gatewayId),
+              notInArray(schema.devices.deviceId, own),
+            )
+          : eq(schema.devices.gatewayId, gatewayId),
+      );
+    if (own.length > 0) {
+      await tx
+        .update(schema.devices)
+        .set({ gatewayId })
+        .where(inArray(schema.devices.deviceId, own));
+    }
+  });
+  lastNodeSig.set(gatewayId, sig);
+}
+
+/** Gateway silinince/taşınınca bir sonraki raporda eşleşme yeniden yazılsın. */
+export function forgetGatewayNodes(gatewayId: string): void {
+  lastNodeSig.delete(gatewayId);
 }
 
 /** İlk kontrat (deviceId + brightness/relayStatus/channels): DB + bölge snapshot'ı + canlı event. */

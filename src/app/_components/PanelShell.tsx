@@ -85,6 +85,7 @@ function SidebarContent({
     { href: base, label: "Genel Bakış", exact: true },
     { href: `${base}/bolgeler`, label: "Bölgeler", badge: zones.length },
     { href: `${base}/cihazlar`, label: "Cihazlar", badge: devices.length },
+    { href: `${base}/ag-gecitleri`, label: "Ağ geçitleri" },
     { href: `${base}/arizalar`, label: "Arızalar", badge: alertCount, alert: alertCount > 0 },
     { href: `${base}/efektler`, label: "Efektler" },
   ];

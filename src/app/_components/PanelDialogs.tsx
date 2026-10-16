@@ -130,7 +130,7 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
   }
 }
 
-function ConfirmDelete({
+export function ConfirmDelete({
   title,
   onClose,
   onConfirm,

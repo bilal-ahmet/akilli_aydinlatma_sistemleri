@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/effects";
+import { GATEWAY_TYPES } from "@/lib/gateways";
 
 /**
  * MQTT payload kontratı — CLAUDE.md "Payload Formatları" bölümünün tek
@@ -261,9 +262,28 @@ export const deviceHealthSchema = z
     firmware_version: nstr,
     reset_reason: nstr,
     ota: otaStatusSchema.nullable().optional(),
+    // Cihazın bağlı olduğu gateway'in GW_ID'si (opsiyonel; gateway `nodes`
+    // listesi veremiyorsa cihaz kendisi bildirir).
+    gateway: nstr,
   })
   .passthrough();
 export type DeviceHealth = z.infer<typeof deviceHealthSchema>;
+
+// ── Gateway (Meven:<GW_ID>/health ve /data) ──────────────────
+// Cihazlarla aynı topic'ler; ayrım payload'daki `type` ile (lib/gateways.ts
+// isGatewayPayload). Türe özgü blok (`thread`, `cellular`…) şemasızdır —
+// passthrough ile olduğu gibi saklanır. `type` burada string: kayıtlı bir
+// gateway kontrata uymayan tür gönderse de mesajı kaybolmasın.
+export const gatewayUplinkSchema = z
+  .object({
+    type: nstr,
+    fw: nstr,
+    uptime_s: z.number().nullable().optional(),
+    // Health'te ve LWT'de: false = gateway'in bağlantısı koptu (LWT).
+    online: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+export type GatewayUplink = z.infer<typeof gatewayUplinkSchema>;
 
 // ── API request body (dashboard → backend) ───────────────────
 // { action, value?, number? } — value "dim" için, number "efekt" için zorunlu.
@@ -359,6 +379,33 @@ export const deviceUpdateSchema = z
   });
 export type DeviceUpdate = z.infer<typeof deviceUpdateSchema>;
 
+// ── Gateway CRUD (dashboard → backend) ───────────────────────
+// Gateway kimliği = MAC (GW_ID). Girdi iki noktalı/noktasız olabilir.
+// `zoneSlug` opsiyonel konum etiketi; PATCH'te boş string bağı kaldırır.
+export const gatewayCreateSchema = z.object({
+  gatewayId: z.string().trim().min(1, "Gateway kimliği zorunlu"),
+  type: z.enum(GATEWAY_TYPES),
+  name: z.string().trim().max(100).optional(),
+  zoneSlug: z.string().trim().max(100).optional(),
+  location: z.string().trim().max(200).optional(),
+  notes: z.string().trim().max(1000).optional(),
+});
+export type GatewayCreate = z.infer<typeof gatewayCreateSchema>;
+
+/** Kimlik (GW_ID) değiştirilemez: topic'ler ve rapor geçmişi ona bağlı. */
+export const gatewayUpdateSchema = z
+  .object({
+    type: z.enum(GATEWAY_TYPES).optional(),
+    name: z.string().trim().max(100).optional(),
+    zoneSlug: z.string().trim().max(100).optional(),
+    location: z.string().trim().max(200).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, {
+    message: "En az bir alan güncellenmeli",
+  });
+export type GatewayUpdate = z.infer<typeof gatewayUpdateSchema>;
+
 // ── Fixture (lamba/kanal) CRUD (dashboard → backend) ─────────
 export const fixtureCreateSchema = z.object({
   channel: z.number().int().min(0).max(MAX_CHANNEL),
@@ -421,12 +468,19 @@ export type LiveEvent = {
    * Olayın kaynağı: cihaz komut yanıtı mı, telemetri mi, komut echo'su mu,
    * bakım komutu yanıtı mı (commission/ota_check), sağlık mesajı mı.
    */
-  kind?: "ack" | "telemetry" | "command" | "maintenance" | "health";
+  kind?: "ack" | "telemetry" | "command" | "maintenance" | "health" | "gateway";
+  /**
+   * kind:"gateway" — olayın ait olduğu gateway (GW_ID). Gateway olaylarında
+   * `deviceId`/`zoneSlug` YOKTUR; cihaz/bölge dinleyicileri bunları atlar.
+   */
+  gatewayId?: string;
+  /** kind:"gateway" — false: LWT geldi (bağlantı koptu). */
+  online?: boolean;
   /** Komut kimliği (commands.request_id) — ack/maintenance olaylarında, cihaz geri yolladıysa. */
   requestId?: string;
   /** kind:"maintenance" — yanıtın ait olduğu bakım komutu. */
   maintenanceAction?: MaintenanceAction;
-  /** kind:"health" — cihazın bildirdiği firmware sürümü ve OTA durumu. */
+  /** kind:"health" / "gateway" — cihazın ya da gateway'in bildirdiği firmware sürümü (+ cihazda OTA durumu). */
   firmwareVersion?: string | null;
   ota?: OtaStatus | null;
   brightness?: number;

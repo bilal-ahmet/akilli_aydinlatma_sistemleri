@@ -199,6 +199,35 @@ Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürü
   döneminde geçici MAC fanout'u vardı; tüm cihazlar flash'landığı için
   kaldırıldı — flash'lı cihazlar komutu iki kez alıyordu.)
 
+### Gateway'ler (ağ geçitleri)
+
+Sahadaki gateway'ler (Thread Border Router, 4G/WiFi router, ileride LoRaWAN)
+cihazlarla **aynı topic şemasını** kullanır (firmware ekibinin tercihi):
+`Meven:<GW_ID>/health` (~30 sn ortak zarf + LWT), `Meven:<GW_ID>/data` (türe
+özgü blok + `nodes`), `Meven:<GW_ID>/cmd` (ayrıldı, komut yok). GW_ID = MAC.
+Tam kontrat: `firmware/GATEWAY-ENTEGRASYON.md`.
+
+- **Ayrım payload'dan:** `type` gateway türüyse (`thread_br | cellular | wifi |
+  lorawan`, `lib/gateways.ts → isGatewayPayload`) ya da kimlik kayıtlı bir
+  gateway'e aitse (`tenancy.gatewayOwner`) mesaj `handleGatewayUplink`'e gider,
+  cihaz yoluna girmez. Abonelikler değişmedi (`+/data`, `+/health`).
+- **Gateway `Meven:all/cmd`'ye ve bölge topic'lerine abone olmaz** (firmware
+  kuralı; lambalara giden toplu komutlar).
+- Kayıtsız GW_ID'nin verisi yazılmaz; `lib/gatewayDiscovery.ts` (bellek içi)
+  admin'in "Keşfedilen ağ geçitleri" listesine düşer. Kayıtlıysa `gateways`
+  satırı tek UPDATE ile güncellenir (geçmiş yok). LWT (`online:false`) yalnızca
+  durumu düşürür, `last_seen`'i ilerletmez.
+- `nodes` → `devices.gateway_id` (yalnızca gateway'in müşterisinin cihazları;
+  liste yetkili, değişmedikçe yazılmaz). Alternatif: cihaz health'inde
+  `"gateway": "<GW_ID>"`.
+- Türe özgü alanlar `lib/gateways.ts → GATEWAY_TYPE_INFO` kataloğundan
+  `summarizeGateway` ile **sunucuda** role göre (teknik/sade) üretilir
+  (`GatewayView.fields`); ham mesajlar (`raw`) yalnızca admin'e gider.
+  Tanınmayan alanlar admin'e ham gösterilir, yutulmaz.
+- Aynı MAC hem cihaz hem gateway olamaz (iki yönde 409). Ağ geçidi olan müşteri
+  silinemez; bölge başka müşteriye taşınınca o bölgenin gateway/cihaz bağları
+  kaldırılır.
+
 ### QoS Seviyeleri
 
 - Komutlar (cmd): **QoS 1** — en az bir kez iletim garantisi
@@ -534,6 +563,21 @@ GET /api/faults             → süren lamba arızaları (cihaz + bölge bilgisi
 GET /api/faults?days=30     → + son N günde (1-90) çözülenler (id, resolvedAt)
 ```
 
+### Ağ geçitleri (gateway)
+
+```
+GET/POST         /api/gateways?customer=<slug>   # liste / kayıt { gatewayId, type, name?, zoneSlug?, location?, notes? }
+GET/PATCH/DELETE /api/gateways/:gatewayId        # PATCH: type, name, zoneSlug ("" = bağı kaldır), location, notes
+GET              /api/admin/gateways/discovered  # (admin) yayın yapan kayıtsız GW_ID'ler, bellek içi, 24 sa
+```
+
+Guard: `authorizeScope` / `authorizeGateway` (başka müşterinin gateway'i → 404).
+CRUD admin + manager, viewer okur. Kimlik (GW_ID) ve müşteri değiştirilemez.
+Audit: `gateway.create` / `gateway.update` / `gateway.delete`. Panel:
+`/c/<slug>/ag-gecitleri` (`views/GatewaysView.tsx`, liste bu sayfaya özel;
+canlı durum SSE `kind:"gateway"` olayıyla). Donanımsız test:
+`npm run mock:gateway <GW_ID> <tür> [MAC…]`.
+
 ### Cihaz Bakımı
 
 ```
@@ -656,6 +700,7 @@ CREATE TABLE devices (
   firmware_version VARCHAR(32), -- son /health mesajındaki sürüm
   health        JSONB,          -- son /health mesajı (ham; OTA durumu dahil)
   health_at     TIMESTAMPTZ,    -- son /health zamanı
+  gateway_id    VARCHAR(100),   -- bağlı gateway (GW_ID, mantıksal ref; nodes / health'ten)
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 ```
@@ -663,6 +708,29 @@ CREATE TABLE devices (
 > `health*` sütunları migration `0008_device_health.sql`. `/health` mesaj başına
 > satır açmaz, `devices` satırını günceller. `GET /api/devices` bunları
 > `firmwareVersion`, `resetReason`, `ota`, `healthAt` olarak döner.
+
+### `gateways`
+
+```sql
+CREATE TABLE gateways (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gateway_id  VARCHAR(100) UNIQUE NOT NULL,  -- GW_ID = MAC (topic kimliği)
+  customer_id UUID NOT NULL REFERENCES customers(id),
+  zone_id     UUID REFERENCES zones(id) ON DELETE SET NULL,  -- opsiyonel konum etiketi
+  type        VARCHAR(30) NOT NULL,          -- thread_br | cellular | wifi | lorawan
+  name VARCHAR(100), location VARCHAR(200), notes TEXT,
+  firmware_version VARCHAR(32),
+  last_seen   TIMESTAMPTZ,
+  online      BOOLEAN,                       -- false = LWT geldi
+  health JSONB, health_at TIMESTAMPTZ,       -- son /health (ham)
+  report JSONB, report_at TIMESTAMPTZ,       -- son /data (ham, türe özgü blok + nodes)
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+> Migration `0009_gateways.sql` (+ `devices.gateway_id`). Mesaj başına satır
+> açılmaz. Çevrimiçi: LWT gelmediyse ve son 2 dk'da haber varsa
+> (`gatewayState`).
 
 ### `fixtures`
 
@@ -876,8 +944,9 @@ NEXT_PUBLIC_SSE_URL=/api/events
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
+18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `handleUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
 
 ---
 

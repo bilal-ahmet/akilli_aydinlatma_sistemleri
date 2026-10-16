@@ -140,6 +140,31 @@ export async function authorizeDevice(
 }
 
 /**
+ * Tek gateway (GW_ID) üzerindeki işlemler. Gateway her zaman bir müşteriye
+ * aittir; kayıtsız GW_ID herkes için 404 (admin kayıtsızları
+ * `/api/admin/gateways/discovered`'tan görür).
+ */
+export async function authorizeGateway(
+  req: Request,
+  gatewayId: string,
+  need: Need,
+): Promise<ScopeCtx | Response> {
+  const user = await authorizeUser(req);
+  if (user instanceof Response) return user;
+  const denied = needCheck(user, need);
+  if (denied) return denied;
+
+  const idx = await getTenancy();
+  const ownerId = idx.gatewayOwner.get(gatewayId);
+  const customer = ownerId ? idx.customersById.get(ownerId) : undefined;
+  if (!customer) return fail("Ağ geçidi bulunamadı", 404);
+  if (user.role !== "admin" && user.customerId !== customer.id) {
+    return fail("Ağ geçidi bulunamadı", 404);
+  }
+  return { user, customer };
+}
+
+/**
  * Bir müşterinin kullanıcılarını yönetme: admin veya o müşterinin manager'ı.
  */
 export async function authorizeCustomerManage(

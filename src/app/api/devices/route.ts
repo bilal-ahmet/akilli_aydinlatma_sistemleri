@@ -5,7 +5,7 @@ import { ok, fail, msg } from "@/lib/api/respond";
 import { deviceCreateSchema } from "@/types/lighting";
 import { normalizeMac } from "@/lib/mac";
 import { authorizeScope } from "@/lib/auth/guard";
-import { refreshTenancy } from "@/lib/tenancy";
+import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -20,6 +20,7 @@ const selectShape = {
   firmwareVersion: schema.devices.firmwareVersion,
   health: schema.devices.health,
   healthAt: schema.devices.healthAt,
+  gatewayId: schema.devices.gatewayId,
   zoneSlug: schema.zones.slug,
   zoneName: schema.zones.name,
 };
@@ -107,6 +108,23 @@ export async function POST(req: Request) {
     );
   }
   const { zoneSlug, name } = parsed.data;
+
+  // Aynı kimlik hem cihaz hem gateway olamaz: topic'ler ortak
+  // (Meven:<MAC>/data|health), mesajlar birbirine karışır. Gateway başka
+  // müşterideyse sahibi açıklanmaz.
+  const gwOwner = (await getTenancy()).gatewayOwner.get(mac);
+  if (gwOwner) {
+    return fail(
+      gwOwner === ctx.customer.id
+        ? msg(ctx.user, "Bu MAC bir gateway olarak kayıtlı", "Bu kod bir ağ geçidi olarak kayıtlı")
+        : msg(
+            ctx.user,
+            "Bu MAC adresi başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+            "Bu cihaz kodu başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+          ),
+      409,
+    );
+  }
 
   // Bölge bu müşterinin mi?
   const [zone] = await db

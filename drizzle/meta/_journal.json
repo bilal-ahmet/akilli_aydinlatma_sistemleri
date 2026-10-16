@@ -64,6 +64,13 @@
       "when": 1791964599782,
       "tag": "0008_device_health",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792132720540,
+      "tag": "0009_gateways",
+      "breakpoints": true
     }
   ]
 }

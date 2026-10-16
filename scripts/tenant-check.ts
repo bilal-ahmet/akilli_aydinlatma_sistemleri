@@ -286,6 +286,35 @@ async function main() {
   check("access'siz refresh ile çıkış → 200", out2.status === 200);
   check("refresh ile çıkıştan sonra access → 401", (await call({ bearer: second.accessToken }, "GET", "/api/zones")).status === 401);
 
+  console.log("\n[5c] Ağ geçidi (gateway) izolasyonu");
+  const hexOf = (prefix: string) =>
+    `${prefix}${tag.padStart(10, "0")}`.slice(0, 12).toUpperCase().replace(/[^0-9A-F]/g, "C");
+  const gwB = hexOf("D1");
+  const gwA = hexOf("D2");
+  const gB = await call(admin, "POST", `/api/gateways?customer=${B}`, { gatewayId: gwB, type: "thread_br" });
+  check("admin B'ye gateway ekledi", gB.status === 201, gB.json);
+  const listA = await call(aMgr, "GET", "/api/gateways");
+  check("A gateway listesinde B gateway'i yok", listA.status === 200 && !(listA.json?.data as { gatewayId: string }[]).some((g) => g.gatewayId === gwB), listA.json);
+  check("A, B gateway'ini okuyamaz → 404", (await call(aMgr, "GET", `/api/gateways/${gwB}`)).status === 404);
+  check("A, B gateway'ini düzenleyemez → 404", (await call(aMgr, "PATCH", `/api/gateways/${gwB}`, { name: "x" })).status === 404);
+  check("A, B gateway'ini silemez → 404", (await call(aMgr, "DELETE", `/api/gateways/${gwB}`)).status === 404);
+  const gwClaim = await call(aMgr, "POST", "/api/gateways", { gatewayId: gwB, type: "thread_br" });
+  check("A, B'nin gateway kimliğini sahiplenemez → 409 (sahip açıklanmaz)", gwClaim.status === 409 && !String(gwClaim.json?.error).includes(B), gwClaim.json);
+  check("cihaz MAC'i gateway olarak kaydedilemez → 409", (await call(aMgr, "POST", "/api/gateways", { gatewayId: macB, type: "thread_br" })).status === 409);
+  const gA = await call(aMgr, "POST", "/api/gateways", { gatewayId: gwA, type: "cellular", zoneSlug: zoneA, name: "A kabin" });
+  check("A kendi gateway'ini ekler", gA.status === 201 && (gA.json?.data as { zoneSlug: string }).zoneSlug === zoneA, gA.json);
+  check("A, B bölgesini gateway'e bağlayamaz → 404", (await call(aMgr, "PATCH", `/api/gateways/${gwA}`, { zoneSlug: zoneB })).status === 404);
+  check("gateway kimliği cihaz olarak kaydedilemez → 409", (await call(aMgr, "POST", "/api/devices", { mac: gwA, zoneSlug: zoneA })).status === 409);
+  check("izleyici gateway ekleyemez → 403", (await call(aView, "POST", "/api/gateways", { gatewayId: hexOf("D3"), type: "wifi" })).status === 403);
+  check("izleyici gateway silemez → 403", (await call(aView, "DELETE", `/api/gateways/${gwA}`)).status === 403);
+  const viewList = await call(aView, "GET", "/api/gateways");
+  const viewGw = (viewList.json?.data as { gatewayId: string; raw?: unknown; typeLabel: string }[]).find((g) => g.gatewayId === gwA);
+  check("izleyici gateway'i görür, ham mesajlar gönderilmez", !!viewGw && viewGw.raw === undefined && viewGw.typeLabel === "Mobil hat (4G) geçidi", viewGw);
+  const adminGw = await call(admin, "GET", `/api/gateways/${gwA}`);
+  check("admin teknik görünümü alır", adminGw.status === 200 && (adminGw.json?.data as { raw?: unknown }).raw !== undefined, adminGw.json);
+  check("keşfedilen gateway'ler yalnızca admin → 403", (await call(aMgr, "GET", "/api/admin/gateways/discovered")).status === 403);
+  check("admin keşfedilen listeyi okur → 200", (await call(admin, "GET", "/api/admin/gateways/discovered")).status === 200);
+
   console.log("\n[6] Slug yeniden kullanılmaz");
   check("A bölgesini siler", (await call(aMgr, "DELETE", `/api/zones/${zoneA}`)).status === 200);
   const again = await call(aMgr, "POST", "/api/zones", { name: `A Cadde ${tag}` });
@@ -312,6 +341,12 @@ async function main() {
 
   console.log("\n[9] Temizlik");
   for (const slug of [A, B]) {
+    const gws = await call(admin, "GET", `/api/gateways?customer=${slug}`);
+    const gwList = (gws.json?.data as { gatewayId: string }[]) ?? [];
+    if (gwList.length > 0) {
+      check(`ağ geçidi olan müşteri ${slug} silinemez → 409`, (await call(admin, "DELETE", `/api/admin/customers/${slug}`)).status === 409);
+    }
+    for (const g of gwList) await call(admin, "DELETE", `/api/gateways/${g.gatewayId}`);
     const zs = await call(admin, "GET", `/api/zones?customer=${slug}`);
     for (const z of (zs.json?.data as { id: string }[]) ?? []) {
       await call(admin, "DELETE", `/api/zones/${z.id}`);

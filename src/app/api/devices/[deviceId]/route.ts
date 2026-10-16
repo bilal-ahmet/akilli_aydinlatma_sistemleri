@@ -19,6 +19,7 @@ const selectShape = {
   firmwareVersion: schema.devices.firmwareVersion,
   health: schema.devices.health,
   healthAt: schema.devices.healthAt,
+  gatewayId: schema.devices.gatewayId,
   zoneSlug: schema.zones.slug,
   zoneName: schema.zones.name,
 };

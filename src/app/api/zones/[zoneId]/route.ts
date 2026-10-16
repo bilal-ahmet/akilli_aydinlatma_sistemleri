@@ -55,6 +55,11 @@ export async function PATCH(
   if (!row) return fail("Bölge bulunamadı", 404);
 
   if (movedTo) {
+    // Gateway'ler müşteride kalır: eski müşterinin gateway'lerinin bu bölgeye
+    // bağı ve taşınan cihazların eski müşterinin gateway'ine bağı kaldırılır.
+    // Gateway raporu (`nodes`) bağları yeni sahiplikle yeniden kurar.
+    await db.update(schema.gateways).set({ zoneId: null }).where(eq(schema.gateways.zoneId, row.id));
+    await db.update(schema.devices).set({ gatewayId: null }).where(eq(schema.devices.zoneId, row.id));
     await refreshTenancy();
     await audit({
       req,

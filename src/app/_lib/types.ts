@@ -42,6 +42,38 @@ export interface DeviceView {
   resetReason: string | null;
   ota: OtaStatus | null;
   healthAt: string | null;
+  /** Bağlı olduğu gateway (GW_ID); gateway raporundan ya da cihaz health'inden. */
+  gatewayId: string | null;
+}
+
+/**
+ * Gateway (ağ geçidi) görünümü. Türe özgü alanlar sunucuda
+ * `summarizeGateway` ile role göre (teknik/sade) hazırlanır; ham mesajlar
+ * (`raw`) yalnızca admin'e gider.
+ */
+export interface GatewayView {
+  id: string;
+  gatewayId: string; // GW_ID = MAC (iki noktasız)
+  type: string;
+  typeLabel: string;
+  name: string | null;
+  zoneSlug: string | null;
+  zoneName: string | null;
+  location: string | null;
+  notes: string | null;
+  firmwareVersion: string | null;
+  lastSeen: string | null;
+  /** false: LWT geldi (bağlantı koptu). */
+  online: boolean | null;
+  /** Gateway'e bağlı (bu müşterinin) cihaz sayısı. */
+  deviceCount: number;
+  fields: { label: string; value: string }[];
+  raw?: {
+    health: Record<string, unknown> | null;
+    healthAt: string | null;
+    report: Record<string, unknown> | null;
+    reportAt: string | null;
+  };
 }
 
 /**

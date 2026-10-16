@@ -97,7 +97,7 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 /**
- * DELETE /api/admin/customers/:slug — yalnızca bölgesi olmayan müşteri
+ * DELETE /api/admin/customers/:slug — yalnızca bölgesi ve ağ geçidi olmayan müşteri
  * silinir (kullanıcılarıyla birlikte). Bölgeleri olan müşteri önce
  * pasifleştirilmeli ya da bölgeleri taşınmalı/silinmeli.
  */
@@ -111,6 +111,15 @@ export async function DELETE(req: Request, { params }: Params) {
   if (info.zoneSlugs.length > 0) {
     return fail(
       `Müşterinin ${info.zoneSlugs.length} bölgesi var. Önce bölgeleri taşıyın ya da silin; ya da müşteriyi pasifleştirin.`,
+      409,
+    );
+  }
+  const gatewayCount = [...(await getTenancy()).gatewayOwner.values()].filter(
+    (cid) => cid === info.id,
+  ).length;
+  if (gatewayCount > 0) {
+    return fail(
+      `Müşterinin ${gatewayCount} ağ geçidi var. Önce ağ geçitlerini silin; ya da müşteriyi pasifleştirin.`,
       409,
     );
   }

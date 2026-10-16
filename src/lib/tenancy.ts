@@ -41,6 +41,7 @@ export type TenancyIndex = {
   zoneOwner: Map<string, string>; // zone slug → customer id
   deviceOwner: Map<string, string>; // MAC → customer id
   deviceZone: Map<string, string>; // MAC → zone slug (OTA'nın bölge bazlı sıralanması için)
+  gatewayOwner: Map<string, string>; // GW_ID → customer id
   users: Map<string, UserState>;
   loadedAt: number;
 };
@@ -51,7 +52,7 @@ const g = globalThis as unknown as {
 };
 
 async function load(): Promise<TenancyIndex> {
-  const [customerRows, zoneRows, deviceRows, userRows] = await Promise.all([
+  const [customerRows, zoneRows, deviceRows, gatewayRows, userRows] = await Promise.all([
     db
       .select({
         id: schema.customers.id,
@@ -66,6 +67,9 @@ async function load(): Promise<TenancyIndex> {
     db
       .select({ mac: schema.devices.deviceId, zoneId: schema.devices.zoneId })
       .from(schema.devices),
+    db
+      .select({ gatewayId: schema.gateways.gatewayId, customerId: schema.gateways.customerId })
+      .from(schema.gateways),
     db
       .select({
         id: schema.users.id,
@@ -108,6 +112,9 @@ async function load(): Promise<TenancyIndex> {
     customersById.get(cid)?.macs.push(d.mac);
   }
 
+  const gatewayOwner = new Map<string, string>();
+  for (const gw of gatewayRows) gatewayOwner.set(gw.gatewayId, gw.customerId);
+
   const users = new Map<string, UserState>();
   for (const u of userRows) users.set(u.id, { ...u, role: u.role as Role });
 
@@ -117,6 +124,7 @@ async function load(): Promise<TenancyIndex> {
     zoneOwner,
     deviceOwner,
     deviceZone,
+    gatewayOwner,
     users,
     loadedAt: Date.now(),
   };
@@ -163,15 +171,16 @@ export function peekTenancy(): TenancyIndex | undefined {
   return g.__fenerTenancy;
 }
 
-/** Olayın/kaynağın sahip müşterisini çözer (bölge slug'ı önce, sonra MAC). */
+/** Olayın/kaynağın sahip müşterisini çözer (bölge slug'ı önce, sonra MAC, sonra gateway). */
 export function ownerOf(
   idx: TenancyIndex,
-  ref: { zoneSlug?: string; deviceId?: string },
+  ref: { zoneSlug?: string; deviceId?: string; gatewayId?: string },
 ): string | undefined {
   if (ref.zoneSlug) {
     const c = idx.zoneOwner.get(ref.zoneSlug);
     if (c) return c;
   }
   if (ref.deviceId) return idx.deviceOwner.get(ref.deviceId);
+  if (ref.gatewayId) return idx.gatewayOwner.get(ref.gatewayId);
   return undefined;
 }

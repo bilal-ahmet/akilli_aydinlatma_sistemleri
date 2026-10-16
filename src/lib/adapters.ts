@@ -4,7 +4,9 @@ import type {
   D4iTelemetryRow,
   FaultEventRow,
   UserRow,
+  GatewayRow,
 } from "@/lib/db/schema";
+import { gatewayTypeLabel, summarizeGateway } from "@/lib/gateways";
 import type { CustomerUser } from "@/types/admin";
 import { deviceHealthSchema } from "@/types/lighting";
 import type { CustomerRole } from "@/lib/auth/roles";
@@ -16,6 +18,7 @@ import type {
   D4iSnapshot,
   D4iRaw,
   FaultEvent,
+  GatewayView,
 } from "@/app/_lib/types";
 
 /**
@@ -54,6 +57,7 @@ export function toDeviceView(row: {
   firmwareVersion?: string | null;
   health?: Record<string, unknown> | null;
   healthAt?: Date | null;
+  gatewayId?: string | null;
 }): DeviceView {
   // Ham health mesajından yalnızca panelin kullandığı alanlar (şema dışı
   // alanlar DB'de kalır).
@@ -78,7 +82,47 @@ export function toDeviceView(row: {
     resetReason: h?.reset_reason ?? null,
     ota: h?.ota ?? null,
     healthAt: row.healthAt ? row.healthAt.toISOString() : null,
+    gatewayId: row.gatewayId ?? null,
   };
+}
+
+/**
+ * `gateways` satırını (+ bölge, bağlı cihaz sayısı) panel görünümüne çevirir.
+ * `technical`: admin teknik alanları ve ham mesajları görür; müşteri yalnızca
+ * sade alanları (IP, SIM numarası gibi ayrıntılar ona gönderilmez).
+ */
+export function toGatewayView(
+  row: GatewayRow & { zoneSlug: string | null; zoneName: string | null; deviceCount: number },
+  technical: boolean,
+): GatewayView {
+  const view: GatewayView = {
+    id: row.id,
+    gatewayId: row.gatewayId,
+    type: row.type,
+    typeLabel: gatewayTypeLabel(row.type, technical),
+    name: row.name,
+    zoneSlug: row.zoneSlug,
+    zoneName: row.zoneName,
+    location: row.location,
+    notes: row.notes,
+    firmwareVersion: row.firmwareVersion,
+    lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,
+    online: row.online,
+    deviceCount: row.deviceCount,
+    fields: summarizeGateway(
+      { type: row.type, health: row.health, report: row.report },
+      { technical },
+    ),
+  };
+  if (technical) {
+    view.raw = {
+      health: row.health,
+      healthAt: row.healthAt ? row.healthAt.toISOString() : null,
+      report: row.report,
+      reportAt: row.reportAt ? row.reportAt.toISOString() : null,
+    };
+  }
+  return view;
 }
 
 /** DB `d4i_telemetry` satırını cihaz modalindeki detay görünümüne çevirir. */

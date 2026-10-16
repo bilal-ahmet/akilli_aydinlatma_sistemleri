@@ -176,8 +176,47 @@ export const devices = pgTable("devices", {
   firmwareVersion: varchar("firmware_version", { length: 32 }),
   health: jsonb("health").$type<Record<string, unknown>>(),
   healthAt: timestamp("health_at", { withTimezone: true }),
+  // Cihazın bağlı olduğu gateway (gateways.gateway_id'ye mantıksal ref). Gateway
+  // raporundaki `nodes` listesinden ya da cihaz health'indeki `gateway`
+  // alanından dolar; gateway silinince NULL'lanır.
+  gatewayId: varchar("gateway_id", { length: 100 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+/**
+ * Gateway (ağ geçidi): sahadaki cihazların ağa çıktığı kutu — Thread Border
+ * Router, 4G/WiFi router, ileride LoRaWAN gateway. Cihazlarla AYNI topic
+ * şemasını kullanır (`Meven:<GW_ID>/cmd|data|health`); backend gateway
+ * mesajını cihazınkinden payload'daki `type` ile ayırır (bkz.
+ * lib/gateways.ts). Türe özgü bilgi şemasız tutulur: son `/health` mesajı
+ * `health`'te, son `/data` mesajı `report`'ta (mesaj başına satır açılmaz).
+ */
+export const gateways = pgTable(
+  "gateways",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    gatewayId: varchar("gateway_id", { length: 100 }).notNull().unique(), // GW_ID = MAC
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    // Opsiyonel konum etiketi; bir gateway birden çok bölgeye hizmet edebilir.
+    zoneId: uuid("zone_id").references(() => zones.id, { onDelete: "set null" }),
+    type: varchar("type", { length: 30 }).notNull(), // thread_br | cellular | wifi | lorawan
+    name: varchar("name", { length: 100 }),
+    location: varchar("location", { length: 200 }),
+    notes: text("notes"),
+    firmwareVersion: varchar("firmware_version", { length: 32 }),
+    lastSeen: timestamp("last_seen", { withTimezone: true }),
+    // Son health/LWT'deki `online`; false = LWT geldi (bağlantı koptu).
+    online: boolean("online"),
+    health: jsonb("health").$type<Record<string, unknown>>(),
+    healthAt: timestamp("health_at", { withTimezone: true }),
+    report: jsonb("report").$type<Record<string, unknown>>(),
+    reportAt: timestamp("report_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("idx_gateways_customer_id").on(t.customerId)],
+);
 
 /**
  * Bir ESP'ye (cihaza) bağlı tek bağımsız aydınlatma = "fixture" (DALI kanalı).
@@ -322,6 +361,7 @@ export type AuthSessionRow = typeof authSessions.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;
+export type GatewayRow = typeof gateways.$inferSelect;
 export type FixtureRow = typeof fixtures.$inferSelect;
 export type DeviceStatusRow = typeof deviceStatus.$inferSelect;
 export type D4iTelemetryRow = typeof d4iTelemetry.$inferSelect;

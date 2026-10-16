@@ -9,6 +9,7 @@ import { Modal } from "@/app/_components/Modal";
 import type { CustomerOverview } from "@/types/admin";
 import type { Action } from "@/types/lighting";
 import { CustomerForm, type CustomerFormValues } from "./CustomerForm";
+import { DiscoveredGateways } from "./DiscoveredGateways";
 
 function formatPower(w: number | null): string {
   if (w === null) return "—";
@@ -252,6 +253,12 @@ export function AdminClient({ initialCustomers }: { initialCustomers: CustomerOv
           </div>
         )}
       </section>
+
+      <DiscoveredGateways
+        customers={customers
+          .map((c) => ({ slug: c.slug, name: c.name }))
+          .sort((a, b) => a.name.localeCompare(b.name, "tr"))}
+      />
 
       {/* Global komut — tüm müşteriler (Meven:all/cmd) */}
       <section aria-label="Global komut" className="rounded-2xl border border-danger/30 bg-panel p-5">
