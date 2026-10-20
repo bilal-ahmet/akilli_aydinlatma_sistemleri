@@ -126,7 +126,8 @@ export function DevicesView() {
       {technical ? (
         <p className="text-[12.5px] text-muted">
           “Ölçüm bekleniyor”: cihaz bağlı, ancak son 10 dakikada gerilim ve güç bilgisi göndermedi.
-          Şiddet, cihazın bölgesine giden son komuttur.
+          Işık, cihazın lambalarının son bilinen durumudur (son komut ya da cihaz raporu); lamba
+          kaydı olmayan cihazda bölgenin son komutu gösterilir.
         </p>
       ) : null}
     </div>

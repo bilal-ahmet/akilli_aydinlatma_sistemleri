@@ -44,6 +44,23 @@ export interface DeviceView {
   healthAt: string | null;
   /** Bağlı olduğu gateway (GW_ID); gateway raporundan ya da cihaz health'inden. */
   gatewayId: string | null;
+  /**
+   * Cihaza bağlı lambalar (fixtures snapshot'ı, kanal sırasıyla). Toplu
+   * seçimde cihaz/lamba durumu buradan okunur; yalnızca `GET /api/devices`
+   * doldurur, tekil yanıtlarda boş gelir.
+   */
+  lamps: LampView[];
+}
+
+/** Bir cihazın tek lambası (DALI kanalı) — `fixtures` satırının özeti. */
+export interface LampView {
+  channel: number;
+  name: string | null;
+  isOn: boolean;
+  /** 0–100 */
+  brightness: number;
+  activeFx: number | null;
+  status: string; // ok | fault
 }
 
 /**

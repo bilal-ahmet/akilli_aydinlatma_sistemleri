@@ -3,10 +3,24 @@
 import { useMemo, useState } from "react";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel, useTechnical } from "@/app/_lib/panel";
-import { deviceName } from "@/app/_lib/format";
 import type { DeviceView, Zone } from "@/app/_lib/types";
+import {
+  countSelection,
+  deviceSelState,
+  isEmptyPlan,
+  planStop,
+  planTargets,
+  pruneSelection,
+  replaceWithin,
+  selectionText,
+  type Selection,
+  type SelState,
+} from "@/app/_lib/selection";
 import { EFFECTS, MORSE_TEXT_MAX, effectByNumber, normalizeMorseText, type Effect } from "@/lib/effects";
+import { Modal } from "../Modal";
+import { SelectionQuickBar } from "../SelectionQuickBar";
 import { EmptyBox, PageHeader } from "../PanelUi";
+import { DeviceTable } from "./DeviceTable";
 
 /**
  * Kart önizlemesi: 8 noktanın parlaklığı — efektin zaman içindeki (tek lamba)
@@ -117,80 +131,162 @@ function EffectCard({
   );
 }
 
-/**
- * Hedef seçimi: anahtarı olan bölge seçilidir. `null` → bölgenin tamamı
- * (bölge komutu, tek publish — Kural #3); `Set` → yalnızca o cihazlar (her
- * birine cihaz komutu). Seçimin kendisi `null` ise her şey seçilidir; yeni
- * eklenen bölge de otomatik dahil olur.
- */
-type Selection = Map<string, Set<string> | null>;
-
-/** "2 bölge ve 3 cihaz" — `suffix` ile Türkçe bulunma eki ("2 bölge ve 3 cihazda"). */
-function placeText(zoneCount: number, deviceCount: number, suffix = true): string {
-  const parts: string[] = [];
-  if (zoneCount) parts.push(`${zoneCount} bölge`);
-  if (deviceCount) parts.push(`${deviceCount} cihaz`);
-  return parts.join(" ve ") + (suffix ? (deviceCount ? "da" : "de") : "");
-}
-
 const fxLabel = (n: number) => effectByNumber(n)?.label ?? `#${n}`;
 
 const checkbox =
-  "h-[18px] w-[18px] shrink-0 cursor-pointer rounded-[5px] accent-[var(--acc)] disabled:cursor-not-allowed";
+  "h-[18px] w-[18px] shrink-0 cursor-pointer rounded-[5px] accent-[var(--acc)] disabled:cursor-not-allowed disabled:opacity-40";
+
+/** Bir cihaz listesinin seçim durumu: hiçbiri / bir kısmı / tamamı (cihazın tamamı). */
+function listState(sel: Selection, list: DeviceView[]): SelState {
+  if (list.length === 0) return "none";
+  const states = list.map((d) => deviceSelState(sel, d));
+  if (states.every((s) => s === "all")) return "all";
+  return states.some((s) => s !== "none") ? "some" : "none";
+}
+
+/** Bölgedeki seçili cihaz sayısı (kısmen seçili cihaz da sayılır). */
+const pickedIn = (sel: Selection, list: DeviceView[]) =>
+  list.filter((d) => deviceSelState(sel, d) !== "none").length;
 
 /**
- * Efektler: katalogdan efekt seç, hangi bölgelerde / cihazlarda çalışacağını
- * belirle. Tüm bölgeler tamamen seçiliyse tek "Tüm Sistem" isteği gider
- * (sunucu bölge topic'lerine fanout eder); tamamen seçili bölgeye bölge
- * komutu, bölgenin yalnızca bazı cihazları seçiliyse o cihazlara ayrı cihaz
- * komutu. Tek lambaya efekt cihaz panelinden verilir.
+ * Hedef seçici penceresi: solda bölgeler, sağda seçili bölgenin cihazları
+ * (bölge detayındaki tabloyla aynı; lambalar da seçilebilir).
+ */
+function TargetPicker({
+  zones,
+  devicesByZone,
+  selection,
+  onChange,
+  onClose,
+}: {
+  zones: Zone[];
+  devicesByZone: (zoneId: string) => DeviceView[];
+  selection: Selection;
+  onChange: (next: Selection) => void;
+  onClose: () => void;
+}) {
+  const [active, setActive] = useState(() => zones.find((z) => devicesByZone(z.id).length > 0)?.id ?? zones[0]?.id);
+  const zone = zones.find((z) => z.id === active);
+  const list = zone ? devicesByZone(zone.id) : [];
+  const total = countSelection(selection);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title="Nerede çalışsın?"
+      subtitle="Bölgenin tamamını ya da tek tek cihaz ve lambaları seçin."
+      footer={
+        <>
+          <span className="mr-auto self-center text-[13px] text-muted">
+            {total.devices + total.lamps > 0 ? `${selectionText(total)} seçili` : "Seçim yok"}
+          </span>
+          <button type="button" onClick={onClose} className="btn-glow h-10 px-5 text-sm">
+            Tamam
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-[210px_minmax(0,1fr)]">
+        <nav aria-label="Bölgeler" className="flex gap-1 overflow-x-auto sm:flex-col sm:overflow-visible">
+          {zones.map((z) => {
+            const zl = devicesByZone(z.id);
+            const st = listState(selection, zl);
+            const on = z.id === active;
+            return (
+              <div
+                key={z.id}
+                className={`flex shrink-0 items-center gap-2 rounded-[10px] px-2.5 py-2 text-sm transition-colors ${
+                  on ? "bg-panel-2 font-semibold text-text" : "text-ink-2 hover:bg-panel-2/60"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  disabled={zl.length === 0}
+                  aria-label={`${z.name} bölgesinin tamamı`}
+                  checked={st === "all"}
+                  ref={(el) => {
+                    if (el) el.indeterminate = st === "some";
+                  }}
+                  onChange={() => onChange(replaceWithin(selection, zl, () => st !== "all"))}
+                  className={checkbox}
+                />
+                <button
+                  type="button"
+                  onClick={() => setActive(z.id)}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                >
+                  <span className="truncate">{z.name}</span>
+                  <span className="shrink-0 font-mono text-[11.5px] text-muted">
+                    {zl.length === 0 ? "—" : `${pickedIn(selection, zl)}/${zl.length}`}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="flex min-w-0 flex-col gap-3">
+          {zone && list.length > 0 ? (
+            <>
+              <SelectionQuickBar devices={list} selection={selection} onChange={onChange} />
+              <div className="overflow-hidden rounded-xl border border-border">
+                <DeviceTable devices={list} selection={selection} onSelectionChange={onChange} compact />
+              </div>
+            </>
+          ) : (
+            <EmptyBox>Bu bölgede tanımlı cihaz yok.</EmptyBox>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Efektler: üstte "Nerede çalışsın?" (bölge çipleri + ayrıntılı seçim
+ * penceresi), ortada efekt kataloğu, altta sabit başlat/durdur çubuğu.
+ *
+ * Komut planı `planTargets`: bütün cihazlar tamamen seçiliyse tek "Tüm Sistem"
+ * isteği (sunucu bölge topic'lerine fanout eder), tamamen seçili bölgeye bölge
+ * komutu, kısmi seçimde cihaz/lamba komutları. Çok lambalı efektte lamba
+ * seçimi cihazın tamamına yükselir; lambası yetmeyen cihaz atlanır.
  */
 export function EffectsView() {
   const { zones, devices, applyEffect, stopEffect } = useLighting();
   const { canWrite } = usePanel();
-  const technical = useTechnical();
   const [selected, setSelected] = useState<Effect>(EFFECTS[0]);
-  const [picked, setPicked] = useState<Selection | null>(null);
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  // "all": varsayılan, tüm cihazlar (yeni yüklenen/eklenen cihaz da dahil).
+  const [picked, setPicked] = useState<Selection | "all">("all");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [text, setText] = useState("");
   const [sent, setSent] = useState<string | null>(null);
 
+  const zoned = useMemo(() => devices.filter((d) => d.zoneSlug !== null), [devices]);
   const devicesByZone = useMemo(() => {
     const m = new Map<string, DeviceView[]>();
-    for (const d of devices) {
-      if (!d.zoneSlug) continue;
-      const list = m.get(d.zoneSlug);
+    for (const d of zoned) {
+      const list = m.get(d.zoneSlug!);
       if (list) list.push(d);
-      else m.set(d.zoneSlug, [d]);
+      else m.set(d.zoneSlug!, [d]);
     }
     return m;
-  }, [devices]);
+  }, [zoned]);
   const zoneDevices = (zoneId: string) => devicesByZone.get(zoneId) ?? [];
 
-  // Lambası efektin istediğinden az olan cihaz seçilemez (cihaz reddederdi).
-  // Lamba kaydı hiç yoksa sayı bilinmiyor demektir; engellenmez.
-  const tooFewLamps = (d: DeviceView) =>
-    selected.minLamps != null && d.lampCount > 0 && d.lampCount < selected.minLamps;
+  const selection: Selection =
+    picked === "all" ? new Map(zoned.map((d) => [d.deviceId, null])) : pruneSelection(picked, zoned);
+  const change = (next: Selection) => {
+    setPicked(next);
+    setSent(null);
+  };
 
-  /** Bölgenin seçimi: undefined = seçili değil, null = tamamı, Set = bazı cihazlar. */
-  const zoneSel = (zoneId: string): Set<string> | null | undefined =>
-    picked === null ? null : picked.get(zoneId);
-
-  const fullZones = zones.filter((z) => zoneSel(z.id) === null);
-  const partialDevices = zones.flatMap((z) => {
-    const sel = zoneSel(z.id);
-    return sel ? zoneDevices(z.id).filter((d) => sel.has(d.deviceId) && !tooFewLamps(d)) : [];
-  });
-  const allChosen = zones.length > 0 && fullZones.length === zones.length;
-  const nothing = fullZones.length === 0 && partialDevices.length === 0;
-
-  // Durdurma: efekt çalışan, tamamen seçili bölgeler bölge komutuyla; cihaz
-  // bazında başlatılmış (bölgesi efektte görünmeyen) cihazlar cihaz komutuyla.
-  const stopZones = fullZones.filter((z) => z.activeFx != null);
-  const stopDevices = [
-    ...partialDevices,
-    ...fullZones.filter((z) => z.activeFx == null).flatMap((z) => zoneDevices(z.id)),
-  ].filter((d) => d.activeFx != null);
+  const plan = planTargets(selection, zoned, zones, selected);
+  const stopPlan = planStop(selection, zoned, zones);
+  const allChosen = zoned.length > 0 && listState(selection, zoned) === "all" && plan.skipped.length === 0;
+  const nothing = isEmptyPlan(plan);
+  const count = countSelection(selection);
 
   /** Efektin çalıştığı yer sayısı: bölge + (efektte olmayan bölgedeki) cihaz. */
   const runningCount = (n: number) => {
@@ -202,72 +298,49 @@ export function EffectsView() {
     );
   };
 
-  function update(fn: (next: Selection) => void) {
-    setSent(null);
-    setPicked((prev) => {
-      const next: Selection = prev ? new Map(prev) : new Map(zones.map((z) => [z.id, null]));
-      fn(next);
-      return next;
-    });
-  }
-
-  function toggleZone(z: Zone) {
-    update((next) => {
-      if (next.has(z.id)) next.delete(z.id);
-      else next.set(z.id, null);
-    });
-  }
-
-  function toggleDevice(z: Zone, mac: string) {
-    update((next) => {
-      const all = zoneDevices(z.id).map((d) => d.deviceId);
-      const cur = next.get(z.id);
-      const set = new Set(cur === undefined ? [] : cur === null ? all : cur);
-      if (set.has(mac)) set.delete(mac);
-      else set.add(mac);
-      if (set.size === 0) next.delete(z.id);
-      else if (set.size === all.length) next.set(z.id, null);
-      else next.set(z.id, set);
-    });
-  }
-
-  function toggleOpen(zoneId: string) {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(zoneId)) next.delete(zoneId);
-      else next.add(zoneId);
-      return next;
-    });
+  /** Hedef özeti: "Tüm bölgeler", "Park Yolu", "2 bölge ve 3 cihaz", "1 lamba". */
+  function targetText(): string {
+    if (allChosen) return "tüm bölgeler";
+    const parts: string[] = [];
+    if (plan.zones.length === 1) parts.push(zones.find((z) => z.id === plan.zones[0])?.name ?? "1 bölge");
+    else if (plan.zones.length > 1) parts.push(`${plan.zones.length} bölge`);
+    if (plan.devices.length) parts.push(`${plan.devices.length} cihaz`);
+    if (plan.lamps.length) parts.push(`${plan.lamps.length} lamba`);
+    return parts.join(", ");
   }
 
   function start() {
     if (nothing) return;
     // Boş metin gönderilmez → cihaz son ayarlanan metni tekrar çalar.
     const t = selected.needsText ? text || undefined : undefined;
-    applyEffect(
-      allChosen
-        ? "all"
-        : { zones: fullZones.map((z) => z.id), devices: partialDevices.map((d) => d.deviceId) },
-      selected.number,
-      t,
-    );
-    const where = allChosen ? "tüm bölgelerde" : placeText(fullZones.length, partialDevices.length);
-    setSent(`${selected.label} ${where} başlatıldı.`);
+    applyEffect(allChosen ? "all" : plan, selected.number, t);
+    const skipped = plan.skipped.length ? ` ${plan.skipped.length} cihaz atlandı (lamba sayısı yetmiyor).` : "";
+    setSent(`${selected.label} ${targetText()} için başlatıldı.${skipped}`);
   }
 
   // Yalnızca efekt çalışan hedeflere, her biri kendi son şiddetine döner
   // ("Tüm Sistem" durdurması hepsini genel şiddete çekerdi).
   function stop() {
-    stopEffect({ zones: stopZones.map((z) => z.id), devices: stopDevices.map((d) => d.deviceId) });
+    stopEffect(stopPlan);
     setSent("Efekt durduruldu; lambalar son şiddetine döndü.");
   }
+
+  // Seçilebilir alan olduğu anlaşılsın: el imleci + üzerine gelince hafif ton.
+  const chip = (state: SelState) =>
+    `inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-full px-3.5 text-[13px] transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45 ${
+      state === "all"
+        ? "border border-text bg-text font-medium text-bg enabled:hover:bg-text/85"
+        : state === "some"
+          ? "border border-glow/60 bg-glow/15 font-medium text-text enabled:hover:bg-glow/25"
+          : "border border-border bg-panel text-ink-2 enabled:hover:border-glow/50 enabled:hover:bg-glow/10 enabled:hover:text-text"
+    }`;
 
   const section = (heading: string, note: string, list: readonly Effect[]) => (
     <section className="flex flex-col gap-3">
       <h2 className="eyebrow">
         {heading} <span className="font-normal normal-case tracking-normal">· {note}</span>
       </h2>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {list.map((fx) => (
           <EffectCard
             key={fx.number}
@@ -284,177 +357,153 @@ export function EffectsView() {
     </section>
   );
 
+  const allState = listState(selection, zoned);
+  const stopCount = stopPlan.zones.length + stopPlan.devices.length + stopPlan.lamps.length;
+
   return (
     <div className="flex flex-col gap-[22px]">
       <PageHeader
         title="Efektler"
-        subtitle="Bir efekt seçin, hangi bölgelerde ya da cihazlarda çalışacağını belirleyin."
+        subtitle="Nerede çalışacağını seçin, bir efekt seçin ve başlatın."
       />
 
       {zones.length === 0 ? (
         <EmptyBox>Efekt çalıştırmak için önce bir bölge oluşturun.</EmptyBox>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-[22px] xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="order-2 flex flex-col gap-6 xl:order-1">
+        <fieldset disabled={!canWrite} className="m-0 flex min-w-0 flex-col gap-[22px] border-0 p-0">
+          <section
+            aria-label="Nerede çalışsın?"
+            className="flex flex-col gap-3 rounded-2xl border border-border bg-panel px-5 py-[18px]"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-semibold text-text">Nerede çalışsın?</h2>
+              <span className="text-[13px] text-muted">
+                {count.devices + count.lamps === 0 ? "Seçim yok" : `${selectionText(count)} seçili`}
+              </span>
+            </div>
+            <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-0.5 sm:mx-0 sm:flex-wrap sm:px-0">
+              <button
+                type="button"
+                className={chip(allState)}
+                disabled={zoned.length === 0}
+                aria-pressed={allState === "all"}
+                onClick={() => change(allState === "all" ? new Map() : new Map(zoned.map((d) => [d.deviceId, null])))}
+              >
+                Tüm bölgeler
+              </button>
+              {zones.map((z) => {
+                const zl = zoneDevices(z.id);
+                const st = listState(selection, zl);
+                return (
+                  <button
+                    key={z.id}
+                    type="button"
+                    className={chip(st)}
+                    disabled={zl.length === 0}
+                    aria-pressed={st === "all" ? true : st === "some" ? "mixed" : false}
+                    title={zl.length === 0 ? "Bu bölgede tanımlı cihaz yok" : undefined}
+                    onClick={() => change(replaceWithin(selection, zl, () => st !== "all"))}
+                  >
+                    {z.name}
+                    <span className={`font-mono text-[11.5px] ${st === "all" ? "opacity-70" : "text-muted"}`}>
+                      {zl.length === 0 ? "—" : `${pickedIn(selection, zl)}/${zl.length}`}
+                    </span>
+                    {z.isOn && z.activeFx != null ? (
+                      <span className="text-[11.5px] text-accent">✦ {fxLabel(z.activeFx)}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                disabled={zoned.length === 0}
+                className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-full border border-glow/50 bg-glow/[.06] px-3.5 text-[13px] font-semibold text-accent transition-colors duration-150 enabled:hover:border-glow enabled:hover:bg-glow/15 disabled:cursor-not-allowed disabled:opacity-45 sm:ml-auto"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+                  <circle cx="16" cy="6" r="2" />
+                  <circle cx="10" cy="12" r="2" />
+                  <circle cx="18" cy="18" r="2" />
+                </svg>
+                Cihazları tek tek seç
+              </button>
+            </div>
+            <p className="text-[12.5px] leading-snug text-muted">
+              Bir bölgeye tıklayarak bölgenin tamamını seçin. Efekti bölgedeki yalnızca bazı cihaz ya
+              da lambalarda çalıştırmak için <span className="font-medium text-ink-2">Cihazları tek tek seç</span>{" "}
+              düğmesini kullanın.
+            </p>
+          </section>
+
+          <div className="flex flex-col gap-6">
             {section("Tek lamba", "her lamba kendi başına çalar", SINGLE_LAMP_FX)}
             {section("Tüm lambalar", "cihazdaki lambalar birlikte çalar", ALL_LAMP_FX)}
           </div>
 
-          <aside className="order-1 xl:sticky xl:top-7 xl:order-2">
-            <fieldset
-              disabled={!canWrite}
-              className="m-0 flex min-w-0 flex-col gap-5 rounded-2xl border border-border bg-panel p-[22px]"
-            >
-              <div className="flex flex-col gap-1">
-                <p className="eyebrow">Seçili efekt</p>
-                <p className="text-xl font-bold text-text">{selected.label}</p>
-                <p className="text-[13px] leading-snug text-muted">{selected.desc}</p>
-                {selected.minLamps != null ? (
-                  <p className="mt-1 text-[12.5px] leading-snug text-ink-2">
-                    Bu efekt en az {selected.minLamps} lambalı cihazlarda çalışır.
-                  </p>
-                ) : null}
+          <div
+            role="region"
+            aria-label="Efekti başlat"
+            className="sticky bottom-4 z-30 flex flex-col gap-2 rounded-2xl border border-border-strong bg-panel/95 px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,.18)] backdrop-blur sm:px-5"
+          >
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[15px] font-semibold text-text">{selected.label}</span>
+                <span className="truncate text-[12.5px] text-muted">
+                  {nothing
+                    ? plan.skipped.length
+                      ? `Seçili cihazların lambası bu efekt için yetmiyor (en az ${selected.minLamps}).`
+                      : "Nerede çalışacağını seçin."
+                    : `${targetText()}${plan.skipped.length ? ` · ${plan.skipped.length} cihaz atlanacak` : ""}${
+                        selected.allLamps && count.lamps > 0 ? " · cihazın tüm lambalarında çalışır" : ""
+                      }`}
+                </span>
               </div>
-
               {selected.needsText ? (
-                <div>
-                  <label className="field-label" htmlFor="fx-text">Çalınacak metin</label>
+                <label className="flex items-center gap-2">
+                  <span className="text-[13px] text-ink-2">Metin</span>
                   <input
-                    id="fx-text"
                     value={text}
                     maxLength={MORSE_TEXT_MAX}
                     onChange={(e) => setText(normalizeMorseText(e.target.value))}
                     placeholder="MERHABA"
-                    className="field font-mono tracking-wider"
+                    title="Boş bırakırsanız cihaz son metni tekrar çalar."
+                    className="field !h-9 !w-40 font-mono tracking-wider"
                   />
-                  <p className="mt-1.5 flex justify-between gap-2 text-[11.5px] text-muted">
-                    <span>Boş bırakırsanız cihaz son metni tekrar çalar.</span>
-                    <span className="shrink-0 font-mono">
-                      {text.length}/{MORSE_TEXT_MAX}
-                    </span>
-                  </p>
-                </div>
+                  <span className="font-mono text-[11.5px] text-muted">
+                    {text.length}/{MORSE_TEXT_MAX}
+                  </span>
+                </label>
               ) : null}
-
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[13.5px] font-medium text-text">Bölgeler ve cihazlar</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPicked(allChosen ? new Map() : null);
-                      setSent(null);
-                    }}
-                    className="text-[12.5px] font-medium text-accent hover:underline"
-                  >
-                    {allChosen ? "Hiçbiri" : "Tümü"}
-                  </button>
-                </div>
-                <div className="scroll-y flex max-h-80 flex-col gap-0.5 overflow-y-auto">
-                  {zones.map((z) => {
-                    const sel = zoneSel(z.id);
-                    const list = zoneDevices(z.id);
-                    const isOpen = open.has(z.id);
-                    return (
-                      <div key={z.id} className="flex flex-col">
-                        <div className="flex items-center gap-2.5 py-1 text-sm text-text">
-                          <input
-                            type="checkbox"
-                            aria-label={`${z.name} bölgesinin tamamı`}
-                            checked={sel !== undefined}
-                            ref={(el) => {
-                              if (el) el.indeterminate = sel instanceof Set;
-                            }}
-                            onChange={() => toggleZone(z)}
-                            className={checkbox}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => toggleOpen(z.id)}
-                            disabled={list.length === 0}
-                            aria-expanded={isOpen}
-                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left disabled:cursor-default"
-                          >
-                            <span className="min-w-0 flex-1 truncate">{z.name}</span>
-                            {z.activeFx != null && z.isOn ? (
-                              <span className="shrink-0 text-[11.5px] text-muted">{fxLabel(z.activeFx)}</span>
-                            ) : null}
-                            <span className="shrink-0 text-[11.5px] text-muted">
-                              {sel instanceof Set ? `${sel.size}/${list.length}` : list.length} cihaz
-                            </span>
-                            {list.length > 0 ? (
-                              <span
-                                aria-hidden
-                                className={`shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
-                              >
-                                ›
-                              </span>
-                            ) : null}
-                          </button>
-                        </div>
-                        {isOpen ? (
-                          <div className="mb-1 ml-[9px] flex flex-col gap-0.5 border-l border-border pl-4">
-                            {list.map((d) => {
-                              const short = tooFewLamps(d);
-                              const on =
-                                !short && (sel === null || (sel instanceof Set && sel.has(d.deviceId)));
-                              return (
-                                <label
-                                  key={d.deviceId}
-                                  className={`flex items-center gap-2.5 py-0.5 text-[13px] ${short ? "text-muted" : "cursor-pointer text-text"}`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    disabled={short}
-                                    onChange={() => toggleDevice(z, d.deviceId)}
-                                    className={checkbox}
-                                  />
-                                  <span className="min-w-0 flex-1 truncate">{deviceName(d, technical)}</span>
-                                  <span className="shrink-0 text-[11.5px] text-muted">
-                                    {short
-                                      ? "lamba sayısı yetmez"
-                                      : d.activeFx != null
-                                        ? fxLabel(d.activeFx)
-                                        : d.lampCount > 0
-                                          ? `${d.lampCount} lamba`
-                                          : null}
-                                  </span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="text-[11.5px] leading-snug text-muted">
-                  Bölgenin yalnızca bazı cihazlarında çalıştırmak için bölge adına tıklayıp cihaz seçin.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <button type="button" onClick={start} disabled={nothing} className="btn-glow h-11 text-[14.5px]">
-                  {nothing
-                    ? "Bölge ya da cihaz seçin"
-                    : allChosen
-                      ? "Tüm bölgelerde başlat"
-                      : `${placeText(fullZones.length, partialDevices.length)} başlat`}
-                </button>
-                {stopZones.length + stopDevices.length > 0 ? (
-                  <button type="button" onClick={stop} className="btn-line h-10 text-sm">
-                    Efekti durdur ({placeText(stopZones.length, stopDevices.length, false)})
+              <div className="flex gap-2">
+                {stopCount > 0 ? (
+                  <button type="button" onClick={stop} className="btn-line h-10 px-4 text-sm">
+                    Durdur
                   </button>
                 ) : null}
-                <p aria-live="polite" className="min-h-[1.25rem] text-center text-[12.5px] text-ok">
-                  {sent}
-                </p>
+                <button type="button" onClick={start} disabled={nothing} className="btn-glow h-10 px-5 text-[14px]">
+                  Başlat
+                </button>
               </div>
-            </fieldset>
-          </aside>
-        </div>
+            </div>
+            {sent ? (
+              <p aria-live="polite" className="text-[12.5px] text-ok">
+                {sent}
+              </p>
+            ) : null}
+          </div>
+        </fieldset>
       )}
+
+      {pickerOpen ? (
+        <TargetPicker
+          zones={zones}
+          devicesByZone={zoneDevices}
+          selection={selection}
+          onChange={change}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

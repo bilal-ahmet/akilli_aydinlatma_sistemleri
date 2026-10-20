@@ -304,10 +304,32 @@ uygular (`recordCommand`): kanal taşıyan allLamps efekti tüm lambalara yazıl
 allLamps efektindeki lambaya gelen kanal komutu diğer lambaların `active_fx`'ini
 temizler (`clearGroupEffect`) — mobil/API istemcileri de tutarlı kalır.
 
-**Efektler sayfası** bölge altında cihaz seçimi sunar: bölgenin tamamı seçiliyse
-bölge komutu (tek publish), yalnızca bazı cihazları seçiliyse her birine cihaz
-komutu (`EffectTarget = "all" | { zones, devices }`). Cihazın lamba sayısı ve
-çalışan efekti `GET /api/devices` → `lampCount`, `activeFx` (fixtures'tan).
+**Toplu kontrol (seçili cihaz/lamba).** Bölge detayı ve Efektler sayfası aynı
+seçim modelini kullanır (`app/_lib/selection.ts`, saf): `Selection = Map<MAC,
+null | Set<kanal>>` — `null` cihazın tamamı, `Set` yalnızca o lambalar.
+- **Bölge detayı:** cihaz tablosunda onay kutuları (çok lambalı cihaz "›" ile
+  lamba lamba açılır), üstte Tümü / Açık olanlar / Kapalı olanlar / Temizle
+  (`SelectionQuickBar`), seçim varken altta sabit çubuk: Aç · Kapat · Şiddet ·
+  Efekt · Efekti durdur (`SelectionActionBar`).
+- **Efektler sayfası:** "Nerede çalışsın?" bölge çipleri + "Cihaz ve lamba
+  seç…" penceresi (aynı tablo, `DeviceTable compact`), altta sabit
+  efekt + hedef + Başlat/Durdur çubuğu.
+- **Komut planı tek yerde:** `planTargets` / `planStop`. Kurallar:
+  - Bölgenin bütün cihazları tamamen seçiliyse tek bölge komutu gider (Kural #3).
+  - Efektlerde her şey seçiliyse "Tüm Sistem" isteği gider.
+  - Cihazın tamamı seçiliyse kanalsız komut, kısmi seçimde lamba başına
+    kanallı komut gider.
+  - Çok lambalı efekt lamba seçimini cihazın tamamına yükseltir; `minLamps`'i
+    karşılamayan cihaz atlanır ve kullanıcıya bildirilir.
+- **Çok lambalı efekt çalışan cihaz:** lamba komutundan önce efekt kanalsız
+  `dim` ile cihazın tamamında durdurulur. Komutlar `LightingProvider`'da
+  cihaz başına sıraya girer (`deviceChains`); fonksiyonlar `setTargetsPower`,
+  `setTargetsBrightness`, `applyEffect` / `stopEffect` (`EffectTarget`
+  `lamps` de alır).
+- **Lamba durumu:** `GET /api/devices` her cihaz için `lamps[]` (fixtures
+  snapshot'ı) ve `lampCount`, `activeFx` döner. İstemci bunları optimistic
+  günceller ve SSE'deki kanallı komut/telemetri olaylarıyla senkronlar.
+  Şiddeti 0 olan lamba, efekt çalışmıyorsa kapalı sayılır (`lampOn`).
 
 **Mors efekti (no 22):** ek `text` alanı alır —
 `{ "action": "efekt", "number": 22, "text": "MERHABA" }` (tek lambaya verilecekse

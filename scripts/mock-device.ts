@@ -367,7 +367,8 @@ client.on("message", (topic, raw) => {
       const s = channels.get(a);
       if (!s) continue;
       s.level = Math.round((value / 100) * MAX_ARC_LEVEL);
-      s.on = true;
+      // DALI: seviye 0 = lamba söner (firmware on/off'u da dim 100/0 olarak alır).
+      s.on = value > 0;
       s.fx = null;
     }
     console.log(`◀ dim ${value} (${via}, ${scope})`);

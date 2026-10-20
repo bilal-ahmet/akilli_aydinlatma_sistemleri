@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DeviceView, LiveSummary, OpenFault, Zone, ZoneStatus } from "./types";
+import type { DeviceView, LampView, LiveSummary, OpenFault, Zone, ZoneStatus } from "./types";
+import { runsGroupEffect, type CommandTargets, type LampRef } from "./selection";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "./useLiveStatus";
 import { useReconcile } from "./useReconcile";
@@ -30,10 +31,12 @@ const LIVE_REFRESH_MS = 1500;
 
 /** "Tüm Sistem" slider'ının debounce anahtarı (bölge slug'larıyla çakışmaz). */
 const ALL_KEY = "__all__";
+/** Toplu seçim şiddet kaydırıcısının debounce anahtarı. */
+const SEL_KEY = "__selection__";
 
 type ApiFn = (path: string) => string;
 
-type CommandBody = { action: Action; value?: number; number?: number; text?: string };
+type CommandBody = { action: Action; value?: number; number?: number; text?: string; channel?: number };
 
 async function postCommand(api: ApiFn, path: string, body: CommandBody): Promise<number | undefined> {
   const res = await fetch(api(path), {
@@ -51,7 +54,7 @@ function sendZone(api: ApiFn, zoneId: string, body: CommandBody) {
   return postCommand(api, `/api/zones/${zoneId}/command`, body);
 }
 
-/** Tek cihaz (tüm lambaları) → `Meven:<MAC>/cmd`. */
+/** Tek cihaz → `Meven:<MAC>/cmd`. `channel` varsa tek lamba, yoksa tüm lambaları. */
 function sendDevice(api: ApiFn, mac: string, body: CommandBody) {
   return postCommand(api, `/api/devices/${mac}/command`, body);
 }
@@ -76,6 +79,28 @@ function deriveMaster(zones: Zone[]): number {
   if (zones.length === 0) return 50;
   const sum = zones.reduce((a, z) => a + z.brightness, 0);
   return Math.round(sum / zones.length);
+}
+
+/**
+ * Cihazın lambalarına yama uygular (`channels` verilirse yalnızca onlara).
+ * Cihaz-seviyesi `activeFx` lambalardan yeniden türetilir; lamba kaydı yoksa
+ * (cihaz henüz raporlamadı) yalnızca cihazın kendi `activeFx`'i güncellenir.
+ */
+function patchDevice(d: DeviceView, patch: Partial<LampView>, channels?: Set<number>): DeviceView {
+  if (d.lamps.length === 0) {
+    return patch.activeFx !== undefined && !channels ? { ...d, activeFx: patch.activeFx } : d;
+  }
+  const lamps = d.lamps.map((l) => (!channels || channels.has(l.channel) ? { ...l, ...patch } : l));
+  return { ...d, lamps, activeFx: lamps.find((l) => l.activeFx != null)?.activeFx ?? null };
+}
+
+/** Olaydaki tanımlı alanlar → lamba yaması (undefined alanlara dokunulmaz). */
+function lampPatchFrom(e: LiveEvent): Partial<LampView> {
+  const p: Partial<LampView> = {};
+  if (typeof e.isOn === "boolean") p.isOn = e.isOn;
+  if (typeof e.brightness === "number") p.brightness = e.brightness;
+  if (e.activeFx !== undefined) p.activeFx = e.activeFx;
+  return p;
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string | null): Map<string, T[]> {
@@ -105,11 +130,12 @@ export interface DeviceValues {
 }
 
 /**
- * Efekt hedefi: müşterinin tüm sistemi ya da seçili bölgeler (slug) ve/veya
- * tek tek cihazlar (MAC). Bölgenin tamamı seçiliyse bölge komutu (tek
- * publish) gider; bölgenin yalnızca bazı cihazları seçiliyse cihaz komutları.
+ * Efekt hedefi: müşterinin tüm sistemi ya da seçili bölgeler (slug), cihazlar
+ * (MAC, tüm lambaları) ve tek lambalar (MAC + kanal). Bölgenin tamamı
+ * seçiliyse bölge komutu (tek publish) gider — planı `selection.ts →
+ * planTargets` çıkarır.
  */
-export type EffectTarget = "all" | { zones?: string[]; devices?: string[] };
+export type EffectTarget = "all" | CommandTargets;
 
 /** Cihaz komutlarının pending/seq anahtarı — bölge slug'larıyla çakışmaz. */
 const deviceKey = (mac: string) => `dev:${mac}`;
@@ -134,6 +160,10 @@ interface LightingValue {
   setAllBrightness: (value: number) => void;
   applyEffect: (target: EffectTarget, number: number, text?: string) => void;
   stopEffect: (target: EffectTarget) => void;
+  /** Seçili bölge/cihaz/lambaları aç/kapat (toplu kontrol). */
+  setTargetsPower: (target: CommandTargets, on: boolean) => void;
+  /** Seçili bölge/cihaz/lambaların şiddeti; kaydırıcı için debounce'lu. */
+  setTargetsBrightness: (target: CommandTargets, value: number) => void;
 
   createZone: (values: ZoneValues) => Promise<Zone>;
   updateZone: (id: string, values: ZoneValues) => Promise<void>;
@@ -209,6 +239,17 @@ export function LightingProvider({
     else pendingRef.current.set(target, n);
   }
 
+  // Cihaz başına komut sırası. Tüm hattı süren efektin durdurulması (kanalsız
+  // dim) ile ardından gelen lamba komutları sunucuya bu sırayla ulaşmalı;
+  // paralel POST'lar ters sırada varıp lamba komutunu ezebilirdi
+  // (DeviceControlModal `fxStopRef` ile aynı kural).
+  const deviceChains = useRef<Map<string, Promise<unknown>>>(new Map());
+
+  // Toplu şiddet kaydırıcısının son hedefi + kaydırma boyunca grup efekti
+  // durdurulması gereken cihazlar (optimistic yama efekti hemen sildiği için
+  // gönderim anında artık görünmez).
+  const selDimRef = useRef<{ target: CommandTargets; value: number; stop: Set<string> } | null>(null);
+
   const faultsByZone = useMemo(() => groupBy(faults, (f) => f.zoneSlug), [faults]);
   const faultsByDevice = useMemo(() => groupBy(faults, (f) => f.deviceId), [faults]);
 
@@ -260,9 +301,11 @@ export function LightingProvider({
   const reconcile = useCallback(() => {
     loadLive();
     loadFaults();
-    loadDevices();
+    // Cihaz listesi lamba snapshot'ı (komutla optimistic değişen açık/şiddet/
+    // efekt) taşır; bölgelerle aynı koruma: uçuşta ya da az önce komut varsa atla.
     if (pendingRef.current.size > 0) return;
     if (Date.now() - lastCommandAtRef.current < 5_000) return;
+    loadDevices();
     fetch(api("/api/zones"))
       .then((r) => r.json())
       .then((j) => {
@@ -298,6 +341,51 @@ export function LightingProvider({
       // Ölçüm özeti (güç/gerilim/arıza) cihaz raporundan sonra DB'den okunur;
       // olayın kendisi bu değerleri taşımaz. Bölge filtresinden ÖNCE ele alınır.
       if (e.kind === "telemetry" || e.kind === "ack") scheduleLiveRefresh();
+
+      // Lamba (kanal) olayı: komut yankısı (cihaz/bölge/"Tüm Sistem" komutları
+      // sunucuda lamba başına yayınlanır) ya da kanal telemetrisi → o lambanın
+      // snapshot'ı. Cihaza ya da bölgesine uçuşta komut varken uygulanmaz;
+      // komut yankılarında lamba başına seq ile eski olay elenir. Telemetri,
+      // komutun hemen ardından cihazın henüz uygulamadığı eski durumu
+      // taşıyabileceği için son komuttan sonraki 3 sn'de atlanır.
+      if (
+        e.deviceId &&
+        typeof e.channel === "number" &&
+        (e.kind === "command" || e.kind === "telemetry")
+      ) {
+        const key = deviceKey(e.deviceId);
+        if ((pendingRef.current.get(key) ?? 0) > 0) return;
+        if (e.kind === "telemetry" && Date.now() - lastCommandAtRef.current < 3_000) return;
+        if (e.kind === "command" && typeof e.seq === "number") {
+          const lampKey = `${key}:${e.channel}`;
+          const lastSeq = lastSeqRef.current.get(lampKey);
+          if (lastSeq !== undefined && e.seq < lastSeq) return;
+          lastSeqRef.current.set(lampKey, e.seq);
+        }
+        const ch = e.channel;
+        const patch = lampPatchFrom(e);
+        if (e.kind === "telemetry") patch.status = e.status === "error" ? "fault" : "ok";
+        setDevices((ds) =>
+          ds.map((d) => {
+            if (d.deviceId !== e.deviceId) return d;
+            if (d.zoneSlug && (pendingRef.current.get(d.zoneSlug) ?? 0) > 0) return d;
+            if (d.lamps.some((l) => l.channel === ch)) return patchDevice(d, patch, new Set([ch]));
+            // Yeni lamba (tarama sonrası ilk rapor): listeye eklenir.
+            const lamp: LampView = {
+              channel: ch,
+              name: null,
+              isOn: false,
+              brightness: 0,
+              activeFx: null,
+              status: "ok",
+              ...patch,
+            };
+            const lamps = [...d.lamps, lamp].sort((a, b) => a.channel - b.channel);
+            return { ...d, lamps, lampCount: lamps.length };
+          }),
+        );
+        return;
+      }
 
       // Cihaz satırı: `ack` → hata rozeti (başarılı yanıtta temizlenir) + son
       // görülme; cihaz-seviyesi `telemetry` → son görülme ve cihaz agregatı.
@@ -408,14 +496,145 @@ export function LightingProvider({
       .finally(() => endPending(id));
   }
 
-  /** Tek cihaza (tüm lambaları) komut; seq/pending korumasıyla. */
+  /**
+   * Tek cihaza komut (`channel` yoksa tüm lambaları); seq/pending korumasıyla.
+   * Cihazın sırasına girer: önceki komutu (ör. grup efekti durdurması) bitmeden
+   * gönderilmez.
+   */
   function commandDevice(mac: string, body: CommandBody, rollback?: () => void) {
     const key = deviceKey(mac);
     beginPending(key);
-    sendDevice(api, mac, body)
+    const prior = deviceChains.current.get(mac) ?? Promise.resolve();
+    const p = prior
+      .then(() => sendDevice(api, mac, body))
       .then((seq) => applySeq(key, seq))
       .catch(() => rollback?.())
       .finally(() => endPending(key));
+    deviceChains.current.set(mac, p);
+  }
+
+  /**
+   * Efekt durdurmada lambaların döneceği şiddet: bölgenin son şiddeti. Bölgeye
+   * hiç şiddet verilmemişse (0) %100 — yoksa tek lambayı hedefleyen işlem,
+   * efekti cihazın tamamında durdururken diğer lambaları da söndürürdü.
+   */
+  function zoneBrightnessOf(d: DeviceView | undefined): number {
+    const b = zones.find((z) => z.id === d?.zoneSlug)?.brightness ?? 0;
+    return b > 0 ? b : 100;
+  }
+
+  /**
+   * Lamba komutları. Lamba tüm hattı süren (çok lambalı) bir efektteyse efekt
+   * önce cihazın TAMAMINDA durdurulur (kanalsız dim) — yoksa yalnızca o lamba
+   * durur, diğerleri efekte devam ederdi. Lamba komutları cihaz sırasıyla bu
+   * durdurmanın ardından gider. `forceStop`: gönderim anında efekti artık
+   * görünmeyen (optimistic silinmiş) ama durdurulması gereken cihazlar.
+   */
+  function commandLamps(
+    refs: LampRef[],
+    makeBody: (lamp: LampView | undefined) => CommandBody,
+    patch: Partial<LampView>,
+    forceStop?: Set<string>,
+  ) {
+    for (const [mac, list] of groupBy(refs, (r) => r.mac)) {
+      const d = devices.find((x) => x.deviceId === mac);
+      const channels = new Set(list.map((r) => r.channel));
+      if (forceStop?.has(mac) || (d && runsGroupEffect(d))) {
+        const value = zoneBrightnessOf(d);
+        setDevices((ds) =>
+          ds.map((x) =>
+            x.deviceId === mac ? patchDevice(x, { isOn: true, brightness: value, activeFx: null }) : x,
+          ),
+        );
+        commandDevice(mac, { action: "dim", value });
+      }
+      setDevices((ds) => ds.map((x) => (x.deviceId === mac ? patchDevice(x, patch, channels) : x)));
+      for (const ch of channels) {
+        commandDevice(mac, { ...makeBody(d?.lamps.find((l) => l.channel === ch)), channel: ch });
+      }
+    }
+  }
+
+  /**
+   * Toplu hedeflere aynı komut: bölge → bölge komutu (+ bölgedeki cihazların
+   * lambaları optimistic), cihaz → kanalsız cihaz komutu, lamba → kanallı.
+   */
+  function sendTargets(
+    t: CommandTargets,
+    body: CommandBody,
+    lampPatch: Partial<LampView>,
+    zonePatch: Partial<Zone>,
+    forceStop?: Set<string>,
+  ) {
+    const zoneSet = new Set(t.zones ?? []);
+    const devSet = new Set(t.devices ?? []);
+    if (zoneSet.size > 0) {
+      setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, ...zonePatch } : z)));
+    }
+    if (zoneSet.size + devSet.size > 0) {
+      setDevices((ds) =>
+        ds.map((d) =>
+          devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
+            ? patchDevice(d, lampPatch)
+            : d,
+        ),
+      );
+    }
+    for (const id of zoneSet) commandZone(id, body);
+    for (const mac of devSet) commandDevice(mac, body);
+    if (t.lamps?.length) commandLamps(t.lamps, () => body, lampPatch, forceStop);
+  }
+
+  function setTargetsPower(t: CommandTargets, on: boolean) {
+    sendTargets(
+      t,
+      { action: on ? "on" : "off" },
+      { isOn: on, activeFx: null },
+      { isOn: on, activeFx: null },
+    );
+  }
+
+  /**
+   * Toplu şiddet: ekran anında güncellenir, komut kaydırıcı durunca bir kez
+   * gider (DIM_DEBOUNCE_MS). Kaydırma sırasında grup efekti çalışan cihazlar
+   * biriktirilir; gönderimde önce onlarda efekt durdurulur.
+   */
+  function setTargetsBrightness(t: CommandTargets, value: number) {
+    const lampPatch: Partial<LampView> = { brightness: value, isOn: true, activeFx: null };
+    const zonePatch: Partial<Zone> = { brightness: value, isOn: true, activeFx: null };
+    const stop = selDimRef.current?.stop ?? new Set<string>();
+    for (const r of t.lamps ?? []) {
+      const d = devices.find((x) => x.deviceId === r.mac);
+      if (d && runsGroupEffect(d)) stop.add(r.mac);
+    }
+    selDimRef.current = { target: t, value, stop };
+
+    const zoneSet = new Set(t.zones ?? []);
+    const devSet = new Set(t.devices ?? []);
+    const lampsByMac = groupBy(t.lamps ?? [], (r) => r.mac);
+    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, ...zonePatch } : z)));
+    setDevices((ds) =>
+      ds.map((d) => {
+        if (devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))) {
+          return patchDevice(d, lampPatch);
+        }
+        const refs = lampsByMac.get(d.deviceId);
+        return refs ? patchDevice(d, lampPatch, new Set(refs.map((r) => r.channel))) : d;
+      }),
+    );
+
+    const timers = dimTimers.current;
+    clearTimeout(timers.get(SEL_KEY));
+    timers.set(
+      SEL_KEY,
+      setTimeout(() => {
+        timers.delete(SEL_KEY);
+        const cur = selDimRef.current;
+        selDimRef.current = null;
+        if (!cur) return;
+        sendTargets(cur.target, { action: "dim", value: cur.value }, lampPatch, zonePatch, cur.stop);
+      }, DIM_DEBOUNCE_MS),
+    );
   }
 
   /** "Tüm Sistem" komutu; tüm bölgeler + master için pending tutulur. */
@@ -439,6 +658,7 @@ export function LightingProvider({
   function toggleZone(id: string, on: boolean) {
     const prev = zones;
     setZones((zs) => zs.map((z) => (z.id === id ? { ...z, isOn: on, activeFx: null } : z)));
+    setDevices((ds) => ds.map((d) => (d.zoneSlug === id ? patchDevice(d, { isOn: on, activeFx: null }) : d)));
     commandZone(id, { action: on ? "on" : "off" }, () => setZones(prev));
   }
 
@@ -447,6 +667,11 @@ export function LightingProvider({
     // (backend patchFor("dim") de isOn=true yazar). Yoksa bar 0'da kilitli kalır.
     setZones((zs) =>
       zs.map((z) => (z.id === id ? { ...z, brightness: value, isOn: true, activeFx: null } : z)),
+    );
+    setDevices((ds) =>
+      ds.map((d) =>
+        d.zoneSlug === id ? patchDevice(d, { brightness: value, isOn: true, activeFx: null }) : d,
+      ),
     );
     const timers = dimTimers.current;
     clearTimeout(timers.get(id));
@@ -462,6 +687,7 @@ export function LightingProvider({
   function setAll(on: boolean) {
     setMasterOn(on);
     setZones((zs) => zs.map((z) => ({ ...z, isOn: on, activeFx: null })));
+    setDevices((ds) => ds.map((d) => patchDevice(d, { isOn: on, activeFx: null })));
     commandAll({ action: on ? "on" : "off" });
   }
 
@@ -469,6 +695,7 @@ export function LightingProvider({
     setMasterBrightness(value); // optimistic — echo (scope:"all") guard ile korunur
     setMasterOn(true); // dim = aç
     setZones((zs) => zs.map((z) => ({ ...z, brightness: value, isOn: true, activeFx: null })));
+    setDevices((ds) => ds.map((d) => patchDevice(d, { brightness: value, isOn: true, activeFx: null })));
     const timers = dimTimers.current;
     clearTimeout(timers.get(ALL_KEY));
     timers.set(
@@ -488,25 +715,17 @@ export function LightingProvider({
    */
   function applyEffect(target: EffectTarget, number: number, text?: string) {
     const body: CommandBody = { action: "efekt", number, text };
+    const lampPatch: Partial<LampView> = { isOn: true, activeFx: number };
     if (target === "all") {
       setMasterOn(true);
       setZones((zs) => zs.map((z) => ({ ...z, isOn: true, activeFx: number })));
-      setDevices((ds) => ds.map((d) => ({ ...d, activeFx: number })));
+      setDevices((ds) => ds.map((d) => patchDevice(d, lampPatch)));
       commandAll(body);
       return;
     }
-    const zoneSet = new Set(target.zones ?? []);
-    const devSet = new Set(target.devices ?? []);
-    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, isOn: true, activeFx: number } : z)));
-    setDevices((ds) =>
-      ds.map((d) =>
-        devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
-          ? { ...d, activeFx: number }
-          : d,
-      ),
-    );
-    for (const id of zoneSet) commandZone(id, body);
-    for (const mac of devSet) commandDevice(mac, body);
+    // Lamba hedefleri yalnızca tek lamba efektleri içindir: çok lambalı efektte
+    // planTargets lamba seçimini cihazın tamamına yükseltir.
+    sendTargets(target, body, lampPatch, { isOn: true, activeFx: number });
   }
 
   /**
@@ -522,23 +741,44 @@ export function LightingProvider({
       return;
     }
     const zoneSet = new Set(target.zones ?? []);
+    // Tüm hattı süren efektteki lamba, cihazın tamamında durdurulur.
     const devSet = new Set(target.devices ?? []);
-    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, activeFx: null } : z)));
-    setDevices((ds) =>
-      ds.map((d) =>
-        devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
-          ? { ...d, activeFx: null }
-          : d,
-      ),
-    );
-    for (const z of zones) {
-      if (zoneSet.has(z.id)) commandZone(z.id, { action: "dim", value: z.brightness });
+    const lampRefs: LampRef[] = [];
+    for (const r of target.lamps ?? []) {
+      const d = devices.find((x) => x.deviceId === r.mac);
+      if (d && runsGroupEffect(d)) devSet.add(r.mac);
+      else lampRefs.push(r);
     }
-    const zoneBrightness = new Map(zones.map((z) => [z.id, z.brightness]));
+
+    setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, activeFx: null } : z)));
+    for (const z of zones) {
+      if (!zoneSet.has(z.id)) continue;
+      setDevices((ds) =>
+        ds.map((d) =>
+          d.zoneSlug === z.id
+            ? patchDevice(d, { isOn: true, brightness: z.brightness, activeFx: null })
+            : d,
+        ),
+      );
+      commandZone(z.id, { action: "dim", value: z.brightness });
+    }
     for (const d of devices) {
       if (!devSet.has(d.deviceId)) continue;
-      const value = (d.zoneSlug !== null ? zoneBrightness.get(d.zoneSlug) : undefined) ?? 100;
+      const value = zoneBrightnessOf(d);
+      setDevices((ds) =>
+        ds.map((x) =>
+          x.deviceId === d.deviceId
+            ? patchDevice(x, { isOn: true, brightness: value, activeFx: null })
+            : x,
+        ),
+      );
       commandDevice(d.deviceId, { action: "dim", value });
+    }
+    // Tek lamba: kendi son şiddetine döner (cihaz panelindeki "Efekti durdur" ile aynı).
+    if (lampRefs.length > 0) {
+      commandLamps(lampRefs, (lamp) => ({ action: "dim", value: lamp?.brightness ?? 0 }), {
+        activeFx: null,
+      });
     }
   }
 
@@ -635,6 +875,8 @@ export function LightingProvider({
     setAllBrightness,
     applyEffect,
     stopEffect,
+    setTargetsPower,
+    setTargetsBrightness,
     createZone,
     updateZone,
     deleteZone,

@@ -58,6 +58,7 @@ export function toDeviceView(row: {
   health?: Record<string, unknown> | null;
   healthAt?: Date | null;
   gatewayId?: string | null;
+  lamps?: DeviceView["lamps"];
 }): DeviceView {
   // Ham health mesajından yalnızca panelin kullandığı alanlar (şema dışı
   // alanlar DB'de kalır).
@@ -83,6 +84,7 @@ export function toDeviceView(row: {
     ota: h?.ota ?? null,
     healthAt: row.healthAt ? row.healthAt.toISOString() : null,
     gatewayId: row.gatewayId ?? null,
+    lamps: row.lamps ?? [],
   };
 }
 

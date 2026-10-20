@@ -2,12 +2,13 @@
 
 import { useEffect } from "react";
 
-/** İçerik genişliği: form/onay diyalogları `md`, cihaz paneli `lg`. */
-type ModalSize = "md" | "lg";
+/** İçerik genişliği: form/onay diyalogları `md`, cihaz paneli `lg`, hedef seçici `xl`. */
+type ModalSize = "md" | "lg" | "xl";
 
 const SIZE: Record<ModalSize, string> = {
   md: "max-w-[460px]",
   lg: "max-w-2xl",
+  xl: "max-w-4xl",
 };
 
 interface ModalProps {

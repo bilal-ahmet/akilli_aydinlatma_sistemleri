@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { Zone } from "@/app/_lib/types";
 import { isLit } from "@/app/_lib/mockData";
 import { useLighting } from "@/app/_lib/lighting";
@@ -11,10 +12,13 @@ import { splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
 import { faultLabel } from "@/lib/faults";
 import { deviceName } from "@/app/_lib/format";
+import { emptySelection, pruneSelection, type Selection } from "@/app/_lib/selection";
 import { Toggle } from "../Toggle";
 import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
 import { EmptyBox, PageHeader, PlusIcon, StatCard } from "../PanelUi";
+import { SelectionQuickBar } from "../SelectionQuickBar";
+import { SelectionActionBar } from "../SelectionActionBar";
 import { DeviceTable } from "./DeviceTable";
 
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
@@ -102,6 +106,10 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   const router = useRouter();
   const { devices, measure } = useZoneStats()(zone.id);
   const effect = effectByNumber(zone.activeFx);
+  // Toplu kontrol seçimi — bileşen bölge başına `key`'lendiği için bölge
+  // değişince sıfırlanır. Silinen/taşınan cihazlar render'da ayıklanır.
+  const [picked, setPicked] = useState<Selection>(emptySelection);
+  const selection = pruneSelection(picked, devices);
 
   const power = measure.powerW !== null ? splitPower(measure.powerW) : null;
   const load = measure.loadPowerW !== null ? splitPower(measure.loadPowerW) : null;
@@ -231,7 +239,14 @@ function ZoneDetail({ zone }: { zone: Zone }) {
 
       <section className="flex flex-col overflow-hidden rounded-2xl border border-border bg-panel">
         <div className="flex items-center justify-between gap-2 px-[22px] py-[18px]">
-          <h2 className="text-base font-semibold text-text">Bu bölgedeki cihazlar</h2>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2 className="text-base font-semibold text-text">Bu bölgedeki cihazlar</h2>
+            {canWrite && devices.length > 1 ? (
+              <p className="text-[12.5px] text-muted">
+                Cihazları işaretleyip birlikte açıp kapatabilir, şiddet ya da efekt uygulayabilirsiniz.
+              </p>
+            ) : null}
+          </div>
           {canWrite ? (
             <button
               type="button"
@@ -248,9 +263,27 @@ function ZoneDetail({ zone }: { zone: Zone }) {
             {canWrite ? " “+ Cihaz ekle” ile bu bölgeye bir cihaz bağlayabilirsiniz." : ""}
           </p>
         ) : (
-          <DeviceTable devices={devices} />
+          <>
+            {canWrite ? (
+              <div className="border-t border-border px-[22px] py-3">
+                <SelectionQuickBar devices={devices} selection={selection} onChange={setPicked} />
+              </div>
+            ) : null}
+            <DeviceTable
+              devices={devices}
+              showLevel
+              selection={canWrite ? selection : undefined}
+              onSelectionChange={setPicked}
+            />
+          </>
         )}
       </section>
+
+      <SelectionActionBar
+        devices={devices}
+        selection={selection}
+        onClear={() => setPicked(emptySelection())}
+      />
     </div>
   );
 }
@@ -270,7 +303,7 @@ export function ZonesView({ zoneSlug }: { zoneSlug: string | null }) {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[268px_minmax(0,1fr)] lg:gap-8">
       <ZoneList selected={zone?.id ?? null} />
       {zone ? (
-        <ZoneDetail zone={zone} />
+        <ZoneDetail key={zone.id} zone={zone} />
       ) : (
         <EmptyBox>
           Henüz bölge yok.

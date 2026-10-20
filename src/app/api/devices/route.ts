@@ -7,6 +7,7 @@ import { normalizeMac } from "@/lib/mac";
 import { authorizeScope } from "@/lib/auth/guard";
 import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
+import type { LampView } from "@/app/_lib/types";
 
 export const runtime = "nodejs";
 
@@ -60,18 +61,38 @@ export async function GET(req: Request) {
       }
     }
 
-    // Lamba sayısı + çalışan efekt (Efektler sayfasındaki cihaz seçimi için).
-    const lamps = new Map<string, { lampCount: number; activeFx: number | null }>();
+    // Lambalar (fixtures snapshot'ı): toplu seçimde cihaz/lamba durumu, lamba
+    // sayısı ve çalışan efekt (Efektler sayfası, `minLamps` kontrolü).
+    const lamps = new Map<
+      string,
+      { lampCount: number; activeFx: number | null; lamps: LampView[] }
+    >();
     if (ids.length > 0) {
       const fixtures = await db
-        .select({ deviceId: schema.fixtures.deviceId, activeFx: schema.fixtures.activeFx })
+        .select({
+          deviceId: schema.fixtures.deviceId,
+          channel: schema.fixtures.channel,
+          name: schema.fixtures.name,
+          isOn: schema.fixtures.isOn,
+          brightness: schema.fixtures.brightness,
+          activeFx: schema.fixtures.activeFx,
+          status: schema.fixtures.status,
+        })
         .from(schema.fixtures)
         .where(inArray(schema.fixtures.deviceId, ids))
         .orderBy(asc(schema.fixtures.channel));
       for (const f of fixtures) {
-        const cur = lamps.get(f.deviceId) ?? { lampCount: 0, activeFx: null };
+        const cur = lamps.get(f.deviceId) ?? { lampCount: 0, activeFx: null, lamps: [] };
         cur.lampCount += 1;
         cur.activeFx ??= f.activeFx;
+        cur.lamps.push({
+          channel: f.channel,
+          name: f.name,
+          isOn: f.isOn,
+          brightness: f.brightness,
+          activeFx: f.activeFx ?? null,
+          status: f.status,
+        });
         lamps.set(f.deviceId, cur);
       }
     }
