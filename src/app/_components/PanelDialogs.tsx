@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import type { DeviceView, Zone } from "@/app/_lib/types";
+import type { DeviceView, ScheduleView, Zone } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useTechnical } from "@/app/_lib/panel";
 import { formatMac } from "@/lib/mac";
@@ -11,6 +11,7 @@ import { ZoneDialog } from "./ZoneForm";
 import { DeviceDialog } from "./DeviceForm";
 import { DeviceControlModal } from "./DeviceControlModal";
 import { EffectPicker } from "./EffectPicker";
+import { ScheduleDialog, type SchedulePrefill } from "./ScheduleForm";
 
 /**
  * Panelin ortak diyalogları. Her sayfa (Genel Bakış, Bölgeler, Cihazlar…)
@@ -24,7 +25,16 @@ type Dialog =
   | { kind: "zone-effects"; zoneId: string }
   | { kind: "device-form"; mac?: string; zoneSlug?: string }
   | { kind: "device-delete"; mac: string }
-  | { kind: "device-control"; mac: string };
+  | { kind: "device-control"; mac: string }
+  | ({ kind: "schedule-form" } & ScheduleOpts);
+
+export interface ScheduleOpts {
+  /** Düzenlenecek zamanlama; yoksa yeni. */
+  schedule?: ScheduleView;
+  /** Yeni zamanlamada kısayoldan gelen değerler (seçim, efekt…). */
+  prefill?: SchedulePrefill;
+  onSaved?: (s: ScheduleView) => void;
+}
 
 interface DialogsValue {
   openZoneForm: (zone?: Zone, onCreated?: (zone: Zone) => void) => void;
@@ -33,6 +43,7 @@ interface DialogsValue {
   openDeviceForm: (opts?: { device?: DeviceView; zoneSlug?: string }) => void;
   confirmDeleteDevice: (device: DeviceView) => void;
   openDevice: (device: DeviceView) => void;
+  openSchedule: (opts?: ScheduleOpts) => void;
 }
 
 const DialogsContext = createContext<DialogsValue | null>(null);
@@ -53,6 +64,7 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
       open({ kind: "device-form", mac: opts?.device?.deviceId, zoneSlug: opts?.zoneSlug }),
     confirmDeleteDevice: (device) => open({ kind: "device-delete", mac: device.deviceId }),
     openDevice: (device) => open({ kind: "device-control", mac: device.deviceId }),
+    openSchedule: (opts) => open({ kind: "schedule-form", ...opts }),
   };
 
   return (
@@ -112,6 +124,16 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
 
     case "device-delete":
       return device ? <DeleteDevice device={device} onClose={onClose} /> : null;
+
+    case "schedule-form":
+      return (
+        <ScheduleDialog
+          schedule={dialog.schedule}
+          prefill={dialog.prefill}
+          onSaved={dialog.onSaved}
+          onClose={onClose}
+        />
+      );
 
     case "device-control": {
       if (!device) return null;

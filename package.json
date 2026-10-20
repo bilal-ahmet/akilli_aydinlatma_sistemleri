@@ -19,7 +19,8 @@
     "mock:gateway": "tsx scripts/mock-gateway.ts",
     "watch:cmd": "tsx scripts/watch-commands.ts",
     "auth:create-admin": "tsx scripts/create-admin.ts",
-    "check:tenancy": "tsx scripts/tenant-check.ts"
+    "check:tenancy": "tsx scripts/tenant-check.ts",
+    "check:schedule": "tsx scripts/check-schedule.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

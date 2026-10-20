@@ -1,6 +1,8 @@
 import "server-only";
 import { fail } from "@/lib/api/respond";
 import { getTenancy, type CustomerInfo } from "@/lib/tenancy";
+import { getScheduleRow } from "@/lib/scheduleStore";
+import type { ScheduleRow } from "@/lib/db/schema";
 import { canWrite } from "./roles";
 import { readSession, type SessionUser } from "./session";
 
@@ -162,6 +164,30 @@ export async function authorizeGateway(
     return fail("Ağ geçidi bulunamadı", 404);
   }
   return { user, customer };
+}
+
+/**
+ * Tek zamanlama. Sahiplik DB satırından okunur (zamanlamalar tenancy
+ * index'inde yok); komut yolu olmadığı için sorun değil. Başka müşterinin
+ * zamanlaması → 404.
+ */
+export async function authorizeSchedule(
+  req: Request,
+  id: string,
+  need: Need,
+): Promise<(ScopeCtx & { row: ScheduleRow }) | Response> {
+  const user = await authorizeUser(req);
+  if (user instanceof Response) return user;
+  const denied = needCheck(user, need);
+  if (denied) return denied;
+
+  const row = await getScheduleRow(id);
+  const customer = row ? (await getTenancy()).customersById.get(row.customerId) : undefined;
+  if (!row || !customer) return fail("Zamanlama bulunamadı", 404);
+  if (user.role !== "admin" && user.customerId !== customer.id) {
+    return fail("Zamanlama bulunamadı", 404);
+  }
+  return { user, customer, row };
 }
 
 /**

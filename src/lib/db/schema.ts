@@ -14,6 +14,7 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { ScheduleResult, ScheduleTarget } from "@/lib/scheduleTime";
 
 /**
  * Şema, CLAUDE.md'deki SQL tablolarını temel alır. İki pragmatik uzantı var
@@ -355,6 +356,46 @@ export const commands = pgTable("commands", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 });
 
+/**
+ * Zamanlanmış komut. Sunucudaki zamanlayıcı (`lib/scheduler.ts`) `next_run_at`
+ * geldiğinde `target`'a komutu yayınlar. `target` istemcideki `planTargets`'ın
+ * çıktısıdır: bütün cihazları seçili bölge `zones`'ta durur, böylece bölgeye
+ * sonradan eklenen cihaz da komutu alır. Saatler Türkiye saatidir
+ * (`lib/scheduleTime.ts`).
+ */
+export const schedules = pgTable(
+  "schedules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 100 }),
+    enabled: boolean("enabled").notNull().default(true),
+    action: varchar("action", { length: 20 }).notNull(), // on | off | dim | efekt | stop_fx
+    value: integer("value"), // on (isteğe bağlı şiddet) / dim
+    effectNumber: integer("effect_number"),
+    effectText: varchar("effect_text", { length: 32 }),
+    target: jsonb("target").$type<ScheduleTarget>().notNull(),
+    timeKind: varchar("time_kind", { length: 10 }).notNull(), // fixed | sunset | sunrise
+    timeMinutes: integer("time_minutes"), // fixed: 0-1439, gece yarısından dakika
+    offsetMinutes: integer("offset_minutes").notNull().default(0), // sunset/sunrise farkı
+    repeat: varchar("repeat", { length: 10 }).notNull(), // once | weekly
+    runDate: varchar("run_date", { length: 10 }), // once: YYYY-MM-DD (yerel)
+    weekdays: integer("weekdays"), // weekly: bit maskesi, Pzt=1 … Paz=64
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }), // null = bitti
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastResult: jsonb("last_result").$type<ScheduleResult>(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    index("idx_schedules_customer_id").on(t.customerId),
+    index("idx_schedules_next_run_at").on(t.nextRunAt),
+  ],
+);
+
 export type CustomerRow = typeof customers.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type AuthSessionRow = typeof authSessions.$inferSelect;
@@ -367,3 +408,4 @@ export type DeviceStatusRow = typeof deviceStatus.$inferSelect;
 export type D4iTelemetryRow = typeof d4iTelemetry.$inferSelect;
 export type FaultEventRow = typeof faultEvents.$inferSelect;
 export type CommandRow = typeof commands.$inferSelect;
+export type ScheduleRow = typeof schedules.$inferSelect;

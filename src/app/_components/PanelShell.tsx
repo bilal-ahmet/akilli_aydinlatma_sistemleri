@@ -88,6 +88,7 @@ function SidebarContent({
     { href: `${base}/ag-gecitleri`, label: "Ağ geçitleri" },
     { href: `${base}/arizalar`, label: "Arızalar", badge: alertCount, alert: alertCount > 0 },
     { href: `${base}/efektler`, label: "Efektler" },
+    { href: `${base}/zamanlamalar`, label: "Zamanlamalar" },
   ];
   if (role === "admin" || role === "manager") {
     nav.push({ href: `${base}/kullanicilar`, label: "Kullanıcılar" });

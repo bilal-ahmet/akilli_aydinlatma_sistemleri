@@ -83,7 +83,7 @@ kullanıcılar, denetim kaydı) · `/hesap` (şifre değiştirme; ilk girişte z
 
 Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
 `/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
-detay) · `/c/<slug>/cihazlar` · `/c/<slug>/arizalar` · `/c/<slug>/efektler` ·
+detay) · `/c/<slug>/cihazlar` · `/c/<slug>/arizalar` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
 `/c/<slug>/kullanicilar` (manager/admin).
 
 **Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
@@ -330,6 +330,38 @@ null | Set<kanal>>` — `null` cihazın tamamı, `Set` yalnızca o lambalar.
   snapshot'ı) ve `lampCount`, `activeFx` döner. İstemci bunları optimistic
   günceller ve SSE'deki kanallı komut/telemetri olaylarıyla senkronlar.
   Şiddeti 0 olan lamba, efekt çalışmıyorsa kapalı sayılır (`lampOn`).
+
+**Zamanlanmış komutlar (Zamanlamalar).** Seçilen saatte bölgelere, seçili
+cihaz/lambalara ya da tüm bölgelere Aç (isteğe bağlı şiddetle) · Kapat · Şiddet ·
+Efekt · Efekti durdur. Çalıştıran **sunucudur** (`lib/scheduler.ts`), tarayıcı
+açık olmak zorunda değil.
+- **Zaman:** tek sefer (tarih) ya da haftalık (gün bit maskesi, Pzt=1 … Paz=64);
+  sabit saat ya da gün batımı/doğumu ± dk. Saatler Türkiye saatidir
+  (`SCHEDULE_TZ`); gün batımı Kocaeli koordinatıyla kütüphanesiz hesaplanır
+  (`lib/sun.ts`, NOAA, ±1-2 dk). Hesap tek yerde: `lib/scheduleTime.ts →
+  nextRunAt` (saf; formdaki "Sonraki çalışma" önizlemesi de bunu kullanır).
+  Türkiye 2016'dan beri kışın da UTC+3: Aralık'ta gün batımı ~17:36.
+- **Hedef = `planTargets` çıktısı** (`{zones, devices, lamps}` ya da
+  `{all:true}`), kayıtta istemcide hesaplanır. Bütün cihazları seçili bölge bölge
+  olarak saklanır → bölgeye sonradan eklenen cihaz da komutu alır.
+- **Yürütme:** `lib/commandPlan.ts → runPlan`, istemciyle aynı kurallar:
+  sahiplik süzgeci (taşınmış/silinmiş hedef atlanır), çok lambalı efektte
+  lamba → cihaz yükseltmesi + `minLamps` elemesi, grup efekti çalışan cihazda
+  önce kanalsız `dim` sonra lamba komutu, "Efekti durdur" yalnızca efekt
+  çalışan hedeflere. Her komut `publishCommand` + `recordCommand` (commands
+  logu, SSE; `userId` = zamanlamayı kuran).
+- **Zamanlayıcı:** bellekte `next_run_at` haritası, en yakına tek `setTimeout`
+  (en fazla 6 sa). **DB yoklanmaz** (Neon uyumaya devam eder). Çalıştırma
+  atomik claim'le: `UPDATE … WHERE next_run_at = <beklenen>` — deploy sırasında
+  eski + yeni instance birlikte yaşasa da komut bir kez gider. Sunucu
+  kapalıyken kaçırılan çalışma 15 dk içindeyse hemen çalışır, daha eskiyse
+  `last_result.missed` yazılıp atlanır. CRUD sonrası `reloadSchedules()` yanıt
+  dönmeden beklenir.
+- **UI:** `views/SchedulesView.tsx` (liste, duraklat, düzenle, sil),
+  `ScheduleForm.tsx` (`useDialogs().openSchedule({ prefill })`). Bölge
+  detayındaki seçim çubuğunda ve Efektler alt çubuğunda "Zamanla" kısayolu
+  mevcut seçimle formu açar. Hedef seçimi Efektler'le ortak:
+  `_components/TargetSelect.tsx` (`TargetChips`, `TargetPicker`).
 
 **Mors efekti (no 22):** ek `text` alanı alır —
 `{ "action": "efekt", "number": 22, "text": "MERHABA" }` (tek lambaya verilecekse
@@ -600,6 +632,35 @@ Audit: `gateway.create` / `gateway.update` / `gateway.delete`. Panel:
 canlı durum SSE `kind:"gateway"` olayıyla). Donanımsız test:
 `npm run mock:gateway <GW_ID> <tür> [MAC…]`.
 
+### Zamanlamalar
+
+```
+GET/POST         /api/schedules?customer=<slug>   # liste / oluştur (müşteri başına en fazla 100)
+GET/PATCH/DELETE /api/schedules/:id                # PATCH: gelen alanlar satırla birleşip tam şemayla doğrulanır
+
+Body (scheduleInputSchema):
+{
+  "name": "Akşam açılışı",                 # opsiyonel
+  "action": "on" | "off" | "dim" | "efekt" | "stop_fx",
+  "value": 0-100,                          # dim; on'da opsiyonel (o şiddette aç)
+  "effectNumber": 1-28, "effectText": "…", # efekt (+ Mors)
+  "target": { "all": true } | { "zones": [slug], "devices": [MAC], "lamps": [{ "mac", "channel" }] },
+  "timeKind": "fixed" | "sunset" | "sunrise",
+  "timeMinutes": 0-1439,                   # fixed
+  "offsetMinutes": -180..180,              # sunset/sunrise
+  "repeat": "once" | "weekly",
+  "runDate": "YYYY-MM-DD",                 # once
+  "weekdays": 1-127,                       # weekly, Pzt=1 … Paz=64
+  "enabled": true
+}
+```
+
+Guard: `authorizeScope` / `authorizeSchedule` (sahiplik DB satırından; başka
+müşterinin zamanlaması → 404). Yazma admin + manager. Hedefteki bölge/MAC
+müşteriye ait değilse, zaman geçmişteyse 422. Audit: `schedule.create` /
+`schedule.update` / `schedule.delete` (çalıştırmalar audit'e yazılmaz;
+`last_run_at` + `last_result` + `commands`).
+
 ### Cihaz Bakımı
 
 ```
@@ -753,6 +814,27 @@ CREATE TABLE gateways (
 > Migration `0009_gateways.sql` (+ `devices.gateway_id`). Mesaj başına satır
 > açılmaz. Çevrimiçi: LWT gelmediyse ve son 2 dk'da haber varsa
 > (`gatewayState`).
+
+### `schedules`
+
+```sql
+CREATE TABLE schedules (
+  id UUID PRIMARY KEY, customer_id UUID NOT NULL REFERENCES customers ON DELETE CASCADE,
+  name VARCHAR(100), enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  action VARCHAR(20) NOT NULL,             -- on | off | dim | efekt | stop_fx
+  value INTEGER, effect_number INTEGER, effect_text VARCHAR(32),
+  target JSONB NOT NULL,                   -- planTargets çıktısı ya da {all:true}
+  time_kind VARCHAR(10) NOT NULL,          -- fixed | sunset | sunrise
+  time_minutes INTEGER, offset_minutes INTEGER NOT NULL DEFAULT 0,
+  repeat VARCHAR(10) NOT NULL,             -- once | weekly
+  run_date VARCHAR(10), weekdays INTEGER,  -- YYYY-MM-DD / bit maskesi
+  next_run_at TIMESTAMPTZ,                 -- NULL = bitti / duraklatıldı
+  last_run_at TIMESTAMPTZ, last_result JSONB,  -- {sent, skipped, missed?, error?}
+  created_by UUID REFERENCES users ON DELETE SET NULL, created_at, updated_at
+);
+```
+
+> Migration `0010_schedules.sql`. Saf zaman/hesap testi: `npm run check:schedule`.
 
 ### `fixtures`
 
@@ -958,7 +1040,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
    **`fixtures`'tan türetilir** — `device_status` yalnızca cihaz telemetri
    yayınladığında yazılır, komuttan sonra bayattır.
 7. **LoRa geçişinde** transport katmanı değişir (Chirpstack → MQTT → Backend), API kontratı aynı kalır.
-8. **Backend TEK instance çalışır.** MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
+8. **Backend TEK instance çalışır.** (Zamanlayıcı da süreç içidir; çift çalıştırmayı DB claim'i önler, bkz. Zamanlamalar.) MQTT subscribe + SSE köprüsü in-memory event bus'a (`src/lib/events.ts`) dayanır; çoklu instance'ta status olayları farklı process'lere düşer ve canlı güncelleme bozulur. Yatay ölçekleme gerekince çözüm: Redis pub/sub (örn. Upstash).
 9. **MQTT/env hatası web sunucusunu düşürmez.** `src/instrumentation.ts` MQTT başlatmayı try/catch ile sarar; broker erişilemese bile dashboard (DB okuması) çalışır.
 10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar). Yetki kontrolü de DB'ye gitmez: tenancy index'i + JWT (`lib/auth/guard.ts`).
 11. **Her `/api/*` route'u guard ile başlar** (`authorize*`, `lib/auth/guard.ts`); yalnızca `/api/auth/login`, `/api/auth/logout`, `/api/auth/token` ve `/api/auth/refresh` hariç. `src/proxy.ts` iyimser kontroldür, tek başına güvenlik sınırı değildir. Yeni route eklerken guard'ı unutma.
@@ -966,7 +1048,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`. Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `handleUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
 

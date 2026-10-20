@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/effects";
 import { GATEWAY_TYPES } from "@/lib/gateways";
+import {
+  SCHEDULE_ACTIONS,
+  SCHEDULE_OFFSET_MAX,
+  SCHEDULE_REPEATS,
+  SCHEDULE_TARGET_MAX,
+  SCHEDULE_TIME_KINDS,
+} from "@/lib/scheduleTime";
 
 /**
  * MQTT payload kontratı — CLAUDE.md "Payload Formatları" bölümünün tek
@@ -408,6 +415,73 @@ export const gatewayUpdateSchema = z
     message: "En az bir alan güncellenmeli",
   });
 export type GatewayUpdate = z.infer<typeof gatewayUpdateSchema>;
+
+// ── Zamanlamalar (dashboard → backend) ───────────────────────
+const scheduleMac = z
+  .string()
+  .trim()
+  .regex(/^[0-9A-Fa-f]{12}$/, "Geçersiz cihaz kodu")
+  .transform((s) => s.toUpperCase());
+
+/** `planTargets` çıktısı ya da `{ all: true }` (müşterinin "Tüm Sistem"i). */
+export const scheduleTargetSchema = z.union([
+  z.object({ all: z.literal(true) }).strict(),
+  z
+    .object({
+      zones: z.array(z.string().trim().min(1).max(100)).default([]),
+      devices: z.array(scheduleMac).default([]),
+      lamps: z
+        .array(z.object({ mac: scheduleMac, channel: z.number().int().min(0).max(MAX_CHANNEL) }))
+        .default([]),
+    })
+    .refine((t) => t.zones.length + t.devices.length + t.lamps.length > 0, {
+      message: "En az bir bölge, cihaz ya da lamba seçilmeli",
+    })
+    .refine((t) => t.zones.length + t.devices.length + t.lamps.length <= SCHEDULE_TARGET_MAX, {
+      message: `En fazla ${SCHEDULE_TARGET_MAX} hedef seçilebilir`,
+    }),
+]);
+
+/**
+ * Zamanlama oluşturma/güncelleme gövdesi. PATCH'te gelen alanlar mevcut
+ * satırla birleştirilip yine bu şemayla doğrulanır.
+ */
+export const scheduleInputSchema = z
+  .object({
+    name: z.string().trim().max(100).nullish(),
+    enabled: z.boolean().optional(),
+    action: z.enum(SCHEDULE_ACTIONS),
+    value: z.number().int().min(0).max(100).nullish(),
+    effectNumber: z.number().int().min(1).max(EFFECT_MAX_NUMBER).nullish(),
+    effectText: z
+      .string()
+      .transform(normalizeMorseText)
+      .refine((t) => t.length <= MORSE_TEXT_MAX, {
+        message: `Metin en fazla ${MORSE_TEXT_MAX} karakter olabilir`,
+      })
+      .nullish(),
+    target: scheduleTargetSchema,
+    timeKind: z.enum(SCHEDULE_TIME_KINDS),
+    timeMinutes: z.number().int().min(0).max(1439).nullish(),
+    offsetMinutes: z.number().int().min(-SCHEDULE_OFFSET_MAX).max(SCHEDULE_OFFSET_MAX).default(0),
+    repeat: z.enum(SCHEDULE_REPEATS),
+    runDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Tarih YYYY-AA-GG olmalı")
+      .nullish(),
+    weekdays: z.number().int().min(0).max(127).nullish(),
+  })
+  .superRefine((d, ctx) => {
+    const need = (ok: boolean, path: string, message: string) => {
+      if (!ok) ctx.addIssue({ code: "custom", path: [path], message });
+    };
+    need(d.action !== "dim" || d.value != null, "value", "Şiddet seçilmeli");
+    need(d.action !== "efekt" || d.effectNumber != null, "effectNumber", "Efekt seçilmeli");
+    need(d.timeKind !== "fixed" || d.timeMinutes != null, "timeMinutes", "Saat seçilmeli");
+    need(d.repeat !== "once" || !!d.runDate, "runDate", "Tarih seçilmeli");
+    need(d.repeat !== "weekly" || (d.weekdays ?? 0) > 0, "weekdays", "En az bir gün seçilmeli");
+  });
+export type ScheduleInput = z.infer<typeof scheduleInputSchema>;
 
 // ── Fixture (lamba/kanal) CRUD (dashboard → backend) ─────────
 export const fixtureCreateSchema = z.object({

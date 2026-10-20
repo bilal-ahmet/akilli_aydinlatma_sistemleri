@@ -315,6 +315,30 @@ async function main() {
   check("keşfedilen gateway'ler yalnızca admin → 403", (await call(aMgr, "GET", "/api/admin/gateways/discovered")).status === 403);
   check("admin keşfedilen listeyi okur → 200", (await call(admin, "GET", "/api/admin/gateways/discovered")).status === 200);
 
+  console.log("\n[5d] Zamanlama izolasyonu");
+  // Her gün 03:00 — test sırasında çalışmaz (komut yayınlanmaz).
+  const sched = (target: unknown) => ({
+    action: "on",
+    target,
+    timeKind: "fixed",
+    timeMinutes: 180,
+    repeat: "weekly",
+    weekdays: 127,
+  });
+  const sB = await call(bMgr, "POST", "/api/schedules", sched({ zones: [zoneB], devices: [], lamps: [] }));
+  check("B kendi bölgesine zamanlama kurar", sB.status === 201, sB.json);
+  const schedB = (sB.json?.data as { id: string }).id;
+  const sListA = await call(aMgr, "GET", "/api/schedules");
+  check("A listesinde B zamanlaması yok", sListA.status === 200 && !(sListA.json?.data as { id: string }[]).some((s) => s.id === schedB));
+  check("A, B zamanlamasını okuyamaz → 404", (await call(aMgr, "GET", `/api/schedules/${schedB}`)).status === 404);
+  check("A, B zamanlamasını düzenleyemez → 404", (await call(aMgr, "PATCH", `/api/schedules/${schedB}`, { enabled: false })).status === 404);
+  check("A, B zamanlamasını silemez → 404", (await call(aMgr, "DELETE", `/api/schedules/${schedB}`)).status === 404);
+  check("A, B bölgesini hedefleyemez → 422", (await call(aMgr, "POST", "/api/schedules", sched({ zones: [zoneB], devices: [], lamps: [] }))).status === 422);
+  check("A, B cihazını hedefleyemez → 422", (await call(aMgr, "POST", "/api/schedules", sched({ zones: [], devices: [macB], lamps: [] }))).status === 422);
+  check("izleyici zamanlama kuramaz → 403", (await call(aView, "POST", "/api/schedules", sched({ all: true }))).status === 403);
+  check("izleyici zamanlamaları okur", (await call(aView, "GET", "/api/schedules")).status === 200);
+  check("geçmiş tek seferlik → 422", (await call(aMgr, "POST", "/api/schedules", { ...sched({ all: true }), repeat: "once", runDate: "2020-01-01" })).status === 422);
+
   console.log("\n[6] Slug yeniden kullanılmaz");
   check("A bölgesini siler", (await call(aMgr, "DELETE", `/api/zones/${zoneA}`)).status === 200);
   const again = await call(aMgr, "POST", "/api/zones", { name: `A Cadde ${tag}` });

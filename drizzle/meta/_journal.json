@@ -71,6 +71,13 @@
       "when": 1792132720540,
       "tag": "0009_gateways",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792509053604,
+      "tag": "0010_schedules",
+      "breakpoints": true
     }
   ]
 }

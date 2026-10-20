@@ -5,6 +5,7 @@ import type { DeviceView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel } from "@/app/_lib/panel";
 import { effectByNumber } from "@/lib/effects";
+import { formatRunAt } from "@/lib/scheduleTime";
 import {
   countSelection,
   deviceState,
@@ -17,6 +18,8 @@ import {
 } from "@/app/_lib/selection";
 import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
+import { useDialogs } from "./PanelDialogs";
+import { ClockIcon } from "./ScheduleForm";
 
 /** Seçimin kararlı imzası — geri bildirim ve kaydırıcı değeri seçime bağlı tutulur. */
 function signature(sel: Selection): string {
@@ -60,6 +63,7 @@ export function SelectionActionBar({
 }) {
   const { zones, setTargetsPower, setTargetsBrightness, applyEffect, stopEffect } = useLighting();
   const { canWrite } = usePanel();
+  const { openSchedule } = useDialogs();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [level, setLevel] = useState<{ sig: string; value: number } | null>(null);
   const [notice, setNotice] = useState<{ sig: string; text: string } | null>(null);
@@ -113,8 +117,17 @@ export function SelectionActionBar({
     say("Efekt durduruldu; lambalar son şiddetine döndü.");
   }
 
+  // Aynı seçim için ileri bir saate zamanlama (Aç varsayılan, formda değişir).
+  function schedule() {
+    openSchedule({
+      prefill: { action: "on", selection: new Map(selection) },
+      onSaved: (s) =>
+        say(s.nextRunAt ? `Zamanlandı · ilk çalışma ${formatRunAt(new Date(s.nextRunAt))}.` : "Zamanlandı."),
+    });
+  }
+
   const btn =
-    "inline-flex h-9 items-center justify-center rounded-[10px] border border-border px-3.5 text-[13.5px] font-medium text-text transition-colors hover:border-border-strong hover:bg-panel-2";
+    "inline-flex cursor-pointer h-9 items-center justify-center rounded-[10px] border border-border px-3.5 text-[13.5px] font-medium text-text transition-colors hover:border-border-strong hover:bg-panel-2";
 
   return (
     <>
@@ -148,6 +161,15 @@ export function SelectionActionBar({
                 Efekti durdur
               </button>
             ) : null}
+            <button
+              type="button"
+              onClick={schedule}
+              title="Seçili cihazlar için ileri bir saate zamanla"
+              className={`${btn} gap-1.5`}
+            >
+              <ClockIcon />
+              Zamanla
+            </button>
             <button
               type="button"
               onClick={onClear}

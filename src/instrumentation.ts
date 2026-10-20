@@ -25,4 +25,15 @@ export async function register() {
   } catch (err) {
     console.error("[instrumentation] tenancy başlatılamadı:", err);
   }
+
+  // Zamanlanmış komutlar. Tablo yoksa (migration çalışmadı) yalnızca loglanır;
+  // ilk zamanlama CRUD'unda yeniden yüklenir.
+  try {
+    const { startScheduler } = await import("@/lib/scheduler");
+    void startScheduler().catch((err) =>
+      console.error("[instrumentation] zamanlayıcı başlatılamadı:", err),
+    );
+  } catch (err) {
+    console.error("[instrumentation] zamanlayıcı başlatılamadı:", err);
+  }
 }

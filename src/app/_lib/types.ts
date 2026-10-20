@@ -1,5 +1,12 @@
 import type { D4iBlock } from "@/lib/d4i";
 import type { OtaStatus } from "@/types/lighting";
+import type {
+  ScheduleAction,
+  ScheduleRepeat,
+  ScheduleResult,
+  ScheduleTarget,
+  ScheduleTimeKind,
+} from "@/lib/scheduleTime";
 
 export type ThemeMode = "light" | "dark" | "auto";
 
@@ -91,6 +98,29 @@ export interface GatewayView {
     report: Record<string, unknown> | null;
     reportAt: string | null;
   };
+}
+
+/** GET /api/schedules — zamanlanmış komut (saatler Türkiye saati). */
+export interface ScheduleView {
+  id: string;
+  name: string | null;
+  enabled: boolean;
+  action: ScheduleAction;
+  value: number | null;
+  effectNumber: number | null;
+  effectText: string | null;
+  target: ScheduleTarget;
+  timeKind: ScheduleTimeKind;
+  timeMinutes: number | null;
+  offsetMinutes: number;
+  repeat: ScheduleRepeat;
+  runDate: string | null;
+  weekdays: number | null;
+  /** null: tek seferlik bitti ya da zamanı geçti. */
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastResult: ScheduleResult | null;
+  createdAt: string | null;
 }
 
 /**
