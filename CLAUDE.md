@@ -556,7 +556,7 @@ Backend bu endpoint'leri aldığında ilgili MQTT topic'ine publish eder.
 
 ```
 POST   /api/devices              → cihaz ekle { mac, zoneSlug, name? }
-PATCH  /api/devices/:deviceId    → bölge / isim güncelle { zoneSlug?, name? }
+PATCH  /api/devices/:deviceId    → bölge / isim / MAC güncelle { zoneSlug?, name?, mac? }
 DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 ```
 
@@ -565,7 +565,16 @@ DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 > (Kural #3); cihaz yeniden flaşlanana kadar **eski** bölgenin toplu komutlarını
 > almaya devam eder, yeninin komutlarını almaz. Tekil (MAC) ve `Meven:all/cmd`
 > komutları etkilenmez. Dashboard bölge seçimi değiştiğinde bu uyarıyı gösterir.
-> MAC değiştirilemez: cihazın kimliği odur, tüm telemetri/lamba kayıtları ona bağlı.
+> **MAC düzeltmesi** (`mac`, yalnızca yanlış girilmiş kod için): cihazın kimliği
+> MAC olduğundan bütün kayıtları yeni MAC'e taşınır (`lib/deviceRename.ts →
+> renameDeviceMac`, tek transaction). Taşınanlar: `fixtures`, `d4i_telemetry`,
+> `device_status`, `fault_events`, cihaz `commands` logu ve müşterinin
+> zamanlama hedefleri. Kayıtsız MAC'in verisi de yazıldığı için yeni MAC'te
+> gerçek cihazın lamba satırları zaten olabilir: aynı kanalda yeni MAC'in
+> satırı kalır, eski satırdan yalnızca isim aktarılır. Son görülme, sağlık,
+> sürüm ve gateway bağı sıfırlanır; cihazın ilk mesajıyla dolar. Eski MAC'te
+> kayıt kalmaz. Yeni MAC başka cihaz ya da gateway olarak kayıtlıysa 409
+> (sahip açıklanmaz). Audit: `device.mac_change`.
 >
 > **Cihaz başka MÜŞTERİNİN bölgesine taşınamaz** (admin için de): eski
 > `ZONE_SLUG`'ı dinlemeye devam edeceği için eski müşterinin bölge komutlarını

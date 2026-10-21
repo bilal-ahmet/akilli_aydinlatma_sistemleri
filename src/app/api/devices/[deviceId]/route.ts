@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { toDeviceView } from "@/lib/adapters";
-import { ok, fail } from "@/lib/api/respond";
+import { ok, fail, msg } from "@/lib/api/respond";
 import { deviceUpdateSchema } from "@/types/lighting";
 import { authorizeDevice } from "@/lib/auth/guard";
-import { refreshTenancy } from "@/lib/tenancy";
+import { getTenancy, refreshTenancy } from "@/lib/tenancy";
+import { normalizeMac } from "@/lib/mac";
+import { renameDeviceMac } from "@/lib/deviceRename";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -25,7 +27,14 @@ const selectShape = {
 };
 
 /**
- * PATCH /api/devices/:deviceId — cihazın bölgesini ve/veya ismini güncelle.
+ * PATCH /api/devices/:deviceId — cihazın bölgesini, ismini ve/veya MAC'ini
+ * güncelle.
+ *
+ * MAC değişikliği yanlış girilmiş kodu düzeltmek içindir: cihaz ve MAC'e bağlı
+ * tüm kayıtlar yeni MAC'e taşınır (`renameDeviceMac`). Yeni MAC başka bir
+ * cihaz ya da gateway olarak kayıtlıysa 409 (başka müşterideyse sahip
+ * açıklanmaz — oluşturma kuralıyla aynı). Komutlar bundan sonra
+ * `Meven:<yeni MAC>/cmd`'ye gider; cihazın bölge topic'i değişmez.
  *
  * Bölge değişikliği DASHBOARD KAYDINI taşır; cihazın dinlediği bölge topic'i
  * (`Meven:<slug>/cmd`) firmware'deki ZONE_SLUG'tan gelir. Cihaz yeniden
@@ -51,6 +60,59 @@ export async function PATCH(
   }
   const { zoneSlug, name } = parsed.data;
 
+  // ── MAC düzeltmesi ──
+  let newMac: string | null = null;
+  if (parsed.data.mac !== undefined) {
+    newMac = normalizeMac(parsed.data.mac);
+    if (!newMac) {
+      return fail(
+        msg(
+          ctx.user,
+          "Geçersiz MAC adresi (12 hane hex bekleniyor)",
+          "Geçersiz cihaz kodu: 12 karakter olmalı (rakamlar ve A-F harfleri)",
+        ),
+        422,
+      );
+    }
+    if (newMac === deviceId) newMac = null;
+  }
+  if (newMac) {
+    const taken = msg(
+      ctx.user,
+      "Bu MAC adresi başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+      "Bu cihaz kodu başka bir hesapta kayıtlı. Yöneticinize başvurun.",
+    );
+    const idx = await getTenancy();
+    const gwOwner = idx.gatewayOwner.get(newMac);
+    if (gwOwner) {
+      return fail(
+        gwOwner === ctx.customerId
+          ? msg(ctx.user, "Bu MAC bir gateway olarak kayıtlı", "Bu kod bir ağ geçidi olarak kayıtlı")
+          : taken,
+        409,
+      );
+    }
+    const [dup] = await db
+      .select({ id: schema.devices.id })
+      .from(schema.devices)
+      .where(eq(schema.devices.deviceId, newMac))
+      .limit(1);
+    if (dup) {
+      const own = idx.deviceOwner.get(newMac);
+      if (own && own === ctx.customerId) {
+        return fail(msg(ctx.user, "Bu MAC adresi başka bir cihazda kayıtlı", "Bu cihaz kodu başka bir cihazda kayıtlı"), 409);
+      }
+      await audit({
+        req,
+        user: ctx.user,
+        customerId: ctx.customerId,
+        action: "device.mac_conflict",
+        target: newMac,
+      });
+      return fail(taken, 409);
+    }
+  }
+
   const patch: { zoneId?: string; name?: string | null } = {};
 
   if (zoneSlug !== undefined) {
@@ -74,21 +136,30 @@ export async function PATCH(
   if (name !== undefined) patch.name = name || null;
 
   try {
-    const [updated] = await db
-      .update(schema.devices)
-      .set(patch)
-      .where(eq(schema.devices.deviceId, deviceId))
-      .returning({ id: schema.devices.id });
+    // Yalnızca MAC değişiyorsa güncellenecek kayıt alanı yok; varlık kontrolü yeter.
+    const [updated] =
+      Object.keys(patch).length > 0
+        ? await db
+            .update(schema.devices)
+            .set(patch)
+            .where(eq(schema.devices.deviceId, deviceId))
+            .returning({ id: schema.devices.id })
+        : await db
+            .select({ id: schema.devices.id })
+            .from(schema.devices)
+            .where(eq(schema.devices.deviceId, deviceId))
+            .limit(1);
     if (!updated) return fail("Cihaz bulunamadı", 404);
 
-    if (patch.zoneId) await refreshTenancy();
+    if (newMac) await renameDeviceMac(deviceId, newMac, ctx.customerId);
+    if (patch.zoneId || newMac) await refreshTenancy();
     await audit({
       req,
       user: ctx.user,
       customerId: ctx.customerId,
-      action: "device.update",
+      action: newMac ? "device.mac_change" : "device.update",
       target: deviceId,
-      detail: parsed.data,
+      detail: newMac ? { ...parsed.data, from: deviceId, to: newMac } : parsed.data,
     });
 
     // Bölge adını da döndürmek için join'li satırı yeniden oku.
@@ -96,7 +167,7 @@ export async function PATCH(
       .select(selectShape)
       .from(schema.devices)
       .leftJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
-      .where(eq(schema.devices.deviceId, deviceId))
+      .where(eq(schema.devices.deviceId, newMac ?? deviceId))
       .limit(1);
     return ok(toDeviceView(row));
   } catch (err) {

@@ -315,6 +315,23 @@ async function main() {
   check("keşfedilen gateway'ler yalnızca admin → 403", (await call(aMgr, "GET", "/api/admin/gateways/discovered")).status === 403);
   check("admin keşfedilen listeyi okur → 200", (await call(admin, "GET", "/api/admin/gateways/discovered")).status === 200);
 
+  console.log("\n[5c-2] Cihaz MAC düzeltmesi");
+  const wrongA = hexOf("E1");
+  const rightA = hexOf("E2");
+  check("A cihaz ekler (yanlış MAC)", (await call(aMgr, "POST", "/api/devices", { mac: wrongA, zoneSlug: zoneA })).status === 201);
+  const toB = await call(aMgr, "PATCH", `/api/devices/${wrongA}`, { mac: macB });
+  check("A, MAC'i B'nin cihazına çeviremez → 409 (sahip açıklanmaz)", toB.status === 409 && !String(toB.json?.error).includes(B), toB.json);
+  check("A, MAC'i gateway kimliğine çeviremez → 409", (await call(aMgr, "PATCH", `/api/devices/${wrongA}`, { mac: gwB })).status === 409);
+  check("geçersiz MAC → 422", (await call(aMgr, "PATCH", `/api/devices/${wrongA}`, { mac: "12-34" })).status === 422);
+  check("izleyici MAC düzeltemez → 403", (await call(aView, "PATCH", `/api/devices/${wrongA}`, { mac: rightA })).status === 403);
+  check("B, A cihazının MAC'ini düzeltemez → 404", (await call(bMgr, "PATCH", `/api/devices/${wrongA}`, { mac: rightA })).status === 404);
+  const fix = await call(aMgr, "PATCH", `/api/devices/${wrongA}`, { mac: rightA.match(/.{2}/g)!.join(":") });
+  check("A MAC'i düzeltir (iki noktalı girdi)", fix.status === 200 && (fix.json?.data as { deviceId: string }).deviceId === rightA, fix.json);
+  check("eski MAC artık yok → 404", (await call(aMgr, "PATCH", `/api/devices/${wrongA}`, { name: "x" })).status === 404);
+  check("yeni MAC'e komut verilir → 202", (await call(aMgr, "POST", `/api/devices/${rightA}/command`, { action: "on" })).status === 202);
+  check("B yeni MAC'i sahiplenemez → 409", (await call(bMgr, "POST", "/api/devices", { mac: rightA, zoneSlug: zoneB })).status === 409);
+  check("A cihazı siler", (await call(aMgr, "DELETE", `/api/devices/${rightA}`)).status === 200);
+
   console.log("\n[5d] Zamanlama izolasyonu");
   // Her gün 03:00 — test sırasında çalışmaz (komut yayınlanmaz).
   const sched = (target: unknown) => ({

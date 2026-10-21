@@ -371,8 +371,9 @@ export const deviceCreateSchema = z.object({
 export type DeviceCreate = z.infer<typeof deviceCreateSchema>;
 
 /**
- * Cihaz güncelleme — bölge ve isim. MAC değiştirilemez: cihazın kimliği odur,
- * MQTT topic'leri ve tüm telemetri/lamba kayıtları ona bağlıdır.
+ * Cihaz güncelleme — bölge, isim ve (yanlış girildiyse) MAC. MAC cihazın
+ * kimliğidir: değişince kayıtları yeni MAC'e taşınır (bkz. PATCH route,
+ * `renameDeviceMac`). İki noktalı/noktasız girilebilir.
  *
  * DİKKAT: bölge değişikliği yalnızca dashboard kaydını taşır. Cihazın hangi
  * `Meven:<slug>/cmd` topic'ini dinlediği firmware'deki ZONE_SLUG'tan gelir;
@@ -381,6 +382,7 @@ export type DeviceCreate = z.infer<typeof deviceCreateSchema>;
 export const deviceUpdateSchema = z
   .object({
     zoneSlug: z.string().trim().min(1).optional(),
+    mac: z.string().trim().min(1).optional(),
     // Boş string ismi temizler (null'a düşer).
     name: z.string().trim().max(100).optional(),
   })

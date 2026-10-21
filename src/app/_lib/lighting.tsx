@@ -169,7 +169,8 @@ interface LightingValue {
   updateZone: (id: string, values: ZoneValues) => Promise<void>;
   deleteZone: (id: string) => Promise<void>;
   createDevice: (values: DeviceValues) => Promise<DeviceView>;
-  updateDevice: (mac: string, values: { zoneSlug: string; name: string }) => Promise<void>;
+  /** `values.mac` farklıysa MAC düzeltilir; döner: cihazın (yeni) MAC'i. */
+  updateDevice: (mac: string, values: { zoneSlug: string; name: string; mac?: string }) => Promise<string>;
   deleteDevice: (mac: string) => Promise<void>;
 }
 
@@ -834,15 +835,28 @@ export function LightingProvider({
     return device;
   }
 
-  async function updateDevice(mac: string, values: { zoneSlug: string; name: string }) {
+  async function updateDevice(mac: string, values: { zoneSlug: string; name: string; mac?: string }) {
     const res = await fetch(api(`/api/devices/${mac}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ zoneSlug: values.zoneSlug, name: values.name.trim() }),
+      body: JSON.stringify({
+        zoneSlug: values.zoneSlug,
+        name: values.name.trim(),
+        ...(values.mac !== undefined ? { mac: values.mac } : {}),
+      }),
     });
+    const patch = await readJson<DeviceView>(res, "Hata");
+    // MAC düzeltildi: lambalar, ölçümler ve arızalar yeni MAC'e taşındı (ve
+    // yeni MAC'in önceden gelen verisiyle birleşti) — listeyi sunucudan oku.
+    if (patch.deviceId !== mac) {
+      setDevices((ds) => ds.filter((d) => d.deviceId !== mac).concat(patch));
+      loadDevices();
+      loadFaults();
+      loadLive();
+      return patch.deviceId;
+    }
     // Yanıt yalnızca kayıt alanlarını taşır; telemetri alanlarını korumak için
     // mevcut satırın üzerine yalnızca değişenleri yaz.
-    const patch = await readJson<DeviceView>(res, "Hata");
     setDevices((ds) =>
       ds.map((d) =>
         d.deviceId === mac
@@ -850,6 +864,7 @@ export function LightingProvider({
           : d,
       ),
     );
+    return mac;
   }
 
   async function deleteDevice(mac: string) {

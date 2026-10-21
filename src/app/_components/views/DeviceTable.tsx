@@ -86,7 +86,7 @@ function RowMenu({ device }: { device: DeviceView }) {
               openDeviceForm({ device });
             }}
           >
-            Bölge / isim düzenle
+            Düzenle
           </button>
           <button
             type="button"

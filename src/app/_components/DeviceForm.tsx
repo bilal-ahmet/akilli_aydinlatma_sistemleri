@@ -4,12 +4,13 @@ import { useState } from "react";
 import type { DeviceView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useTechnical } from "@/app/_lib/panel";
-import { formatMac } from "@/lib/mac";
+import { formatMac, normalizeMac } from "@/lib/mac";
 import { Modal } from "./Modal";
 
 /**
- * Yeni cihaz / cihaz düzenleme diyaloğu. Düzenlemede yalnızca bölge ve isim
- * değişir — MAC cihazın kimliğidir, tüm telemetri ona bağlı.
+ * Yeni cihaz / cihaz düzenleme diyaloğu. Düzenlemede bölge, isim ve yanlış
+ * girildiyse MAC değişir; MAC değişince cihazın kayıtları yeni MAC'e taşınır
+ * (sunucu: `renameDeviceMac`).
  *
  * Parent `key` ile yeniden mount eder (açılışta taze state).
  */
@@ -26,7 +27,7 @@ export function DeviceDialog({
 }) {
   const { zones, createDevice, updateDevice } = useLighting();
   const technical = useTechnical();
-  const [mac, setMac] = useState("");
+  const [mac, setMac] = useState(device ? formatMac(device.deviceId) : "");
   const [zoneSlug, setZoneSlug] = useState(
     device?.zoneSlug ?? presetZone ?? zones[0]?.id ?? "",
   );
@@ -35,7 +36,9 @@ export function DeviceDialog({
   const [error, setError] = useState<string | null>(null);
 
   const zoneChanged = device ? zoneSlug !== device.zoneSlug : false;
-  const canSubmit = !submitting && zoneSlug !== "" && (device ? true : mac.trim() !== "");
+  const normalized = normalizeMac(mac);
+  const macChanged = device ? normalized !== device.deviceId : false;
+  const canSubmit = !submitting && zoneSlug !== "" && mac.trim() !== "";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +46,9 @@ export function DeviceDialog({
     setSubmitting(true);
     setError(null);
     try {
-      if (device) await updateDevice(device.deviceId, { zoneSlug, name });
+      if (device) {
+        await updateDevice(device.deviceId, { zoneSlug, name, ...(macChanged ? { mac: mac.trim() } : {}) });
+      }
       else await createDevice({ mac: mac.trim(), zoneSlug, name });
       onClose();
     } catch (err) {
@@ -59,10 +64,9 @@ export function DeviceDialog({
       title={device ? "Cihazı düzenle" : "Yeni Cihaz"}
       subtitle={
         device ? (
-          <>
-            {technical ? null : "Cihaz kodu "}
-            <span className="font-mono">{formatMac(device.deviceId)}</span>
-          </>
+          device.name ? (
+            <span>{device.name}</span>
+          ) : null
         ) : technical ? (
           "ESP32 cihazını bir bölgeye bağlayın."
         ) : (
@@ -116,34 +120,50 @@ export function DeviceDialog({
           ) : null}
         </div>
 
-        {device ? null : (
-          <div>
-            <label className="field-label" htmlFor="dv-mac">
-              {technical ? "MAC adresi" : "Cihaz kodu"}
-            </label>
-            <input
-              id="dv-mac"
-              className="field font-mono"
-              value={mac}
-              onChange={(e) => setMac(e.target.value)}
-              placeholder="A8:42:E3:12:34:56"
-              autoFocus
-              spellCheck={false}
-              autoCapitalize="characters"
-            />
-            {technical ? (
-              <p className="mt-2 text-[12.5px] leading-normal text-muted">
-                İki noktalı ya da noktasız girebilirsiniz; sistemde{" "}
-                <span className="font-mono text-ink-2">A842E3123456</span> olarak saklanır. ESP32
-                firmware&apos;i kendi MAC&apos;ini bu formatta kullanır.
-              </p>
-            ) : (
-              <p className="mt-2 text-[12.5px] leading-normal text-muted">
-                Cihazın etiketindeki kodu yazın.
-              </p>
-            )}
-          </div>
-        )}
+        <div>
+          <label className="field-label" htmlFor="dv-mac">
+            {technical ? "MAC adresi" : "Cihaz kodu"}
+          </label>
+          <input
+            id="dv-mac"
+            className="field font-mono"
+            value={mac}
+            onChange={(e) => setMac(e.target.value)}
+            placeholder="A8:42:E3:12:34:56"
+            autoFocus={!device}
+            spellCheck={false}
+            autoCapitalize="characters"
+          />
+          {device && macChanged ? (
+            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
+              {technical ? (
+                <>
+                  <span className="font-semibold text-accent">MAC yalnızca yanlış girildiyse değiştirin.</span>{" "}
+                  Lambalar, D4i geçmişi, arızalar, komut kaydı ve zamanlama hedefleri yeni MAC&apos;e
+                  taşınır; yeni MAC&apos;ten önceden gelmiş (kayıtsız) veriler korunur. Komutlar bundan sonra{" "}
+                  <code className="font-mono">Meven:{normalized ?? "<MAC>"}/cmd</code>{" "}
+                  topic&apos;ine gider.
+                  Son görülme ve sağlık bilgisi cihazın ilk mesajıyla dolar.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold text-accent">Cihaz kodunu yalnızca yanlış girildiyse değiştirin.</span>{" "}
+                  Bu cihazın lambaları, ölçümleri ve arıza geçmişi yeni koda taşınır.
+                </>
+              )}
+            </p>
+          ) : device ? null : technical ? (
+            <p className="mt-2 text-[12.5px] leading-normal text-muted">
+              İki noktalı ya da noktasız girebilirsiniz; sistemde{" "}
+              <span className="font-mono text-ink-2">A842E3123456</span> olarak saklanır. ESP32
+              firmware&apos;i kendi MAC&apos;ini bu formatta kullanır.
+            </p>
+          ) : (
+            <p className="mt-2 text-[12.5px] leading-normal text-muted">
+              Cihazın etiketindeki kodu yazın.
+            </p>
+          )}
+        </div>
 
         <div>
           <label className="field-label" htmlFor="dv-name">
