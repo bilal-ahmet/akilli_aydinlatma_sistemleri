@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import type { Zone } from "@/app/_lib/types";
+import { useEffect, useState } from "react";
+import type { DeviceView, FaultRecord, Zone } from "@/app/_lib/types";
 import { isLit } from "@/app/_lib/mockData";
 import { useLighting } from "@/app/_lib/lighting";
-import { usePanel, useTechnical } from "@/app/_lib/panel";
+import { useApi, usePanel, useTechnical } from "@/app/_lib/panel";
+import { useNow } from "@/app/_lib/useNow";
 import { useZoneStats } from "@/app/_lib/useZoneStats";
-import { splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
+import { isOnline, splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
+import { openAlerts } from "@/app/_lib/alerts";
 import { effectByNumber } from "@/lib/effects";
-import { faultLabel } from "@/lib/faults";
-import { deviceName } from "@/app/_lib/format";
-import { emptySelection, pruneSelection, type Selection } from "@/app/_lib/selection";
+import { formatInt } from "@/app/_lib/format";
+import { emptySelection, lampOn, pruneSelection, type Selection } from "@/app/_lib/selection";
+import { OpenAlertCard, ResolvedFaultRows } from "../FaultItems";
 import { Toggle } from "../Toggle";
 import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
@@ -22,6 +24,54 @@ import { SelectionActionBar } from "../SelectionActionBar";
 import { DeviceTable } from "./DeviceTable";
 
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
+
+const HISTORY_DAYS = 30;
+/** Bölge geçmişinde ilk açılışta gösterilen kayıt sayısı. */
+const HISTORY_PREVIEW = 5;
+
+/** Cihazlara kayıtlı lamba (DALI kanalı) toplamı. */
+function lampTotal(devices: DeviceView[]): number {
+  return devices.reduce((n, d) => n + Math.max(d.lampCount, d.lamps.length), 0);
+}
+
+/**
+ * Envanter kutusu: "çalışan / toplam" + oran çubuğu + kısa açıklama. Çubuk
+ * çalışmayan pay varsa dikkat rengine döner.
+ */
+function CountTile({
+  label,
+  active,
+  total,
+  hint,
+  alert,
+}: {
+  label: string;
+  active: number;
+  total: number;
+  hint: string;
+  /** Sorun var (bağlantısız cihaz, arızalı lamba) — sayı ve alt satır kırmızı. */
+  alert?: boolean;
+}) {
+  const pct = total > 0 ? Math.round((active / total) * 100) : 0;
+  return (
+    <div className="stat-card flex flex-col gap-2">
+      <p className="text-[13px] text-muted">{label}</p>
+      <p className="flex items-baseline gap-1">
+        <span className="text-[28px] font-bold leading-none tracking-[-0.02em] tabular-nums text-text">
+          {formatInt(active)}
+        </span>
+        <span className="text-base text-muted">/ {formatInt(total)}</span>
+      </p>
+      <span className="h-1 overflow-hidden rounded-sm bg-track" aria-hidden>
+        <span
+          className={`block h-full transition-[width] duration-500 ${alert ? "bg-danger" : "bg-ok"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <p className={`text-[12.5px] ${alert ? "text-danger" : "text-muted"}`}>{hint}</p>
+    </div>
+  );
+}
 
 /** Bölge durum noktası: arıza > kapalı > açık. */
 function zoneDot(zone: Zone, faulty: boolean): string {
@@ -77,7 +127,7 @@ function ZoneList({ selected }: { selected: string | null }) {
                 <span aria-hidden className={`h-[7px] w-[7px] shrink-0 rounded-full ${zoneDot(z, faulty)}`} />
               </span>
               <span className="truncate text-[12.5px] text-muted">
-                {zoneMeta(z, stats(z.id).devices.length)}
+                {zoneMeta(z, stats(z.id).devices.length, lampTotal(stats(z.id).devices))}
               </span>
               <span className="flex items-center gap-2.5">
                 <span className="h-1 flex-1 overflow-hidden rounded-sm bg-track">
@@ -100,10 +150,12 @@ function ZoneList({ selected }: { selected: string | null }) {
 
 function ZoneDetail({ zone }: { zone: Zone }) {
   const technical = useTechnical();
-  const { toggleZone, setZoneBrightness, faultsByDevice } = useLighting();
+  const { toggleZone, setZoneBrightness, faults, devices: allDevices } = useLighting();
   const { customerSlug, canWrite } = usePanel();
   const { openZoneForm, confirmDeleteZone, openZoneEffects, openDeviceForm } = useDialogs();
   const router = useRouter();
+  const api = useApi();
+  const now = useNow(60_000);
   const { devices, measure } = useZoneStats()(zone.id);
   const effect = effectByNumber(zone.activeFx);
   // Toplu kontrol seçimi — bileşen bölge başına `key`'lendiği için bölge
@@ -115,10 +167,46 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   const load = measure.loadPowerW !== null ? splitPower(measure.loadPowerW) : null;
   const noData = "Cihaz henüz bildirmedi";
 
-  // Arızaları cihaza göre grupla — "hangi cihazın hangi lambası" tek satırda.
-  const faultGroups = [...faultsByDevice.entries()]
-    .map(([deviceId, fs]) => [deviceId, fs.filter((f) => f.zoneSlug === zone.id)] as const)
-    .filter(([, fs]) => fs.length > 0);
+  // Süren sorunlar (lamba arızası + komut hatası) — Arızalar sayfasıyla aynı liste.
+  const alerts = openAlerts(faults, allDevices, technical).filter((a) => a.zoneSlug === zone.id);
+
+  // Envanter: direk (bölge açıksa hepsi), bağlı cihaz, yanan lamba.
+  const lit = isLit(zone);
+  const lampsTotal = lampTotal(devices);
+  const lampsLit = devices.reduce((n, d) => n + d.lamps.filter(lampOn).length, 0);
+  const faultyLamps = new Set(
+    alerts
+      .filter((a) => a.kind === "fault" && !a.warning && a.channel !== null)
+      .map((a) => `${a.deviceId}:${a.channel}`),
+  ).size;
+  const online = now === null ? 0 : devices.filter((d) => isOnline(d, now)).length;
+  const offline = now === null ? 0 : devices.length - online;
+  const lampHint =
+    lampsTotal === 0
+      ? "Kayıtlı lamba yok"
+      : [faultyLamps > 0 ? `${faultyLamps} arızalı` : null, lampsTotal - lampsLit > 0 ? `${lampsTotal - lampsLit} kapalı` : null]
+          .filter(Boolean)
+          .join(" · ") || "Hepsi yanıyor";
+
+  // Bölgenin arıza geçmişi (son 30 gün). Süren arıza kümesi değişince tazelenir;
+  // bileşen bölge başına `key`'lendiği için bölge değişince sıfırlanır.
+  const [history, setHistory] = useState<FaultRecord[] | null>(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const openKey = alerts.map((a) => a.key).join("|");
+  useEffect(() => {
+    let cancelled = false;
+    fetch(api(`/api/faults?days=${HISTORY_DAYS}&zone=${encodeURIComponent(zone.id)}`))
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && Array.isArray(j.data)) setHistory(j.data as FaultRecord[]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [api, zone.id, openKey]);
+  const resolved = (history ?? []).filter((h) => h.resolvedAt !== null);
+  const shownHistory = showAllHistory ? resolved : resolved.slice(0, HISTORY_PREVIEW);
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -132,7 +220,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           </>
         }
         title={zone.name}
-        subtitle={<span className="text-ink-2">{zoneMeta(zone, devices.length)}</span>}
+        subtitle={zone.district ? <span className="text-ink-2">{zone.district}</span> : undefined}
         actions={
           canWrite ? (
             <>
@@ -196,6 +284,62 @@ function ZoneDetail({ zone }: { zone: Zone }) {
         </span>
       </section>
 
+      <section aria-label="Bölge envanteri" className="grid gap-4 sm:grid-cols-3">
+        <CountTile
+          label="Aktif direk"
+          active={lit ? zone.poleCount : 0}
+          total={zone.poleCount}
+          hint={
+            zone.poleCount === 0
+              ? canWrite
+                ? "Direk sayısı girilmemiş — “Düzenle”den ekleyin"
+                : "Direk sayısı girilmemiş"
+              : lit
+                ? "Bölge açık, direklerin hepsi yanıyor"
+                : "Bölge kapalı"
+          }
+        />
+        <CountTile
+          label="Bağlı cihaz"
+          active={online}
+          total={devices.length}
+          alert={offline > 0}
+          hint={
+            devices.length === 0
+              ? "Bölgede cihaz yok"
+              : now === null
+                ? "…"
+                : offline > 0
+                  ? `${offline} cihaz son 3 dakikadır haber vermiyor`
+                  : "Hepsi bağlı"
+          }
+        />
+        <CountTile
+          label="Yanan lamba"
+          active={lampsLit}
+          total={lampsTotal}
+          alert={faultyLamps > 0}
+          hint={lampHint}
+        />
+      </section>
+
+      <section aria-label="Arıza durumu" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="eyebrow">Süren arızalar · {alerts.length}</h2>
+          <Link href={`/c/${customerSlug}/arizalar?bolge=${encodeURIComponent(zone.id)}`} className="text-[13px] font-medium text-accent hover:underline">
+            Arızalar sayfasında aç ›
+          </Link>
+        </div>
+        {alerts.length > 0 ? (
+          alerts.map((a) => <OpenAlertCard key={a.key} alert={a} now={now} showZone={false} />)
+        ) : (
+          <p className="flex items-center gap-2.5 rounded-[14px] border border-border bg-panel px-5 py-4 text-sm text-ink-2">
+            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-ok" />
+            Bu bölgede şu an süren arıza yok.
+          </p>
+        )}
+      </section>
+
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           label="Çekilen güç"
@@ -224,18 +368,6 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           hint={load ? "LED'e giden güç" : noData}
         />
       </div>
-
-      {faultGroups.length > 0 ? (
-        <section className="flex flex-col gap-1.5 rounded-2xl border border-danger/30 bg-danger-soft px-5 py-4">
-          <p className="text-sm font-semibold text-danger">Bu bölgede süren arıza</p>
-          {faultGroups.map(([deviceId, fs]) => (
-            <p key={deviceId} className="text-[13px] text-ink-2">
-              <span className="font-semibold text-text">{deviceName({ name: fs[0].deviceName, deviceId }, technical)}</span> ·{" "}
-              {fs.map((f) => `Lamba ${f.channel} — ${faultLabel(f.code, technical)}`).join(", ")}
-            </p>
-          ))}
-        </section>
-      ) : null}
 
       <section className="flex flex-col overflow-hidden rounded-2xl border border-border bg-panel">
         <div className="flex items-center justify-between gap-2 px-[22px] py-[18px]">
@@ -277,6 +409,34 @@ function ZoneDetail({ zone }: { zone: Zone }) {
             />
           </>
         )}
+      </section>
+
+      <section aria-label="Arıza geçmişi" className="flex flex-col gap-3">
+        <h2 className="eyebrow">
+          Geçmiş arızalar · son {HISTORY_DAYS} gün{history ? ` · ${resolved.length}` : ""}
+        </h2>
+        <div className="overflow-hidden rounded-[14px] border border-border bg-panel">
+          {history === null ? (
+            <p className="px-[22px] py-5 text-sm text-muted">Yükleniyor…</p>
+          ) : resolved.length === 0 ? (
+            <p className="px-[22px] py-5 text-sm text-muted">
+              Bu bölgede son {HISTORY_DAYS} günde çözülmüş arıza yok.
+            </p>
+          ) : (
+            <>
+              <ResolvedFaultRows records={shownHistory} showZone={false} />
+              {resolved.length > HISTORY_PREVIEW ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllHistory((v) => !v)}
+                  className="w-full border-t border-border px-[22px] py-3 text-left text-[13px] font-medium text-accent hover:underline"
+                >
+                  {showAllHistory ? "Daha az göster" : `Tümünü göster (${resolved.length})`}
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
       </section>
 
       <SelectionActionBar

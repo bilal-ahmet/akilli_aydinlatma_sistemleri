@@ -624,7 +624,15 @@ kırılımda yoktur → panelde "Veri bekleniyor".
 ```
 GET /api/faults             → süren lamba arızaları (cihaz + bölge bilgisiyle)
 GET /api/faults?days=30     → + son N günde (1-90) çözülenler (id, resolvedAt)
+GET /api/faults?zone=<slug> → yalnızca o bölge (days ile birlikte de kullanılır)
 ```
+
+Arıza kaydının kategorisi (`faultCategory`: bağlantı / lamba / sürücü / LED /
+komut), açıklaması ve önerilen adımı (`faultDescription`, teknik + sade) ve
+uyarı mı arıza mı (`isWarningCode`) `lib/faults.ts`'te; `openAlerts` bunları
+`AlertItem`'a koyar. Arızalar sayfası ve bölge detayı aynı kartları kullanır
+(`_components/FaultItems.tsx`). Lamba rozeti (`fixtures.status`) ve bölge
+durumu da `activeFaultCodes`'tan karar verir — arıza geçmişiyle aynı liste.
 
 ### Ağ geçitleri (gateway)
 

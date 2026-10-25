@@ -18,6 +18,9 @@ export const runtime = "nodejs";
  *
  * `?days=N` (1-90) → arızalar sayfasının geçmişi: süren arızalara ek olarak
  * son N günde ÇÖZÜLMÜŞ olanlar da `FaultRecord` (id + resolvedAt) olarak döner.
+ *
+ * `?zone=<slug>` → yalnızca o bölgenin cihazları (bölge detayındaki geçmiş).
+ * Müşteri süzgeci yine uygulandığı için başka müşterinin bölgesi boş döner.
  */
 const MAX_HISTORY_DAYS = 90;
 
@@ -25,7 +28,9 @@ export async function GET(req: Request) {
   const ctx = await authorizeScope(req, "read");
   if (ctx instanceof Response) return ctx;
 
-  const daysParam = new URL(req.url).searchParams.get("days");
+  const params = new URL(req.url).searchParams;
+  const daysParam = params.get("days");
+  const zoneSlug = params.get("zone");
   const days = daysParam === null ? null : Number(daysParam);
   if (days !== null && (!Number.isInteger(days) || days < 1 || days > MAX_HISTORY_DAYS)) {
     return fail(`days 1-${MAX_HISTORY_DAYS} arası bir tam sayı olmalı`, 422);
@@ -52,6 +57,7 @@ export async function GET(req: Request) {
       .where(
         and(
           eq(schema.zones.customerId, ctx.customer.id),
+          zoneSlug ? eq(schema.zones.slug, zoneSlug) : undefined,
           since
             ? or(isNull(schema.faultEvents.resolvedAt), gt(schema.faultEvents.resolvedAt, since))
             : isNull(schema.faultEvents.resolvedAt),
