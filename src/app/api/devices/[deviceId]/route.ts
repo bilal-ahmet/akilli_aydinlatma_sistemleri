@@ -22,6 +22,8 @@ const selectShape = {
   health: schema.devices.health,
   healthAt: schema.devices.healthAt,
   gatewayId: schema.devices.gatewayId,
+  poleId: schema.devices.poleId,
+  poleCode: schema.poles.code,
   zoneSlug: schema.zones.slug,
   zoneName: schema.zones.name,
 };
@@ -45,6 +47,9 @@ const selectShape = {
  * ZONE_SLUG'ı dinlemeye devam edeceği için eski müşterinin bölge komutlarını
  * almayı sürdürürdü. Müşteri değişimi bölge seviyesinde (admin, bölge taşıma)
  * ya da yeniden flaşlayıp sil/ekle ile yapılır.
+ *
+ * `poleId`: cihazın takılı olduğu direk (aynı bölgede, boş olmalı); "" bağı
+ * kaldırır. Bölge değişip direk verilmezse eski direğin bağı kalkar.
  */
 export async function PATCH(
   req: Request,
@@ -113,7 +118,14 @@ export async function PATCH(
     }
   }
 
-  const patch: { zoneId?: string; name?: string | null } = {};
+  const patch: { zoneId?: string; name?: string | null; poleId?: string | null } = {};
+
+  const [current] = await db
+    .select({ zoneId: schema.devices.zoneId, poleId: schema.devices.poleId })
+    .from(schema.devices)
+    .where(eq(schema.devices.deviceId, deviceId))
+    .limit(1);
+  if (!current) return fail("Cihaz bulunamadı", 404);
 
   if (zoneSlug !== undefined) {
     const [zone] = await db
@@ -134,6 +146,33 @@ export async function PATCH(
     patch.zoneId = zone.id;
   }
   if (name !== undefined) patch.name = name || null;
+
+  // ── Direk ── Cihaz ile direk aynı bölgede olmalı (lib/poleStore.ts). Bölge
+  // değişip yeni direk verilmediyse eski direğin bağı kaldırılır.
+  const targetZone = patch.zoneId ?? current.zoneId;
+  const { poleId } = parsed.data;
+  if (poleId !== undefined && poleId !== "") {
+    const [pole] = await db
+      .select({ zoneId: schema.poles.zoneId, holder: schema.devices.deviceId })
+      .from(schema.poles)
+      .leftJoin(schema.devices, eq(schema.devices.poleId, schema.poles.id))
+      .where(eq(schema.poles.id, poleId))
+      .limit(1);
+    if (!pole || pole.zoneId !== targetZone) {
+      return fail(
+        "Direk bulunamadı ya da cihazla aynı bölgede değil",
+        pole ? 422 : 404,
+      );
+    }
+    if (pole.holder && pole.holder !== deviceId) {
+      return fail(msg(ctx.user, `Bu direkte başka bir cihaz var (${pole.holder})`, "Bu direkte başka bir cihaz var"), 409);
+    }
+    patch.poleId = poleId;
+  } else if (poleId === "") {
+    patch.poleId = null;
+  } else if (patch.zoneId && patch.zoneId !== current.zoneId && current.poleId) {
+    patch.poleId = null;
+  }
 
   try {
     // Yalnızca MAC değişiyorsa güncellenecek kayıt alanı yok; varlık kontrolü yeter.
@@ -167,6 +206,7 @@ export async function PATCH(
       .select(selectShape)
       .from(schema.devices)
       .leftJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .leftJoin(schema.poles, eq(schema.devices.poleId, schema.poles.id))
       .where(eq(schema.devices.deviceId, newMac ?? deviceId))
       .limit(1);
     return ok(toDeviceView(row));

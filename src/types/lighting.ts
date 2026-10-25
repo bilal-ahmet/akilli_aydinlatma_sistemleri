@@ -371,6 +371,8 @@ export const deviceUpdateSchema = z
     mac: z.string().trim().min(1).optional(),
     // Boş string ismi temizler (null'a düşer).
     name: z.string().trim().max(100).optional(),
+    // Takılı olduğu direk (id); boş string bağı kaldırır.
+    poleId: z.union([z.literal(""), z.uuid()]).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "En az bir alan güncellenmeli",
@@ -403,6 +405,59 @@ export const gatewayUpdateSchema = z
     message: "En az bir alan güncellenmeli",
   });
 export type GatewayUpdate = z.infer<typeof gatewayUpdateSchema>;
+
+// ── Direkler (dashboard / mobil → backend) ───────────────────
+// Konum WGS84 ondalık derece. Enlem ve boylam birlikte verilir ya da ikisi de
+// null olur (konum silinir). `deviceMac` boş string bağı kaldırır.
+export const POLE_LOCATION_SOURCES = ["map", "manual", "gps", "import"] as const;
+export type PoleLocationSource = (typeof POLE_LOCATION_SOURCES)[number];
+
+const poleFields = {
+  zoneSlug: z.string().trim().min(1).max(100),
+  code: z.string().trim().min(1, "Direk numarası zorunlu").max(50),
+  name: z.string().trim().max(100),
+  lat: z.number().min(-90).max(90).nullable(),
+  lng: z.number().min(-180).max(180).nullable(),
+  locationSource: z.enum(POLE_LOCATION_SOURCES),
+  locationAccuracyM: z.number().min(0).max(100_000).nullable(),
+  notes: z.string().trim().max(1000),
+  deviceMac: z.string().trim().max(32),
+};
+
+const bothOrNeither = (d: { lat?: number | null; lng?: number | null }) =>
+  (d.lat === undefined) === (d.lng === undefined) && (d.lat === null) === (d.lng === null);
+const bothOrNeitherMsg = { message: "Enlem ve boylam birlikte girilmeli" };
+
+export const poleCreateSchema = z
+  .object({
+    zoneSlug: poleFields.zoneSlug,
+    code: poleFields.code,
+    name: poleFields.name.optional(),
+    lat: poleFields.lat.optional(),
+    lng: poleFields.lng.optional(),
+    locationSource: poleFields.locationSource.optional(),
+    locationAccuracyM: poleFields.locationAccuracyM.optional(),
+    notes: poleFields.notes.optional(),
+    deviceMac: poleFields.deviceMac.optional(),
+  })
+  .refine(bothOrNeither, bothOrNeitherMsg);
+export type PoleCreate = z.infer<typeof poleCreateSchema>;
+
+export const poleUpdateSchema = z
+  .object({
+    zoneSlug: poleFields.zoneSlug.optional(),
+    code: poleFields.code.optional(),
+    name: poleFields.name.optional(),
+    lat: poleFields.lat.optional(),
+    lng: poleFields.lng.optional(),
+    locationSource: poleFields.locationSource.optional(),
+    locationAccuracyM: poleFields.locationAccuracyM.optional(),
+    notes: poleFields.notes.optional(),
+    deviceMac: poleFields.deviceMac.optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, { message: "En az bir alan güncellenmeli" })
+  .refine(bothOrNeither, bothOrNeitherMsg);
+export type PoleUpdate = z.infer<typeof poleUpdateSchema>;
 
 // ── Zamanlamalar (dashboard → backend) ───────────────────────
 const scheduleMac = z

@@ -8,6 +8,7 @@ import {
   timestamp,
   bigserial,
   doublePrecision,
+  real,
   jsonb,
   index,
   unique,
@@ -162,6 +163,37 @@ export const auditLog = pgTable(
   ],
 );
 
+/**
+ * Direk: sahadaki fiziksel aydınlatma direği, konumuyla. Bir direkte en fazla
+ * bir cihaz (ESP) olur (`devices.pole_id` UNIQUE); direğin lambaları o cihazın
+ * DALI kanallarıdır (`fixtures`). Direk cihazdan önce var olabilir (envanter
+ * içe aktarılır, cihaz sonra takılır) ve cihaz değişse de kalır.
+ *
+ * Müşteri bölgeden türetilir (ayrı `customer_id` yok): bölge başka müşteriye
+ * taşınınca direkleri de gider. `code` (belediye envanter no) müşteri içinde
+ * benzersizdir — kontrol uygulamada (`lib/poleStore.ts`).
+ */
+export const poles = pgTable(
+  "poles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    zoneId: uuid("zone_id")
+      .notNull()
+      .references(() => zones.id, { onDelete: "cascade" }),
+    code: varchar("code", { length: 50 }).notNull(),
+    name: varchar("name", { length: 100 }),
+    // WGS84 ondalık derece; konumu henüz girilmemiş direkte NULL.
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    locationSource: varchar("location_source", { length: 10 }), // map | manual | gps | import
+    locationAccuracyM: real("location_accuracy_m"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("idx_poles_zone_code").on(t.zoneId, t.code)],
+);
+
 export const devices = pgTable("devices", {
   id: uuid("id").primaryKey().defaultRandom(),
   deviceId: varchar("device_id", { length: 100 }).notNull().unique(), // ESP32 tanımlayıcısı
@@ -181,6 +213,11 @@ export const devices = pgTable("devices", {
   // raporundaki `nodes` listesinden ya da cihaz health'indeki `gateway`
   // alanından dolar; gateway silinince NULL'lanır.
   gatewayId: varchar("gateway_id", { length: 100 }),
+  // Takılı olduğu direk. Bir direkte tek cihaz (UNIQUE; NULL'lar serbest).
+  // Direk ile cihaz aynı bölgede olmalı (lib/poleStore.ts); direk silinince NULL.
+  poleId: uuid("pole_id")
+    .unique()
+    .references(() => poles.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -402,6 +439,7 @@ export type AuthSessionRow = typeof authSessions.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type ZoneRow = typeof zones.$inferSelect;
 export type DeviceRow = typeof devices.$inferSelect;
+export type PoleRow = typeof poles.$inferSelect;
 export type GatewayRow = typeof gateways.$inferSelect;
 export type FixtureRow = typeof fixtures.$inferSelect;
 export type DeviceStatusRow = typeof deviceStatus.$inferSelect;

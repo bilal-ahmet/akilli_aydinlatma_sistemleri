@@ -51,12 +51,49 @@ export interface DeviceView {
   healthAt: string | null;
   /** Bağlı olduğu gateway (GW_ID); gateway raporundan ya da cihaz health'inden. */
   gatewayId: string | null;
+  /** Takılı olduğu direk (`poles.id`) ve direğin numarası; bağlı değilse null. */
+  poleId: string | null;
+  poleCode: string | null;
   /**
    * Cihaza bağlı lambalar (fixtures snapshot'ı, kanal sırasıyla). Toplu
    * seçimde cihaz/lamba durumu buradan okunur; yalnızca `GET /api/devices`
    * doldurur, tekil yanıtlarda boş gelir.
    */
   lamps: LampView[];
+}
+
+/**
+ * Direk (`poles` satırı + bölge + bağlı cihaz). Direğin lambaları bağlı
+ * cihazın `lamps`'ıdır; canlı durum `poles.ts → poleState` ile cihazdan türetilir.
+ */
+export interface PoleView {
+  id: string;
+  /** Belediye direk / envanter numarası (müşteri içinde benzersiz). */
+  code: string;
+  name: string | null;
+  zoneSlug: string;
+  zoneName: string;
+  /** WGS84; konumu girilmemişse ikisi de null. */
+  lat: number | null;
+  lng: number | null;
+  /** map | manual | gps | import */
+  locationSource: string | null;
+  locationAccuracyM: number | null;
+  notes: string | null;
+  /** Bağlı cihazın MAC'i; cihaz yoksa null. */
+  deviceId: string | null;
+}
+
+/** `POST /api/poles/import` önizleme/sonuç satırı. */
+export interface ImportResultRow {
+  line: number;
+  code: string;
+  action: "create" | "update" | "error";
+  zoneName: string | null;
+  hasLocation: boolean;
+  mac: string | null;
+  /** Hata sebepleri (" · " ile birleşik); hatasız satırda null. */
+  message: string | null;
 }
 
 /** Bir cihazın tek lambası (DALI kanalı) — `fixtures` satırının özeti. */

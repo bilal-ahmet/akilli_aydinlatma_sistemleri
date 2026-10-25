@@ -2,7 +2,8 @@ import "server-only";
 import { fail } from "@/lib/api/respond";
 import { getTenancy, type CustomerInfo } from "@/lib/tenancy";
 import { getScheduleRow } from "@/lib/scheduleStore";
-import type { ScheduleRow } from "@/lib/db/schema";
+import { getPoleWithOwner } from "@/lib/poleStore";
+import type { PoleRow, ScheduleRow } from "@/lib/db/schema";
 import { canWrite } from "./roles";
 import { readSession, type SessionUser } from "./session";
 
@@ -188,6 +189,33 @@ export async function authorizeSchedule(
     return fail("Zamanlama bulunamadı", 404);
   }
   return { user, customer, row };
+}
+
+/** Bozuk id Postgres'e gitmesin (uuid cast hatası 500 yerine 404). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Tek direk. Sahiplik DB'den (direğin bölgesinin müşterisi) okunur; direkler
+ * tenancy index'inde yok, komut yolunda da kullanılmaz. Başka müşterinin
+ * direği → 404.
+ */
+export async function authorizePole(
+  req: Request,
+  id: string,
+  need: Need,
+): Promise<(ScopeCtx & { row: PoleRow }) | Response> {
+  const user = await authorizeUser(req);
+  if (user instanceof Response) return user;
+  const denied = needCheck(user, need);
+  if (denied) return denied;
+
+  const hit = UUID_RE.test(id) ? await getPoleWithOwner(id) : null;
+  const customer = hit ? (await getTenancy()).customersById.get(hit.customerId) : undefined;
+  if (!hit || !customer) return fail("Direk bulunamadı", 404);
+  if (user.role !== "admin" && user.customerId !== customer.id) {
+    return fail("Direk bulunamadı", 404);
+  }
+  return { user, customer, row: hit.row };
 }
 
 /**

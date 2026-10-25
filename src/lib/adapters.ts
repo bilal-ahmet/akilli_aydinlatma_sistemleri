@@ -5,6 +5,7 @@ import type {
   FaultEventRow,
   UserRow,
   GatewayRow,
+  PoleRow,
 } from "@/lib/db/schema";
 import { gatewayTypeLabel, summarizeGateway } from "@/lib/gateways";
 import type { CustomerUser } from "@/types/admin";
@@ -19,6 +20,7 @@ import type {
   D4iRaw,
   FaultEvent,
   GatewayView,
+  PoleView,
 } from "@/app/_lib/types";
 
 /**
@@ -58,6 +60,8 @@ export function toDeviceView(row: {
   health?: Record<string, unknown> | null;
   healthAt?: Date | null;
   gatewayId?: string | null;
+  poleId?: string | null;
+  poleCode?: string | null;
   lamps?: DeviceView["lamps"];
 }): DeviceView {
   // Ham health mesajından yalnızca panelin kullandığı alanlar (şema dışı
@@ -84,7 +88,28 @@ export function toDeviceView(row: {
     ota: h?.ota ?? null,
     healthAt: row.healthAt ? row.healthAt.toISOString() : null,
     gatewayId: row.gatewayId ?? null,
+    poleId: row.poleId ?? null,
+    poleCode: row.poleCode ?? null,
     lamps: row.lamps ?? [],
+  };
+}
+
+/** `poles` satırını (+ bölge, bağlı cihaz MAC'i) panel görünümüne çevirir. */
+export function toPoleView(
+  row: PoleRow & { zoneSlug: string; zoneName: string; deviceId: string | null },
+): PoleView {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    zoneSlug: row.zoneSlug,
+    zoneName: row.zoneName,
+    lat: row.lat,
+    lng: row.lng,
+    locationSource: row.locationSource,
+    locationAccuracyM: row.locationAccuracyM,
+    notes: row.notes,
+    deviceId: row.deviceId,
   };
 }
 

@@ -22,6 +22,8 @@ const selectShape = {
   health: schema.devices.health,
   healthAt: schema.devices.healthAt,
   gatewayId: schema.devices.gatewayId,
+  poleId: schema.devices.poleId,
+  poleCode: schema.poles.code,
   zoneSlug: schema.zones.slug,
   zoneName: schema.zones.name,
 };
@@ -35,6 +37,7 @@ export async function GET(req: Request) {
       .select(selectShape)
       .from(schema.devices)
       .innerJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .leftJoin(schema.poles, eq(schema.devices.poleId, schema.poles.id))
       .where(eq(schema.zones.customerId, ctx.customer.id))
       .orderBy(asc(schema.devices.deviceId));
 
@@ -209,6 +212,7 @@ export async function POST(req: Request) {
       .select(selectShape)
       .from(schema.devices)
       .leftJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .leftJoin(schema.poles, eq(schema.devices.poleId, schema.poles.id))
       .where(eq(schema.devices.deviceId, mac))
       .limit(1);
     return ok(toDeviceView(row), { status: 201 });
