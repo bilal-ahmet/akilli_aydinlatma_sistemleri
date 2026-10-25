@@ -110,12 +110,13 @@ export function faultLabel(code: string, technical = true): string {
   return technical ? code : "Diğer arıza";
 }
 
-/** DALI durum baytı bitleri (IEC 62386 QUERY STATUS) — d4iHasFault ile aynı. */
+/** DALI durum baytı bitleri (IEC 62386 QUERY STATUS). */
 const STATUS_BIT_GEAR_FAILURE = 0x01;
 const STATUS_BIT_LAMP_FAILURE = 0x02;
 
 /**
- * Bir D4i raporunda O AN aktif olan arıza kodları.
+ * Bir D4i raporunda O AN aktif olan arıza kodları. Arıza geçmişi, lamba
+ * rozeti (`fixtures.status`) ve bölge durumu hep bu listeden karar verir.
  *
  * Sürücü/LED bayrakları `raw` üzerinden okunur: `d4iPeriodicSchema` bilinmeyen
  * alanları (arıza bayrakları ve sayaçları dahil) strip ettiği için parse

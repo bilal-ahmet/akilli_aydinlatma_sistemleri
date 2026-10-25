@@ -28,7 +28,6 @@ import {
   MAX_ARC_LEVEL,
   flagToBool,
   d4iIsOn,
-  d4iHasFault,
   deviceHealthSchema,
   gatewayUplinkSchema,
   isMaintenanceAction,
@@ -244,7 +243,9 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
   const rawLevel = d.status?.actual_level;
   const level = typeof rawLevel === "number" && rawLevel <= MAX_ARC_LEVEL ? rawLevel : undefined;
   const isOn = d4iIsOn(d);
-  const fault = d4iHasFault(d);
+  // Lamba rozeti, bölge durumu ve arıza geçmişi aynı listeden karar verir.
+  const faultCodes = activeFaultCodes(d, raw);
+  const fault = faultCodes.length > 0;
   const brightness = typeof level === "number" ? levelToPercent(level) : undefined;
 
   // 1) Lamba (fixture) snapshot'ı
@@ -297,7 +298,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
   await syncFaultEvents(
     mac,
     ch,
-    activeFaultCodes(d, raw).map((code) => ({ code })),
+    faultCodes.map((code) => ({ code })),
     now,
   );
 

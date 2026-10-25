@@ -171,8 +171,6 @@ export const d4iPeriodicSchema = z.object({
 export type D4iPeriodic = z.infer<typeof d4iPeriodicSchema>;
 
 /** DALI durum baytı bitleri (IEC 62386 QUERY STATUS). */
-const STATUS_BIT_GEAR_FAILURE = 0x01;
-const STATUS_BIT_LAMP_FAILURE = 0x02;
 const STATUS_BIT_LAMP_POWER_ON = 0x04;
 
 /** D4i raporundan lambanın açık olup olmadığını türetir (bilinmiyorsa undefined). */
@@ -187,18 +185,6 @@ export function d4iIsOn(d: D4iPeriodic): boolean | undefined {
     return s.actual_level > 0;
   }
   return undefined;
-}
-
-/** D4i raporunda arıza var mı: çevrimdışı, lamba arızası ya da sürücü arızası. */
-export function d4iHasFault(d: D4iPeriodic): boolean {
-  if (d.online === false) return true;
-  const s = d.status;
-  if (!s) return false;
-  if (flagToBool(s.lamp_failure) === true) return true;
-  if (typeof s.status === "number") {
-    return (s.status & (STATUS_BIT_GEAR_FAILURE | STATUS_BIT_LAMP_FAILURE)) !== 0;
-  }
-  return false;
 }
 
 // ── Komut yanıtı (ESP32 → Backend, aynı /data topic'i) ───────
