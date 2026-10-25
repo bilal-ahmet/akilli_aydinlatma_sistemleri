@@ -140,9 +140,11 @@ export function OpenAlertCard({
   showZone?: boolean;
 }) {
   const technical = useTechnical();
-  const { devices } = useLighting();
+  const { devices, poles } = useLighting();
+  const { customerSlug } = usePanel();
   const { openDevice } = useDialogs();
   const device = devices.find((d) => d.deviceId === alert.deviceId);
+  const pole = device?.poleId ? poles.find((p) => p.id === device.poleId && p.lat !== null) : undefined;
   const kindLabel =
     alert.kind === "command" ? (technical ? "Komut hatası" : "Komut uygulanamadı") : alert.warning ? "Uyarı" : "Arıza";
 
@@ -156,6 +158,14 @@ export function OpenAlertCard({
         <Badge tone={alert.warning ? "warn" : "bad"}>{kindLabel}</Badge>
         <CategoryChip category={alert.category} />
         <p className="min-w-0 flex-1 text-[15px] font-semibold text-text">{alert.title}</p>
+        {pole ? (
+          <Link
+            href={`/c/${customerSlug}/harita?direk=${pole.id}`}
+            className="btn-line h-[32px] px-3 text-[13px]"
+          >
+            Haritada göster
+          </Link>
+        ) : null}
         {device ? (
           <button type="button" onClick={() => openDevice(device)} className="btn-line h-[32px] px-3 text-[13px]">
             Cihaza git

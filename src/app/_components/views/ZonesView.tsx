@@ -21,6 +21,7 @@ import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
 import { EmptyBox, PageHeader, Pager, PlusIcon, StatCard, pageSlice } from "../PanelUi";
 import { PoleList } from "../PoleList";
+import { ZoneMapCard } from "../ZoneMapCard";
 import { SelectionQuickBar } from "../SelectionQuickBar";
 import { SelectionActionBar } from "../SelectionActionBar";
 import { DeviceTable } from "./DeviceTable";
@@ -348,6 +349,8 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           hint={lampHint}
         />
       </section>
+
+      <ZoneMapCard zone={zone} />
 
       <section aria-label="Arıza durumu" className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
