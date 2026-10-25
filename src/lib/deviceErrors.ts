@@ -4,7 +4,7 @@
  *
  * Firmware metinleri Türkçe ama ASCII (şapkasız/noktasız) ve kullanıcıya ham
  * haliyle pek bir şey anlatmıyor. Burada her metni koda, okunur bir başlığa,
- * sebebe ve — mümkünse — ne yapılacağına bağlıyoruz; dashboard bildirimleri ve
+ * ve sebebe bağlıyoruz; dashboard bildirimleri ve
  * cihaz rozeti bunu gösteriyor. Tanınmayan metin olduğu gibi geçer, yutulmaz.
  *
  * İki dil: teknik metin (admin + sunucu) ve müşteri kullanıcılarına sade metin
@@ -19,8 +19,6 @@ export interface DeviceErrorInfo {
   title: string;
   /** Neden oldu (ESP tablosundaki "Sebep" sütunu). */
   cause: string;
-  /** Kullanıcının atabileceği adım; her hata için anlamlı olmayabilir. */
-  hint?: string;
   /** Firmware'in gönderdiği ham metin — teşhis için korunur. */
   raw: string;
   /** Katalogda karşılığı bulundu mu? */
@@ -36,7 +34,7 @@ function normalize(raw: string): string {
 }
 
 /** Müşteriye gösterilen sade karşılık. */
-type Plain = Pick<DeviceErrorInfo, "title" | "cause" | "hint">;
+type Plain = Pick<DeviceErrorInfo, "title" | "cause">;
 
 type Entry = Omit<DeviceErrorInfo, "raw" | "known"> & { plain: Plain };
 
@@ -47,14 +45,12 @@ type Entry = Omit<DeviceErrorInfo, "raw" | "known"> & { plain: Plain };
 const PLAIN_PROTOCOL: Plain = {
   title: "Cihaz komutu işleyemedi",
   cause: "Cihaz, gönderilen komutu anlayamadı.",
-  hint: "Sorun sürerse teknik destek ile iletişime geçin.",
 };
 
 /** Katalogda karşılığı olmayan hata — müşteriye ham metin yerine bu. */
 const PLAIN_UNKNOWN: Plain = {
   title: "Cihaz komutu uygulayamadı",
   cause: "Cihaz komutu yerine getiremediğini bildirdi.",
-  hint: "Sorun sürerse teknik destek ile iletişime geçin.",
 };
 
 /** Birebir eşleşen metinler. */
@@ -63,7 +59,6 @@ const EXACT: Record<string, Entry> = {
     code: "invalid-json",
     title: "Komut okunamadı",
     cause: "Cihaz gelen mesajı JSON olarak ayrıştıramadı.",
-    hint: "Komut backend tarafından üretiliyor; tekrarlıyorsa payload'ı loglayın.",
     plain: PLAIN_PROTOCOL,
   },
   "action alani yok": {
@@ -82,33 +77,27 @@ const EXACT: Record<string, Entry> = {
     code: "unknown-action",
     title: "Bilinmeyen komut",
     cause: "Cihaz bu `action` değerini tanımıyor.",
-    hint: "Firmware sürümü dashboard'ın gönderdiği komutu desteklemiyor olabilir.",
     plain: {
       title: "Cihaz bu komutu desteklemiyor",
       cause: "Cihazın yazılımı bu komutu tanımıyor.",
-      hint: "Sorun sürerse teknik destek ile iletişime geçin.",
     },
   },
   "bu channel dali hattinda bulunamadi": {
     code: "channel-not-found",
     title: "Kanal DALI hattında yok",
     cause: "Komutun hedeflediği DALI adresinde bir sürücü bulunamadı.",
-    hint: "Lamba listesinden bu kanalı silin ya da adresi düzeltin.",
     plain: {
       title: "Lamba yanıt vermiyor",
       cause: "Komut gönderilen lamba cihazda bulunamadı.",
-      hint: "Lamba sökülmüş ya da arızalı olabilir. Sorun sürerse teknik destek ile iletişime geçin.",
     },
   },
   "chase efekti tum lambalari surer, channel gondermeyin": {
     code: "effect-no-channel",
     title: "Bu efekt tek lambaya verilemez",
     cause: "Çok lambalı efekte kanal gönderildi; efekt tüm hattı birlikte sürer.",
-    hint: "Efekti tek lamba yerine cihazın tamamına uygulayın.",
     plain: {
       title: "Bu efekt tek lambaya verilemez",
       cause: "Bu efekt cihazdaki tüm lambalarla birlikte çalışır.",
-      hint: "Efekti tek lamba yerine cihazın tamamına uygulayın.",
     },
   },
   // Bakım komutları (firmware 1.0.9+). Cihaz yeni açıldığında servisler
@@ -117,33 +106,27 @@ const EXACT: Record<string, Entry> = {
     code: "commission-not-ready",
     title: "Lamba taraması başlatılamadı",
     cause: "Cihazın DALI commissioning servisi henüz hazır değil (cihaz yeni açılmış olabilir).",
-    hint: "Birkaç saniye sonra tekrar deneyin.",
     plain: {
       title: "Lamba taraması başlatılamadı",
       cause: "Cihaz henüz hazır değil; yeni açılmış olabilir.",
-      hint: "Birkaç saniye sonra tekrar deneyin.",
     },
   },
   "ota servisi henuz hazir degil": {
     code: "ota-not-ready",
     title: "Güncelleme kontrolü başlatılamadı",
     cause: "Cihazın OTA servisi henüz hazır değil; cihaz ağa yeni bağlanıyor.",
-    hint: "Bir süre sonra tekrar deneyin. Cihaz ~5 dakikada bir kendisi de kontrol ediyor.",
     plain: {
       title: "Güncelleme kontrolü başlatılamadı",
       cause: "Cihaz ağa yeni bağlanıyor.",
-      hint: "Bir süre sonra tekrar deneyin.",
     },
   },
   "efekt baslatilamadi (bos slot yok veya bellek yetersiz)": {
     code: "effect-slots-full",
     title: "Efekt başlatılamadı",
     cause: "Cihazda boş efekt slotu kalmadı (aynı anda en fazla 4 kanal).",
-    hint: "Başka bir kanaldaki efekti durdurup tekrar deneyin.",
     plain: {
       title: "Efekt başlatılamadı",
       cause: "Bir cihazda aynı anda en fazla 4 lambada efekt çalışabilir.",
-      hint: "Başka bir lambadaki efekti durdurup tekrar deneyin.",
     },
   },
 };
@@ -167,11 +150,9 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => Entry }> = [
       code: "efekt-args",
       title: "Efekt komutu eksik",
       cause: `\`number\` (0-${m[1]}) eksik ya da \`channel\` aralık dışı (0-63).`,
-      hint: "Cihazın desteklemediği bir efekt numarası gönderilmiş olabilir.",
       plain: {
         title: "Efekt başlatılamadı",
         cause: "Cihaz bu efekti desteklemiyor olabilir.",
-        hint: "Sorun sürerse teknik destek ile iletişime geçin.",
       },
     }),
   },
@@ -190,11 +171,9 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => Entry }> = [
       code: "not-enough-lamps",
       title: "Efekt için yeterli lamba yok",
       cause: `Efekt en az ${m[1]} lamba istiyor, hatta ${m[2]} lamba var.`,
-      hint: "Bu efekti daha çok lambası olan bir cihazda kullanın.",
       plain: {
         title: "Efekt için yeterli lamba yok",
         cause: `Bu efekt en az ${m[1]} lamba ister, cihazda ${m[2]} lamba var.`,
-        hint: "Bu efekti daha çok lambası olan bir cihazda kullanın.",
       },
     }),
   },

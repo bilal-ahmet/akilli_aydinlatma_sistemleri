@@ -20,8 +20,6 @@ export interface AlertItem {
   title: string;
   /** Ne oluyor: lamba arızasında katalog açıklaması, komut hatasında sebep. */
   cause: string | null;
-  /** Önerilen adım (katalogda varsa). */
-  hint: string | null;
   deviceId: string;
   deviceName: string | null;
   zoneSlug: string | null;
@@ -46,7 +44,6 @@ export function openAlerts(
       warning: isWarningCode(f.code),
       title: faultLabel(f.code, technical),
       cause: text?.what ?? null,
-      hint: text?.hint ?? null,
       deviceId: f.deviceId,
       deviceName: f.deviceName,
       zoneSlug: f.zoneSlug,
@@ -66,7 +63,6 @@ export function openAlerts(
       warning: false,
       title: info.title,
       cause: info.cause,
-      hint: info.hint ?? null,
       deviceId: d.deviceId,
       deviceName: d.name,
       zoneSlug: d.zoneSlug,

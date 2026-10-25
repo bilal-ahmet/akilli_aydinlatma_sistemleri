@@ -399,8 +399,10 @@ cihaza giden en son bekleyen komut `failed` olur.
 > `ota_check`) rozete / `fault_events`'e YAZILMAZ; SSE'ye `kind:"maintenance"`
 > olarak gider ve yalnızca Bakım sekmesinde gösterilir (`ErrorToasts` atlar).
 
-Ham metinler `src/lib/deviceErrors.ts` kataloğunda okunur başlık + sebep +
-ipucuna çevrilir (`describeDeviceError`); UI ham metin yerine bunu gösterir.
+Ham metinler `src/lib/deviceErrors.ts` kataloğunda okunur başlık + sebebe
+çevrilir (`describeDeviceError`); UI ham metin yerine bunu gösterir. "Ne
+yapılmalı" ipucu bilinçli olarak YOK — arıza ve hata ekranları yalnızca durumu
+gösterir.
 Sayı taşıyan metinler (`bu efekt en az N lamba ister…`, efekt aralığı) regex ile
 eşleşir, böylece firmware sınırları değişince katalog bozulmaz. **Tanınmayan
 metin yutulmaz**, `known:false` ile ham haliyle gösterilir. Tam tablo:
@@ -628,7 +630,7 @@ GET /api/faults?zone=<slug> → yalnızca o bölge (days ile birlikte de kullan�
 ```
 
 Arıza kaydının kategorisi (`faultCategory`: bağlantı / lamba / sürücü / LED /
-komut), açıklaması ve önerilen adımı (`faultDescription`, teknik + sade) ve
+komut), durum açıklaması (`faultDescription`, teknik + sade; ipucu yok) ve
 uyarı mı arıza mı (`isWarningCode`) `lib/faults.ts`'te; `openAlerts` bunları
 `AlertItem`'a koyar. Arızalar sayfası ve bölge detayı aynı kartları kullanır
 (`_components/FaultItems.tsx`). Lamba rozeti (`fixtures.status`) ve bölge

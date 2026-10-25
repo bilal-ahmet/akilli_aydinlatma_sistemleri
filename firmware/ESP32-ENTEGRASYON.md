@@ -206,7 +206,7 @@ Eski firmware'ler / geçersiz JSON yanıtı `action` ve `id` taşımaz:
 | `ota servisi henuz hazir degil` | Cihaz ağa yeni bağlanıyor | `ota-not-ready` |
 
 Kod sütunu `src/lib/deviceErrors.ts` kataloğundan gelir: her metin okunur bir
-başlık + sebep + ipucuna çevrilir, dashboard bunu gösterir. **Tanınmayan metin
+başlık + sebebe çevrilir, dashboard bunu gösterir. **Tanınmayan metin
 yutulmaz**, olduğu gibi gösterilir — firmware yeni bir hata eklerse görürsünüz.
 
 Hata dashboard'da bildirim olarak çıkar ve cihaz kartında rozet olarak kalır

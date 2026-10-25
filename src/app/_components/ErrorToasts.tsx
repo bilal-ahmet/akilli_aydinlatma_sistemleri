@@ -87,9 +87,6 @@ export function ErrorToasts() {
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-danger">{t.info.title}</p>
             <p className="mt-0.5 text-sm break-words text-text">{t.info.cause}</p>
-            {t.info.hint ? (
-              <p className="mt-1 text-[11px] break-words text-muted">{t.info.hint}</p>
-            ) : null}
             {technical ? (
               <p className="mt-1 flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-muted">
                 {t.deviceId ? <span>{formatMac(t.deviceId)}</span> : null}

@@ -20,7 +20,7 @@ import { useDialogs } from "./PanelDialogs";
 /**
  * Arıza kayıtlarının ortak görünümü — Arızalar sayfası ve bölge detayı aynı
  * kartları kullanır. Her kayıtta: tür (arıza/uyarı/komut) + parça kategorisi,
- * başlık, ne olduğu, ne yapılmalı ve etiketli konum (bölge · cihaz · lamba).
+ * başlık, ne olduğu ve etiketli konum (bölge · cihaz · lamba).
  */
 
 /** "26 Eylül, 22:14" */
@@ -120,15 +120,6 @@ function Location({
   );
 }
 
-function Hint({ text }: { text: string }) {
-  return (
-    <p className="text-[12.5px] text-ink-2">
-      <span className="font-semibold text-text">Ne yapılmalı: </span>
-      {text}
-    </p>
-  );
-}
-
 /** Bugün başladıysa yalnızca saat, değilse tarih + saat. */
 function formatStart(iso: string, now: number | null): string {
   const d = new Date(iso);
@@ -172,12 +163,7 @@ export function OpenAlertCard({
         ) : null}
       </div>
 
-      {alert.cause || alert.hint ? (
-        <div className="flex flex-col gap-1">
-          {alert.cause ? <p className="text-[13.5px] text-ink-2">{alert.cause}</p> : null}
-          {alert.hint ? <Hint text={alert.hint} /> : null}
-        </div>
-      ) : null}
+      {alert.cause ? <p className="text-[13.5px] text-ink-2">{alert.cause}</p> : null}
 
       <div className="flex flex-col gap-1.5 border-t border-border pt-3">
         <Location {...alert} showZone={showZone} />

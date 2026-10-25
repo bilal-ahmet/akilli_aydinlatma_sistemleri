@@ -385,7 +385,6 @@ function Result({ phase, accepted }: { phase: Phase; accepted: string }) {
       <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
         <p className="font-semibold">{phase.info.title}</p>
         <p className="mt-0.5">{phase.info.cause}</p>
-        {phase.info.hint ? <p className="mt-1 text-muted">{phase.info.hint}</p> : null}
       </div>
     );
   }
