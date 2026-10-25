@@ -14,11 +14,13 @@ import { openAlerts } from "@/app/_lib/alerts";
 import { effectByNumber } from "@/lib/effects";
 import { formatInt } from "@/app/_lib/format";
 import { emptySelection, lampOn, pruneSelection, type Selection } from "@/app/_lib/selection";
+import { poleStateResolver, zonePoleCount } from "@/app/_lib/poles";
 import { OpenAlertCard, ResolvedFaultRows } from "../FaultItems";
 import { Toggle } from "../Toggle";
 import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
 import { EmptyBox, PageHeader, Pager, PlusIcon, StatCard, pageSlice } from "../PanelUi";
+import { PoleList } from "../PoleList";
 import { SelectionQuickBar } from "../SelectionQuickBar";
 import { SelectionActionBar } from "../SelectionActionBar";
 import { DeviceTable } from "./DeviceTable";
@@ -36,7 +38,8 @@ function lampTotal(devices: DeviceView[]): number {
 
 /**
  * Envanter kutusu: "çalışan / toplam" + oran çubuğu + kısa açıklama. Çubuk
- * çalışmayan pay varsa dikkat rengine döner.
+ * çalışmayan pay varsa dikkat rengine döner. `active` verilmezse yalnızca
+ * toplam yazılır (ölçülemeyen sayı, örn. elle girilmiş direk sayısı).
  */
 function CountTile({
   label,
@@ -46,21 +49,21 @@ function CountTile({
   alert,
 }: {
   label: string;
-  active: number;
+  active?: number;
   total: number;
   hint: string;
   /** Sorun var (bağlantısız cihaz, arızalı lamba) — sayı ve alt satır kırmızı. */
   alert?: boolean;
 }) {
-  const pct = total > 0 ? Math.round((active / total) * 100) : 0;
+  const pct = active !== undefined && total > 0 ? Math.round((active / total) * 100) : 0;
   return (
     <div className="stat-card flex flex-col gap-2">
       <p className="text-[13px] text-muted">{label}</p>
       <p className="flex items-baseline gap-1">
         <span className="text-[28px] font-bold leading-none tracking-[-0.02em] tabular-nums text-text">
-          {formatInt(active)}
+          {formatInt(active ?? total)}
         </span>
-        <span className="text-base text-muted">/ {formatInt(total)}</span>
+        {active !== undefined ? <span className="text-base text-muted">/ {formatInt(total)}</span> : null}
       </p>
       <span className="h-1 overflow-hidden rounded-sm bg-track" aria-hidden>
         <span
@@ -82,7 +85,7 @@ function zoneDot(zone: Zone, faulty: boolean): string {
 
 /** Soldaki bölge listesi (geniş ekran) / yatay şerit (dar ekran). */
 function ZoneList({ selected }: { selected: string | null }) {
-  const { zones, faultsByZone } = useLighting();
+  const { zones, faultsByZone, poles } = useLighting();
   const { customerSlug, canWrite } = usePanel();
   const { openZoneForm } = useDialogs();
   const router = useRouter();
@@ -127,7 +130,11 @@ function ZoneList({ selected }: { selected: string | null }) {
                 <span aria-hidden className={`h-[7px] w-[7px] shrink-0 rounded-full ${zoneDot(z, faulty)}`} />
               </span>
               <span className="truncate text-[12.5px] text-muted">
-                {zoneMeta(z, stats(z.id).devices.length, lampTotal(stats(z.id).devices))}
+                {zoneMeta(z, {
+                  devices: stats(z.id).devices.length,
+                  lamps: lampTotal(stats(z.id).devices),
+                  poles: zonePoleCount(z, poles),
+                })}
               </span>
               <span className="flex items-center gap-2.5">
                 <span className="h-1 flex-1 overflow-hidden rounded-sm bg-track">
@@ -150,7 +157,7 @@ function ZoneList({ selected }: { selected: string | null }) {
 
 function ZoneDetail({ zone }: { zone: Zone }) {
   const technical = useTechnical();
-  const { toggleZone, setZoneBrightness, faults, devices: allDevices } = useLighting();
+  const { toggleZone, setZoneBrightness, faults, faultsByDevice, poles, devices: allDevices } = useLighting();
   const { customerSlug, canWrite } = usePanel();
   const { openZoneForm, confirmDeleteZone, openZoneEffects, openDeviceForm } = useDialogs();
   const router = useRouter();
@@ -170,8 +177,22 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   // Süren sorunlar (lamba arızası + komut hatası) — Arızalar sayfasıyla aynı liste.
   const alerts = openAlerts(faults, allDevices, technical).filter((a) => a.zoneSlug === zone.id);
 
-  // Envanter: direk (bölge açıksa hepsi), bağlı cihaz, yanan lamba.
-  const lit = isLit(zone);
+  // Envanter: yanan direk (kayıtlı direklerin cihazlarından), bağlı cihaz, yanan lamba.
+  const zonePoles = poles.filter((p) => p.zoneSlug === zone.id);
+  const stateOf = poleStateResolver(allDevices, faultsByDevice, now);
+  const poleStates = zonePoles.map(stateOf);
+  const countState = (s: string) => poleStates.filter((x) => x === s).length;
+  const polesOn = countState("on");
+  const poleProblems = countState("fault") + countState("offline");
+  const poleHint =
+    [
+      countState("fault") > 0 ? `${countState("fault")} arızalı` : null,
+      countState("offline") > 0 ? `${countState("offline")} bağlantısız` : null,
+      countState("off") > 0 ? `${countState("off")} kapalı` : null,
+      countState("no_device") > 0 ? `${countState("no_device")} direkte cihaz yok` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Hepsi yanıyor";
   const lampsTotal = lampTotal(devices);
   const lampsLit = devices.reduce((n, d) => n + d.lamps.filter(lampOn).length, 0);
   const faultyLamps = new Set(
@@ -287,18 +308,22 @@ function ZoneDetail({ zone }: { zone: Zone }) {
 
       <section aria-label="Bölge envanteri" className="grid gap-4 sm:grid-cols-3">
         <CountTile
-          label="Aktif direk"
-          active={lit ? zone.poleCount : 0}
-          total={zone.poleCount}
-          hint={
-            zone.poleCount === 0
-              ? canWrite
-                ? "Direk sayısı girilmemiş — “Düzenle”den ekleyin"
-                : "Direk sayısı girilmemiş"
-              : lit
-                ? "Bölge açık, direklerin hepsi yanıyor"
-                : "Bölge kapalı"
-          }
+          {...(zonePoles.length > 0
+            ? {
+                label: "Yanan direk",
+                active: polesOn,
+                total: zonePoles.length,
+                alert: poleProblems > 0,
+                hint: now === null ? "…" : poleHint,
+              }
+            : {
+                // Direkler kaydedilene kadar: elle girilen sayı, durum iddiası yok.
+                label: "Direk",
+                total: zone.poleCount,
+                hint: canWrite
+                  ? "Direkler henüz kaydedilmedi — aşağıdan ekleyin"
+                  : "Direkler henüz kaydedilmedi",
+              })}
         />
         <CountTile
           label="Bağlı cihaz"
@@ -369,6 +394,8 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           hint={load ? "LED'e giden güç" : noData}
         />
       </div>
+
+      <PoleList zone={zone} />
 
       <section className="flex flex-col overflow-hidden rounded-2xl border border-border bg-panel">
         <div className="flex items-center justify-between gap-2 px-[22px] py-[18px]">

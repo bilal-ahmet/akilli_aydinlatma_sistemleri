@@ -1,7 +1,4 @@
-import type { Zone, SystemSummary } from "./types";
-
-/** Tek bir direğin tam güçte (100%) yaklaşık tüketimi (kW). */
-export const KW_PER_POLE_AT_FULL = 0.12;
+import type { Zone } from "./types";
 
 export const initialZones: Zone[] = [
   {
@@ -78,12 +75,6 @@ export const initialZones: Zone[] = [
   },
 ];
 
-/** Bir zonun anlık güç tüketimi (kW): açıksa direk × şiddet × katsayı. */
-export function zonePowerKw(zone: Zone): number {
-  if (!zone.isOn) return 0;
-  return zone.poleCount * (zone.brightness / 100) * KW_PER_POLE_AT_FULL;
-}
-
 /**
  * Bölge şu an gerçekten ışık veriyor mu? `dim 0` bölgeyi "açık, %0" bırakır
  * (komut semantiği: dim = aç) ama cihaz söner — görünümler bunu kapalı
@@ -91,27 +82,4 @@ export function zonePowerKw(zone: Zone): number {
  */
 export function isLit(zone: Pick<Zone, "isOn" | "brightness" | "activeFx">): boolean {
   return zone.isOn && (zone.brightness > 0 || zone.activeFx != null);
-}
-
-/** Özet metrikler zon durumundan türetilir; sabit değildir. */
-export function summarize(zones: Zone[]): SystemSummary {
-  let totalPoles = 0;
-  let polesOn = 0;
-  let powerKw = 0;
-  let alerts = 0;
-
-  for (const zone of zones) {
-    totalPoles += zone.poleCount;
-    if (isLit(zone)) polesOn += zone.poleCount;
-    powerKw += zonePowerKw(zone);
-    if (zone.status !== "ok") alerts += 1;
-  }
-
-  return {
-    totalPoles,
-    polesOn,
-    polesOff: totalPoles - polesOn,
-    powerKw,
-    alerts,
-  };
 }

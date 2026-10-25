@@ -121,13 +121,19 @@ export function aggregateMeasures(measures: (DeviceMeasure | undefined)[]): Devi
   };
 }
 
-/** "Gebze · Osman Yılmaz · 2 direk · 4 cihaz · 9 lamba" */
-export function zoneMeta(zone: Zone, deviceCount: number, lampCount?: number): string {
+/**
+ * "Gebze · Osman Yılmaz · 2 direk · 4 cihaz · 9 lamba". `poles`: kayıtlı direk
+ * sayısı (`poles.ts → zonePoleCount`); verilmezse bölgeye elle girilen sayı.
+ */
+export function zoneMeta(
+  zone: Zone,
+  counts: { devices: number; lamps?: number; poles?: number },
+): string {
   const parts = [
     zone.district,
-    `${zone.poleCount} direk`,
-    `${deviceCount} cihaz`,
-    lampCount !== undefined ? `${lampCount} lamba` : null,
+    `${counts.poles ?? zone.poleCount} direk`,
+    `${counts.devices} cihaz`,
+    counts.lamps !== undefined ? `${counts.lamps} lamba` : null,
   ];
   return parts.filter(Boolean).join(" · ");
 }

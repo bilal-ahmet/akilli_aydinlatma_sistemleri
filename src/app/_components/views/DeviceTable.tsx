@@ -268,6 +268,9 @@ export function DeviceTable({
                         className="cursor-pointer whitespace-nowrap text-left font-semibold text-text transition-colors hover:text-accent"
                       >
                         {title}
+                        {d.poleCode ? (
+                          <span className="ml-1.5 text-xs font-normal text-muted">Direk {d.poleCode}</span>
+                        ) : null}
                       </button>
                       {multiLamp || faults?.length || d.lastError || (m && full) ? (
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

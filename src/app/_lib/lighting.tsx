@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DeviceView, LampView, LiveSummary, OpenFault, Zone, ZoneStatus } from "./types";
+import type { DeviceView, LampView, LiveSummary, OpenFault, PoleView, Zone, ZoneStatus } from "./types";
+import type { PoleLocationSource } from "@/types/lighting";
 import { runsGroupEffect, type CommandTargets, type LampRef } from "./selection";
 import type { Action, LiveEvent } from "@/types/lighting";
 import { useLiveStatus } from "./useLiveStatus";
@@ -129,6 +130,20 @@ export interface DeviceValues {
   name?: string;
 }
 
+/** Direk formu / harita / içe aktarma → API. `deviceMac: ""` bağı kaldırır. */
+export interface PoleValues {
+  zoneSlug: string;
+  code: string;
+  name?: string;
+  lat: number | null;
+  lng: number | null;
+  locationSource?: PoleLocationSource;
+  /** GPS doğruluğu (m). */
+  locationAccuracyM?: number | null;
+  notes?: string;
+  deviceMac?: string;
+}
+
 /**
  * Efekt hedefi: müşterinin tüm sistemi ya da seçili bölgeler (slug), cihazlar
  * (MAC, tüm lambaları) ve tek lambalar (MAC + kanal). Bölgenin tamamı
@@ -150,6 +165,9 @@ interface LightingValue {
   faults: OpenFault[];
   faultsByZone: Map<string, OpenFault[]>;
   faultsByDevice: Map<string, OpenFault[]>;
+  /** Müşterinin direkleri (konum + bağlı cihaz). */
+  poles: PoleView[];
+  polesLoading: boolean;
   /** "Tüm Sistem" aç/kapa ve şiddeti — bölgelerden TÜRETİLMEZ (bkz. provider). */
   masterOn: boolean;
   masterBrightness: number;
@@ -170,8 +188,17 @@ interface LightingValue {
   deleteZone: (id: string) => Promise<void>;
   createDevice: (values: DeviceValues) => Promise<DeviceView>;
   /** `values.mac` farklıysa MAC düzeltilir; döner: cihazın (yeni) MAC'i. */
-  updateDevice: (mac: string, values: { zoneSlug: string; name: string; mac?: string }) => Promise<string>;
+  updateDevice: (
+    mac: string,
+    values: { zoneSlug: string; name: string; mac?: string; poleId?: string },
+  ) => Promise<string>;
   deleteDevice: (mac: string) => Promise<void>;
+  createPole: (values: PoleValues) => Promise<PoleView>;
+  /** Kısmi güncelleme (örn. yalnızca konum); döner: güncel direk. */
+  updatePole: (id: string, values: Partial<PoleValues>) => Promise<PoleView>;
+  deletePole: (id: string) => Promise<void>;
+  /** İçe aktarma sonrası: direkleri ve (bağlar değiştiği için) cihazları yeniden oku. */
+  reloadPoles: () => void;
 }
 
 const LightingContext = createContext<LightingValue | null>(null);
@@ -189,6 +216,8 @@ export function LightingProvider({
   const [devicesLoading, setDevicesLoading] = useState(true);
   const [live, setLive] = useState<LiveSummary | null>(null);
   const [faults, setFaults] = useState<OpenFault[]>([]);
+  const [poles, setPoles] = useState<PoleView[]>([]);
+  const [polesLoading, setPolesLoading] = useState(true);
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Master (Tüm Sistem) slider'ı BAĞIMSIZ state'tir — bölge ortalamasından
@@ -285,11 +314,22 @@ export function LightingProvider({
       .finally(() => setDevicesLoading(false));
   }, [api]);
 
+  const loadPoles = useCallback(() => {
+    fetch(api("/api/poles"))
+      .then((r) => r.json())
+      .then((j) => {
+        if (Array.isArray(j.data)) setPoles(j.data as PoleView[]);
+      })
+      .catch(() => {})
+      .finally(() => setPolesLoading(false));
+  }, [api]);
+
   useEffect(() => {
     loadLive();
     loadFaults();
     loadDevices();
-  }, [loadLive, loadFaults, loadDevices]);
+    loadPoles();
+  }, [loadLive, loadFaults, loadDevices, loadPoles]);
 
   /**
    * SSE kaçarsa ekran bayat kalmasın.
@@ -302,6 +342,8 @@ export function LightingProvider({
   const reconcile = useCallback(() => {
     loadLive();
     loadFaults();
+    // Direkler komutla değişmez (kayıt verisi); başka kullanıcının düzenlemesi gelsin.
+    loadPoles();
     // Cihaz listesi lamba snapshot'ı (komutla optimistic değişen açık/şiddet/
     // efekt) taşır; bölgelerle aynı koruma: uçuşta ya da az önce komut varsa atla.
     if (pendingRef.current.size > 0) return;
@@ -313,7 +355,7 @@ export function LightingProvider({
         if (Array.isArray(j.data)) setZones(j.data as Zone[]);
       })
       .catch(() => {});
-  }, [api, loadLive, loadFaults, loadDevices]);
+  }, [api, loadLive, loadFaults, loadDevices, loadPoles]);
   useReconcile(reconcile);
 
   /**
@@ -809,10 +851,12 @@ export function LightingProvider({
     if (data.movedTo) {
       setZones((zs) => zs.filter((z) => z.id !== data.id));
       setDevices((ds) => ds.filter((d) => d.zoneSlug !== data.id));
+      setPoles((ps) => ps.filter((p) => p.zoneSlug !== data.id));
       return;
     }
     setZones((zs) => zs.map((z) => (z.id === data.id ? data : z)));
     setDevices((ds) => ds.map((d) => (d.zoneSlug === data.id ? { ...d, zoneName: data.name } : d)));
+    setPoles((ps) => ps.map((p) => (p.zoneSlug === data.id ? { ...p, zoneName: data.name } : p)));
   }
 
   async function deleteZone(id: string) {
@@ -821,6 +865,7 @@ export function LightingProvider({
     setZones((zs) => zs.filter((z) => z.id !== id));
     setDevices((ds) => ds.filter((d) => d.zoneSlug !== id));
     setFaults((fs) => fs.filter((f) => f.zoneSlug !== id));
+    setPoles((ps) => ps.filter((p) => p.zoneSlug !== id));
   }
 
   // ── Cihaz CRUD ─────────────────────────────────────────────
@@ -835,7 +880,10 @@ export function LightingProvider({
     return device;
   }
 
-  async function updateDevice(mac: string, values: { zoneSlug: string; name: string; mac?: string }) {
+  async function updateDevice(
+    mac: string,
+    values: { zoneSlug: string; name: string; mac?: string; poleId?: string },
+  ) {
     const res = await fetch(api(`/api/devices/${mac}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -843,9 +891,20 @@ export function LightingProvider({
         zoneSlug: values.zoneSlug,
         name: values.name.trim(),
         ...(values.mac !== undefined ? { mac: values.mac } : {}),
+        ...(values.poleId !== undefined ? { poleId: values.poleId } : {}),
       }),
     });
     const patch = await readJson<DeviceView>(res, "Hata");
+    // Direk tarafındaki bağ: eski direk boşalır, yeni direk bu cihazı gösterir.
+    setPoles((ps) =>
+      ps.map((p) =>
+        p.id === patch.poleId
+          ? { ...p, deviceId: patch.deviceId }
+          : p.deviceId === mac
+            ? { ...p, deviceId: null }
+            : p,
+      ),
+    );
     // MAC düzeltildi: lambalar, ölçümler ve arızalar yeni MAC'e taşındı (ve
     // yeni MAC'in önceden gelen verisiyle birleşti) — listeyi sunucudan oku.
     if (patch.deviceId !== mac) {
@@ -860,7 +919,14 @@ export function LightingProvider({
     setDevices((ds) =>
       ds.map((d) =>
         d.deviceId === mac
-          ? { ...d, name: patch.name, zoneSlug: patch.zoneSlug, zoneName: patch.zoneName }
+          ? {
+              ...d,
+              name: patch.name,
+              zoneSlug: patch.zoneSlug,
+              zoneName: patch.zoneName,
+              poleId: patch.poleId,
+              poleCode: patch.poleCode,
+            }
           : d,
       ),
     );
@@ -872,6 +938,57 @@ export function LightingProvider({
     if (!res.ok) throw new Error("Cihaz silinemedi");
     setDevices((ds) => ds.filter((d) => d.deviceId !== mac));
     setFaults((fs) => fs.filter((f) => f.deviceId !== mac));
+    setPoles((ps) => ps.map((p) => (p.deviceId === mac ? { ...p, deviceId: null } : p)));
+  }
+
+  // ── Direk CRUD ─────────────────────────────────────────────
+  /** Direğin cihaz bağını cihaz listesine yansıtır (bir direkte tek cihaz). */
+  function syncDevicePole(pole: PoleView) {
+    setDevices((ds) =>
+      ds.map((d) =>
+        d.deviceId === pole.deviceId
+          ? { ...d, poleId: pole.id, poleCode: pole.code }
+          : d.poleId === pole.id
+            ? { ...d, poleId: null, poleCode: null }
+            : d,
+      ),
+    );
+  }
+
+  async function createPole(values: PoleValues): Promise<PoleView> {
+    const res = await fetch(api("/api/poles"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    const pole = await readJson<PoleView>(res, "Direk oluşturulamadı");
+    setPoles((ps) => [...ps, pole]);
+    syncDevicePole(pole);
+    return pole;
+  }
+
+  async function updatePole(id: string, values: Partial<PoleValues>): Promise<PoleView> {
+    const res = await fetch(api(`/api/poles/${id}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+    const pole = await readJson<PoleView>(res, "Direk güncellenemedi");
+    setPoles((ps) => ps.map((p) => (p.id === id ? pole : p)));
+    syncDevicePole(pole);
+    return pole;
+  }
+
+  async function deletePole(id: string) {
+    const res = await fetch(api(`/api/poles/${id}`), { method: "DELETE" });
+    if (!res.ok) throw new Error("Direk silinemedi");
+    setPoles((ps) => ps.filter((p) => p.id !== id));
+    setDevices((ds) => ds.map((d) => (d.poleId === id ? { ...d, poleId: null, poleCode: null } : d)));
+  }
+
+  function reloadPoles() {
+    loadPoles();
+    loadDevices();
   }
 
   const value: LightingValue = {
@@ -882,6 +999,8 @@ export function LightingProvider({
     faults,
     faultsByZone,
     faultsByDevice,
+    poles,
+    polesLoading,
     masterOn,
     masterBrightness,
     toggleZone,
@@ -898,6 +1017,10 @@ export function LightingProvider({
     createDevice,
     updateDevice,
     deleteDevice,
+    createPole,
+    updatePole,
+    deletePole,
+    reloadPoles,
   };
 
   return <LightingContext.Provider value={value}>{children}</LightingContext.Provider>;

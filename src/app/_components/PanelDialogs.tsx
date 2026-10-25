@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import type { DeviceView, ScheduleView, Zone } from "@/app/_lib/types";
+import type { DeviceView, PoleView, ScheduleView, Zone } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useTechnical } from "@/app/_lib/panel";
 import { formatMac } from "@/lib/mac";
@@ -9,6 +9,8 @@ import { deviceName } from "@/app/_lib/format";
 import { Modal } from "./Modal";
 import { ZoneDialog } from "./ZoneForm";
 import { DeviceDialog } from "./DeviceForm";
+import { PoleDialog } from "./PoleForm";
+import { PoleImportDialog } from "./PoleImport";
 import { DeviceControlModal } from "./DeviceControlModal";
 import { EffectPicker } from "./EffectPicker";
 import { ScheduleDialog, type SchedulePrefill } from "./ScheduleForm";
@@ -26,7 +28,18 @@ type Dialog =
   | { kind: "device-form"; mac?: string; zoneSlug?: string }
   | { kind: "device-delete"; mac: string }
   | { kind: "device-control"; mac: string }
+  | ({ kind: "pole-form"; poleId?: string } & PoleOpts)
+  | { kind: "pole-delete"; poleId: string }
+  | { kind: "pole-import"; zoneSlug?: string }
   | ({ kind: "schedule-form" } & ScheduleOpts);
+
+export interface PoleOpts {
+  /** Yeni direkte önceden seçili bölge. */
+  zoneSlug?: string;
+  /** Haritaya tıklanarak açıldıysa konum. */
+  location?: { lat: number; lng: number };
+  onSaved?: (pole: PoleView) => void;
+}
 
 export interface ScheduleOpts {
   /** Düzenlenecek zamanlama; yoksa yeni. */
@@ -43,6 +56,9 @@ interface DialogsValue {
   openDeviceForm: (opts?: { device?: DeviceView; zoneSlug?: string }) => void;
   confirmDeleteDevice: (device: DeviceView) => void;
   openDevice: (device: DeviceView) => void;
+  openPoleForm: (pole?: PoleView, opts?: PoleOpts) => void;
+  confirmDeletePole: (pole: PoleView) => void;
+  openPoleImport: (zoneSlug?: string) => void;
   openSchedule: (opts?: ScheduleOpts) => void;
 }
 
@@ -64,6 +80,9 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
       open({ kind: "device-form", mac: opts?.device?.deviceId, zoneSlug: opts?.zoneSlug }),
     confirmDeleteDevice: (device) => open({ kind: "device-delete", mac: device.deviceId }),
     openDevice: (device) => open({ kind: "device-control", mac: device.deviceId }),
+    openPoleForm: (pole, opts) => open({ kind: "pole-form", poleId: pole?.id, ...opts }),
+    confirmDeletePole: (pole) => open({ kind: "pole-delete", poleId: pole.id }),
+    openPoleImport: (zoneSlug) => open({ kind: "pole-import", zoneSlug }),
     openSchedule: (opts) => open({ kind: "schedule-form", ...opts }),
   };
 
@@ -83,7 +102,9 @@ export function useDialogs(): DialogsValue {
 
 function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void }) {
   const lighting = useLighting();
-  const { zones, devices } = lighting;
+  const { zones, devices, poles } = lighting;
+  const pole =
+    "poleId" in dialog && dialog.poleId ? poles.find((p) => p.id === dialog.poleId) : undefined;
   const zone =
     "zoneId" in dialog && dialog.zoneId ? zones.find((z) => z.id === dialog.zoneId) : undefined;
   const device =
@@ -124,6 +145,31 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
 
     case "device-delete":
       return device ? <DeleteDevice device={device} onClose={onClose} /> : null;
+
+    case "pole-form":
+      if (dialog.poleId && !pole) return null;
+      return (
+        <PoleDialog
+          pole={pole}
+          zoneSlug={dialog.zoneSlug}
+          initialLocation={dialog.location}
+          onSaved={dialog.onSaved}
+          onClose={onClose}
+        />
+      );
+
+    case "pole-import":
+      return <PoleImportDialog zoneSlug={dialog.zoneSlug} onClose={onClose} />;
+
+    case "pole-delete":
+      return pole ? (
+        <ConfirmDelete title="Direği sil" onClose={onClose} onConfirm={() => lighting.deletePole(pole.id)}>
+          <p>
+            <span className="font-semibold text-text">{pole.code}</span> direği ve konumu silinecek.
+            {pole.deviceId ? " Direkteki cihaz silinmez, yalnızca direkten ayrılır." : ""}
+          </p>
+        </ConfirmDelete>
+      ) : null;
 
     case "schedule-form":
       return (
@@ -216,9 +262,13 @@ function DeleteZone({
   onClose: () => void;
   onDeleted?: () => void;
 }) {
-  const { devices, deleteZone } = useLighting();
+  const { devices, poles, deleteZone } = useLighting();
   const technical = useTechnical();
   const count = devices.filter((d) => d.zoneSlug === zone.id).length;
+  const poleCount = poles.filter((p) => p.zoneSlug === zone.id).length;
+  const parts = [count > 0 ? `bağlı ${count} cihazın kayıtları` : null, poleCount > 0 ? `${poleCount} direk` : null]
+    .filter(Boolean)
+    .join(" ve ");
   return (
     <ConfirmDelete
       title="Bölgeyi sil"
@@ -230,7 +280,7 @@ function DeleteZone({
     >
       <p>
         <span className="font-semibold text-text">{zone.name}</span> bölgesi
-        {count > 0 ? ` ve bağlı ${count} cihazın kayıtları` : ""} kalıcı olarak silinecek.
+        {parts ? ` ile ${parts}` : ""} kalıcı olarak silinecek.
       </p>
       {technical ? (
         <p className="mt-2 text-[13px] text-muted">

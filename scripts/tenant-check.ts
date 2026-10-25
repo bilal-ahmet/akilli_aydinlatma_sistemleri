@@ -201,6 +201,23 @@ async function main() {
   check("A admin API'sine erişemez → 403", (await call(aMgr, "GET", "/api/admin/customers")).status === 403);
   check("A global komut veremez → 403", (await call(aMgr, "POST", "/api/admin/command/global", { action: "on" })).status === 403);
 
+  // Direkler: B'nin direği (cihazı bağlı) A'ya görünmez; A, B'nin bölgesine/cihazına direk bağlayamaz.
+  const poleCode = `P-${tag}`;
+  const pB = await call(admin, "POST", `/api/poles?customer=${B}`, { zoneSlug: zoneB, code: poleCode, lat: 40.76, lng: 29.94, deviceMac: macB });
+  const poleB = (pB.json?.data as { id: string } | undefined)?.id ?? "";
+  check("admin B'ye direk ekledi (cihaz bağlı)", pB.status === 201, pB.json);
+  const polesA = await call(aMgr, "GET", "/api/poles");
+  check("A direk listesinde B direği yok", polesA.status === 200 && !(polesA.json?.data as { id: string }[]).some((p) => p.id === poleB));
+  check("A, B direğini okuyamaz → 404", (await call(aMgr, "GET", `/api/poles/${poleB}`)).status === 404);
+  check("A, B direğini düzenleyemez → 404", (await call(aMgr, "PATCH", `/api/poles/${poleB}`, { name: "x" })).status === 404);
+  check("A, B direğini silemez → 404", (await call(aMgr, "DELETE", `/api/poles/${poleB}`)).status === 404);
+  check("A, B bölgesine direk ekleyemez → 404", (await call(aMgr, "POST", "/api/poles", { zoneSlug: zoneB, code: `Q-${tag}` })).status === 404);
+  const steal = await call(aMgr, "POST", "/api/poles", { zoneSlug: zoneA, code: `Q-${tag}`, deviceMac: macB });
+  check("A, B cihazını kendi direğine bağlayamaz → 404", steal.status === 404, steal.json);
+  check("direk numarası müşteri içinde benzersiz (A aynı numarayı kullanabilir)", (await call(aMgr, "POST", "/api/poles", { zoneSlug: zoneA, code: poleCode })).status === 201);
+  const imp = await call(aMgr, "POST", "/api/poles/import", { text: `kod;bölge\nR-${tag};${zoneB}\n` });
+  check("A içe aktarmada B bölgesini kullanamaz", (imp.json?.data as { summary: { error: number } } | undefined)?.summary.error === 1, imp.json);
+
   console.log("\n[4] Salt okunur kullanıcı");
   let aView = await login(`a-view-${tag}`, pw);
   aView = await changePassword(aView, pw, pw2);
@@ -208,6 +225,8 @@ async function main() {
   check("izleyici komut veremez → 403", (await call(aView, "POST", `/api/zones/${zoneA}/command`, { action: "on" })).status === 403);
   check('izleyici "Tüm Sistem" veremez → 403', (await call(aView, "POST", "/api/command/all", { action: "on" })).status === 403);
   check("izleyici bölge açamaz → 403", (await call(aView, "POST", "/api/zones", { name: "x" })).status === 403);
+  check("izleyici direkleri okur", (await call(aView, "GET", "/api/poles")).status === 200);
+  check("izleyici direk açamaz → 403", (await call(aView, "POST", "/api/poles", { zoneSlug: zoneA, code: `V-${tag}` })).status === 403);
   check("izleyici kullanıcı açamaz → 403", (await call(aView, "POST", `/api/customers/${A}/users`, { username: `x-${tag}`, role: "viewer", password: pw })).status === 403);
 
   console.log("\n[5] Canlı akış (SSE) izolasyonu");

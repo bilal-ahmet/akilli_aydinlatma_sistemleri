@@ -267,9 +267,8 @@ export interface Fixture {
 }
 
 /**
- * `GET /api/summary` — cihazlardan ÖLÇÜLMÜŞ sistem özeti. Zone snapshot'ından
- * türetilen `SystemSummary`'den farkı: buradaki değerler gerçek D4i
- * raporlarından gelir, ölçüm yoksa `null`'dur (dashboard tahmine düşer).
+ * `GET /api/summary` — cihazlardan ÖLÇÜLMÜŞ sistem özeti: değerler gerçek
+ * D4i raporlarından gelir, ölçüm yoksa `null`'dur.
  */
 export interface LiveSummary {
   /** Şebekeden çekilen toplam güç (W); hiç ölçüm yoksa null. */
@@ -305,11 +304,3 @@ export interface DeviceMeasure {
   lamps: number;
 }
 
-export interface SystemSummary {
-  totalPoles: number;
-  polesOn: number;
-  polesOff: number;
-  /** anlık güç tüketimi (kW) */
-  powerKw: number;
-  alerts: number;
-}

@@ -25,17 +25,23 @@ export function DeviceDialog({
   zoneSlug?: string;
   onClose: () => void;
 }) {
-  const { zones, createDevice, updateDevice } = useLighting();
+  const { zones, poles, createDevice, updateDevice } = useLighting();
   const technical = useTechnical();
   const [mac, setMac] = useState(device ? formatMac(device.deviceId) : "");
   const [zoneSlug, setZoneSlug] = useState(
     device?.zoneSlug ?? presetZone ?? zones[0]?.id ?? "",
   );
   const [name, setName] = useState(device?.name ?? "");
+  const [poleId, setPoleId] = useState(device?.poleId ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const zoneChanged = device ? zoneSlug !== device.zoneSlug : false;
+  // Seçili bölgedeki boş direkler + cihazın şu anki direği (bir direkte tek cihaz).
+  const poleOptions = poles.filter(
+    (p) => p.zoneSlug === zoneSlug && (!p.deviceId || p.deviceId === device?.deviceId),
+  );
+  const pole = poleOptions.some((p) => p.id === poleId) ? poleId : "";
   const normalized = normalizeMac(mac);
   const macChanged = device ? normalized !== device.deviceId : false;
   const canSubmit = !submitting && zoneSlug !== "" && mac.trim() !== "";
@@ -47,7 +53,12 @@ export function DeviceDialog({
     setError(null);
     try {
       if (device) {
-        await updateDevice(device.deviceId, { zoneSlug, name, ...(macChanged ? { mac: mac.trim() } : {}) });
+        await updateDevice(device.deviceId, {
+          zoneSlug,
+          name,
+          ...(macChanged ? { mac: mac.trim() } : {}),
+          ...(pole !== (device.poleId ?? "") ? { poleId: pole } : {}),
+        });
       }
       else await createDevice({ mac: mac.trim(), zoneSlug, name });
       onClose();
@@ -177,6 +188,28 @@ export function DeviceDialog({
             placeholder="Örn. Köşe direği"
           />
         </div>
+
+        {device ? (
+          <div>
+            <label className="field-label" htmlFor="dv-pole">
+              Direk <span className="font-normal text-muted">(isteğe bağlı)</span>
+            </label>
+            <select id="dv-pole" className="field" value={pole} onChange={(e) => setPoleId(e.target.value)}>
+              <option value="">Direğe bağlı değil</option>
+              {poleOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.code}
+                  {p.name ? ` · ${p.name}` : ""}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-[12.5px] leading-normal text-muted">
+              {poleOptions.length === 0
+                ? "Bu bölgede boş direk yok. Direkler bölge sayfasından eklenir."
+                : "Cihazın takılı olduğu direk. Listede yalnızca bu bölgedeki boş direkler var."}
+            </p>
+          </div>
+        ) : null}
       </div>
     </Modal>
   );

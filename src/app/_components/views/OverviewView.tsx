@@ -7,8 +7,10 @@ import { usePanel, useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { useZoneStats } from "@/app/_lib/useZoneStats";
 import { openAlerts } from "@/app/_lib/alerts";
-import { isLit, summarize } from "@/app/_lib/mockData";
-import { formatInt, formatKw } from "@/app/_lib/format";
+import { isLit } from "@/app/_lib/mockData";
+import { formatInt } from "@/app/_lib/format";
+import { lampOn } from "@/app/_lib/selection";
+import { poleStateResolver, zonePoleCount, type PoleState } from "@/app/_lib/poles";
 import { formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
 import type { Zone } from "@/app/_lib/types";
@@ -334,7 +336,7 @@ function SystemHero() {
 
 /** Amber kart: şebekeden çekilen ölçülmüş güç + sürücü verimi. */
 function PowerCard() {
-  const { zones, live } = useLighting();
+  const { live } = useLighting();
   const gear = useTechnical() ? "Sürücü" : "Güç ünitesi";
   const measured = live?.powerW ?? null;
   const load = live?.loadPowerW ?? null;
@@ -373,10 +375,7 @@ function PowerCard() {
               ) : null}
             </>
           ) : (
-            <>
-              Cihazlar henüz ölçüm göndermedi. Direk sayısından tahmin:{" "}
-              <b>{formatKw(summarize(zones).powerKw)}</b>
-            </>
+            "Cihazlar henüz ölçüm göndermedi."
           )}
         </p>
         {efficiency !== null ? (
@@ -445,7 +444,7 @@ function ZoneLevels() {
 
 /** Bölgeler listesi: tek dokunuşla aç/kapa. */
 function ZoneList() {
-  const { zones, toggleZone } = useLighting();
+  const { zones, poles, toggleZone } = useLighting();
   const { canWrite, customerSlug } = usePanel();
   const stats = useZoneStats();
 
@@ -471,7 +470,7 @@ function ZoneList() {
               <Link href={`/c/${customerSlug}/bolgeler/${z.id}`} className="flex min-w-0 flex-1 flex-col gap-[3px]">
                 <span className="truncate text-sm font-semibold text-text hover:text-accent">{z.name}</span>
                 <span className="truncate text-[12.5px] text-muted">
-                  {z.poleCount} direk · {power !== null ? formatPower(power) : "ölçüm yok"}
+                  {zonePoleCount(z, poles)} direk · {power !== null ? formatPower(power) : "ölçüm yok"}
                 </span>
               </Link>
               <span className="font-mono text-[13px] text-accent">{z.isOn ? `%${z.brightness}` : "—"}</span>
@@ -490,12 +489,54 @@ function ZoneList() {
   );
 }
 
+/**
+ * Yanan direk / lamba kartı — ölçüme dayalı. Kayıtlı direk varsa direk
+ * durumları (`poleState`, bağlı cihazdan), yoksa cihazların lambaları sayılır.
+ */
+function LitCard() {
+  const { poles, devices, faultsByDevice } = useLighting();
+  const now = useNow(15_000);
+
+  if (poles.length > 0) {
+    const stateOf = poleStateResolver(devices, faultsByDevice, now);
+    const states = poles.map(stateOf);
+    const n = (s: PoleState) => states.filter((x) => x === s).length;
+    const hint =
+      [
+        n("fault") > 0 ? `${formatInt(n("fault"))} arızalı` : null,
+        n("offline") > 0 ? `${formatInt(n("offline"))} bağlantısız` : null,
+        n("off") > 0 ? `${formatInt(n("off"))} kapalı` : null,
+        n("no_device") > 0 ? `${formatInt(n("no_device"))} cihazsız` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Hepsi yanıyor";
+    return (
+      <StatCard
+        label="Yanan direk"
+        value={formatInt(n("on"))}
+        unit={`/ ${formatInt(poles.length)}`}
+        hint={now === null ? "…" : hint}
+      />
+    );
+  }
+
+  const total = devices.reduce((a, d) => a + d.lamps.length, 0);
+  const lit = devices.reduce((a, d) => a + d.lamps.filter(lampOn).length, 0);
+  return (
+    <StatCard
+      label="Yanan lamba"
+      value={formatInt(lit)}
+      unit={`/ ${formatInt(total)}`}
+      hint={total === 0 ? "Cihazlar henüz lamba bildirmedi" : total === lit ? "Kapalı lamba yok" : `${formatInt(total - lit)} lamba kapalı`}
+    />
+  );
+}
+
 export function OverviewView() {
-  const { zones, devices, faults, live } = useLighting();
+  const { devices, faults, live } = useLighting();
   const { date, time } = useToday();
   const technical = useTechnical();
   const { customerSlug } = usePanel();
-  const summary = summarize(zones);
   const alerts = openAlerts(faults, devices, technical);
   const faultyLamps = new Set(faults.map((f) => `${f.deviceId}:${f.channel}`)).size;
   const commandErrors = alerts.length - faults.length;
@@ -518,12 +559,7 @@ export function OverviewView() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard
-          label="Açık direk"
-          value={formatInt(summary.polesOn)}
-          unit={`/ ${formatInt(summary.totalPoles)}`}
-          hint={summary.polesOff === 0 ? "Kapalı direk yok" : `${formatInt(summary.polesOff)} direk kapalı`}
-        />
+        <LitCard />
         <StatCard
           label={technical ? "Yük gücü" : "Lamba gücü"}
           value={live?.loadPowerW != null ? splitPower(live.loadPowerW).value : "—"}

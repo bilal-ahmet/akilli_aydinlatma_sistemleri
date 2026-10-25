@@ -31,7 +31,8 @@ export function ZoneDialog({
   onClose: () => void;
   onCreated?: (zone: Zone) => void;
 }) {
-  const { createZone, updateZone } = useLighting();
+  const { createZone, updateZone, poles } = useLighting();
+  const registeredPoles = zone ? poles.filter((p) => p.zoneSlug === zone.id).length : 0;
   const { customers, customerSlug: currentCustomer } = usePanel();
 
   // Düzenlemede kayıtlı `district` metnini (İlçe · Mahalle) tekrar seçimlere ayır.
@@ -172,38 +173,49 @@ export function ZoneDialog({
           </div>
         </div>
 
-        <div>
-          <label className="field-label" htmlFor="zf-poles">Direk sayısı</label>
-          <div className="field flex items-center justify-between pr-1.5 font-mono">
-            <input
-              id="zf-poles"
-              type="number"
-              min={0}
-              inputMode="numeric"
-              value={poleCount}
-              onChange={(e) => setPoleCount(Math.max(0, parseInt(e.target.value, 10) || 0))}
-              className="w-full min-w-0 bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            <div className="flex shrink-0 gap-1">
-              <button
-                type="button"
-                aria-label="Direk sayısını azalt"
-                onClick={() => setPoleCount((n) => Math.max(0, n - 1))}
-                className="grid h-8 w-8 place-items-center rounded-[7px] bg-panel-2 text-ink-2 transition-colors hover:text-text"
-              >
-                −
-              </button>
-              <button
-                type="button"
-                aria-label="Direk sayısını artır"
-                onClick={() => setPoleCount((n) => n + 1)}
-                className="grid h-8 w-8 place-items-center rounded-[7px] bg-panel-2 text-ink-2 transition-colors hover:text-text"
-              >
-                +
-              </button>
+        {registeredPoles > 0 ? (
+          <p className="text-[12.5px] leading-normal text-muted">
+            Bu bölgede {registeredPoles} direk kayıtlı; direk sayısı bu kayıtlardan hesaplanır.
+          </p>
+        ) : (
+          <div>
+            <label className="field-label" htmlFor="zf-poles">
+              Direk sayısı <span className="font-normal text-muted">(direkler kaydedilene kadar)</span>
+            </label>
+            <div className="field flex items-center justify-between pr-1.5 font-mono">
+              <input
+                id="zf-poles"
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={poleCount}
+                onChange={(e) => setPoleCount(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                className="w-full min-w-0 bg-transparent outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <div className="flex shrink-0 gap-1">
+                <button
+                  type="button"
+                  aria-label="Direk sayısını azalt"
+                  onClick={() => setPoleCount((n) => Math.max(0, n - 1))}
+                  className="grid h-8 w-8 place-items-center rounded-[7px] bg-panel-2 text-ink-2 transition-colors hover:text-text"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  aria-label="Direk sayısını artır"
+                  onClick={() => setPoleCount((n) => n + 1)}
+                  className="grid h-8 w-8 place-items-center rounded-[7px] bg-panel-2 text-ink-2 transition-colors hover:text-text"
+                >
+                  +
+                </button>
+              </div>
             </div>
+            <p className="mt-2 text-[12.5px] leading-normal text-muted">
+              Direkleri bölge sayfasından numarası ve konumuyla ekleyince bu sayının yerini kayıtlar alır.
+            </p>
           </div>
-        </div>
+        )}
 
         {showCustomer ? (
           <div>
