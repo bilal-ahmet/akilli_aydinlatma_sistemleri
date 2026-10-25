@@ -494,6 +494,7 @@ export function OverviewView() {
   const { zones, devices, faults, live } = useLighting();
   const { date, time } = useToday();
   const technical = useTechnical();
+  const { customerSlug } = usePanel();
   const summary = summarize(zones);
   const alerts = openAlerts(faults, devices, technical);
   const faultyLamps = new Set(faults.map((f) => `${f.deviceId}:${f.channel}`)).size;
@@ -545,6 +546,7 @@ export function OverviewView() {
         />
         <StatCard
           label="Açık arıza"
+          href={`/c/${customerSlug}/arizalar`}
           value={formatInt(alerts.length)}
           valueClass={alerts.length > 0 ? "text-danger" : "text-text"}
           hint={

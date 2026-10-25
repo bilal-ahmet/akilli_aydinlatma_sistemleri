@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { HealthTone } from "@/app/_lib/deviceHealth";
 import { TONE_DOT, TONE_TEXT } from "@/app/_lib/deviceHealth";
 
@@ -26,23 +27,32 @@ export function PageHeader({
   );
 }
 
-/** Metrik kartı: etiket, büyük değer (+ birim), alt satır. */
+/** Metrik kartı: etiket, büyük değer (+ birim), alt satır. `href` verilirse kart bağlantı olur. */
 export function StatCard({
   label,
   value,
   unit,
   hint,
   valueClass = "text-text",
+  href,
 }: {
   label: string;
   value: string;
   unit?: string;
   hint?: string;
   valueClass?: string;
+  href?: string;
 }) {
-  return (
-    <div className="stat-card flex flex-col gap-2">
-      <p className="text-[13px] text-muted">{label}</p>
+  const body = (
+    <>
+      <p className="flex items-center justify-between gap-2 text-[13px] text-muted">
+        {label}
+        {href ? (
+          <span aria-hidden className="text-muted transition-colors group-hover:text-accent">
+            ›
+          </span>
+        ) : null}
+      </p>
       <p className="flex items-baseline gap-1">
         <span className={`text-[28px] font-bold leading-none tracking-[-0.02em] tabular-nums ${valueClass}`}>
           {value}
@@ -50,8 +60,19 @@ export function StatCard({
         {unit ? <span className="text-base text-muted">{unit}</span> : null}
       </p>
       {hint ? <p className="text-[12.5px] text-muted">{hint}</p> : null}
-    </div>
+    </>
   );
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="stat-card group flex flex-col gap-2 transition-colors hover:border-border-strong focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className="stat-card flex flex-col gap-2">{body}</div>;
 }
 
 /** Renkli nokta + etiket (cihaz durumu). */
