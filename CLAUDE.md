@@ -83,7 +83,8 @@ kullanıcılar, denetim kaydı) · `/hesap` (şifre değiştirme; ilk girişte z
 
 Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
 `/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
-detay) · `/c/<slug>/cihazlar` · `/c/<slug>/arizalar` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
+detay) · `/c/<slug>/harita[?bolge=&direk=]` (direk haritası) · `/c/<slug>/cihazlar` ·
+`/c/<slug>/arizalar[?bolge=]` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
 `/c/<slug>/kullanicilar` (manager/admin).
 
 **Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
@@ -651,6 +652,53 @@ Audit: `gateway.create` / `gateway.update` / `gateway.delete`. Panel:
 canlı durum SSE `kind:"gateway"` olayıyla). Donanımsız test:
 `npm run mock:gateway <GW_ID> <tür> [MAC…]`.
 
+### Direkler ve harita
+
+Direk = sahadaki fiziksel direk, konumuyla (`poles`). **Bir direkte tek cihaz
+(ESP)**; direğin lambaları o cihazın `fixtures`'ıdır, ayrıca bağlanmaz
+(`devices.pole_id` UNIQUE). Direk cihazdan önce var olabilir (envanter içe
+aktarılır, cihaz sonra takılır) ve cihaz değişse/MAC düzeltilse de kalır.
+
+```
+GET/POST         /api/poles?customer=<slug>[&zone=<slug>]   # liste / oluştur
+GET/PATCH/DELETE /api/poles/:poleId                         # konum, numara, ad, not, bölge, cihaz
+POST             /api/poles/import?customer=<slug>           # CSV / GeoJSON; apply:false → önizleme
+
+Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|import,
+        locationAccuracyM?, notes?, deviceMac? ("" = bağı kaldır) }
+```
+
+- Kurallar tek yerde: `lib/poleStore.ts` (`setPoleDevice`, `poleCodeTaken`).
+  Numara **müşteri içinde** benzersiz (harf duyarsız). Cihaz ile direk aynı
+  bölgede olmalı (422); başka direğe bağlı cihaz 409. Cihazlı direğin bölgesi
+  değişmez (önce `deviceMac: ""`). Cihaz başka bölgeye taşınınca bağ kalkar;
+  cihaz `PATCH`'i `poleId` de alır. Direk silinince cihaz kalır.
+- Müşteri bölgeden türetilir (`poles.customer_id` yok): bölge taşınınca
+  direkleri de gider, bölge silinince silinir. Guard `authorizePole`
+  (DB'den, başka müşteri → 404). Audit `pole.create|update|delete|import`.
+- Konum WGS84 ondalık derece; `lat`+`lng` birlikte. Kaynak verilmezse
+  `manual`; konumu değişmeyen PATCH'te gönderilmez (GPS/içe aktarma kaynağı
+  korunur). Komut yolu değişmez: direk komutu = cihazın MAC komutu.
+- **Durum** `app/_lib/poles.ts → poleState` (saf, mobil kopyası var):
+  `no_device → offline (3 dk) → fault (uyarı olmayan lamba arızası ya da komut
+  hatası) → on / off`. Envanter "Yanan direk", Genel Bakış ve harita bunu kullanır.
+  Bölgede kayıtlı direk yoksa elle girilen `zones.pole_count` yalnızca sayı
+  olarak gösterilir (`zonePoleCount`); direk sayısından güç tahmini yok.
+- **İçe aktarma** (`lib/poleImport.ts` saf ayrıştırıcı): CSV (`;` `,` sekme,
+  ondalık virgül, Türkçe başlıklar: kod, enlem, boylam, bölge, cihaz, ad, not)
+  ve GeoJSON Point. Numara ile upsert; boş hücre mevcut değeri silmez. Hatalı
+  satır varsa **hiçbir şey yazılmaz**. Türkiye kutusu dışındaki koordinat
+  reddedilir — belediye CBS verisi çoğu zaman ITRF96/TM'dir; gerçek dosya
+  gelince `proj4` dönüşümü eklenmeli.
+- **Harita** (`_components/PoleMap.tsx`, MapLibre GL, `ssr:false`): altlık
+  `NEXT_PUBLIC_MAP_STYLE_URL[_DARK]`, yoksa anahtarsız OpenFreeMap
+  (positron/dark; OSM atfı haritada). Kümeleme kaynakta, sorunlu direk içeren
+  küme kırmızı. MapLibre oklch okumaz → renkler hex. `views/MapView.tsx`: durum
+  filtreleri, yan panel (lambalar, arızalar, Aç/Kapat/Şiddet), "+ Direk ekle"
+  (haritaya tık), "Konumu taşı" (sürükle + kaydet), konumsuz direği seçip
+  yerleştirme. Bölge detayında `ZoneMapCard` + `PoleList`; arıza kartında
+  "Haritada göster".
+
 ### Zamanlamalar
 
 ```
@@ -833,6 +881,26 @@ CREATE TABLE gateways (
 > Migration `0009_gateways.sql` (+ `devices.gateway_id`). Mesaj başına satır
 > açılmaz. Çevrimiçi: LWT gelmediyse ve son 2 dk'da haber varsa
 > (`gatewayState`).
+
+### `poles`
+
+```sql
+CREATE TABLE poles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  zone_id UUID NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+  code VARCHAR(50) NOT NULL,            -- belediye direk no; müşteri içinde benzersiz (uygulamada)
+  name VARCHAR(100), notes TEXT,
+  lat DOUBLE PRECISION, lng DOUBLE PRECISION,   -- WGS84; konumsuz direkte NULL
+  location_source VARCHAR(10),          -- map | manual | gps | import
+  location_accuracy_m REAL,             -- GPS doğruluğu
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_poles_zone_code ON poles(zone_id, code);
+-- devices.pole_id UUID UNIQUE REFERENCES poles(id) ON DELETE SET NULL
+```
+
+> Migration `0011_poles.sql`. PostGIS yok: noktalar istemcide kümelenir;
+> bbox sorgusu gerekirse Neon'da PostGIS açılabilir.
 
 ### `schedules`
 
@@ -1038,6 +1106,10 @@ SESSION_SECRET=****
 
 # Uygulama (SSE; aynı origin olduğu için varsayılan /api/events)
 NEXT_PUBLIC_SSE_URL=/api/events
+
+# Harita altlığı (opsiyonel; boşsa anahtarsız OpenFreeMap positron/dark)
+NEXT_PUBLIC_MAP_STYLE_URL=
+NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 ```
 
 > Lokal geliştirme şablonu için `.env.example`. Gerçek değerler `.env.local`'a (gitignored) yazılır; canlıda Railway **Service Variables**'ta tutulur.
@@ -1067,7 +1139,7 @@ NEXT_PUBLIC_SSE_URL=/api/events
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `handleUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
 
