@@ -5,87 +5,27 @@ import type { FaultRecord } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useApi, useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
-import { openAlerts, type AlertItem } from "@/app/_lib/alerts";
-import { deviceName, formatDuration } from "@/app/_lib/format";
-import { faultLabel } from "@/lib/faults";
-import { useDialogs } from "../PanelDialogs";
+import { openAlerts } from "@/app/_lib/alerts";
+import { OpenAlertCard, ResolvedFaultRows } from "../FaultItems";
 import { PageHeader } from "../PanelUi";
 
 const HISTORY_DAYS = 30;
 
-/**
- * Sürücünün kendini koruduğu durumlar arıza değil uyarıdır: ışık hâlâ yanıyor
- * ama kısılmış (termal kısma, güç sınırlama).
- */
-const WARNING_CODES = new Set(["driver.thermal_derating", "driver.power_limitation", "led.thermal_derating"]);
-
-/** "26 Eylül, 22:14" */
-function formatWhen(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString("tr-TR", { day: "numeric", month: "long" });
-  const time = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-  return `${date}, ${time}`;
-}
-
-/** Bugün başladıysa yalnızca saat, değilse tarih + saat. */
-function formatSince(iso: string, now: number | null): string {
-  const d = new Date(iso);
-  const today = now !== null && new Date(now).toDateString() === d.toDateString();
-  return today
-    ? `${d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}'den beri`
-    : `${formatWhen(iso)}'den beri`;
-}
-
-function where(
-  parts: { deviceId: string; deviceName: string | null; zoneName: string | null; channel: number | null },
-  technical: boolean,
-) {
-  return [
-    deviceName({ name: parts.deviceName, deviceId: parts.deviceId }, technical),
-    parts.zoneName,
-    parts.channel !== null ? `Lamba ${parts.channel}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function Badge({ tone, children }: { tone: "bad" | "warn"; children: React.ReactNode }) {
+/** Sayfanın üstündeki özet: kaç arıza, kaç uyarı, kaç komut hatası, kaç lamba. */
+function Counts({ items }: { items: Array<{ label: string; value: number; tone: string }> }) {
   return (
-    <span
-      className={`inline-flex h-[26px] shrink-0 items-center justify-center rounded-md px-2.5 text-[12.5px] font-semibold ${
-        tone === "bad" ? "bg-danger-soft text-danger" : "bg-accent-soft text-accent"
-      }`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function OpenAlert({ alert, now }: { alert: AlertItem; now: number | null }) {
-  const { devices } = useLighting();
-  const { openDevice } = useDialogs();
-  const technical = useTechnical();
-  const device = devices.find((d) => d.deviceId === alert.deviceId);
-  const warn = alert.code !== null && WARNING_CODES.has(alert.code);
-
-  return (
-    <div className="grid items-center gap-4 rounded-[14px] border border-border bg-panel px-5 py-[18px] sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-[18px] sm:px-[22px]">
-      <Badge tone={warn ? "warn" : "bad"}>
-        {alert.kind === "command" ? (technical ? "Komut" : "Komut uygulanamadı") : warn ? "Uyarı" : "Arıza"}
-      </Badge>
-      <div className="flex min-w-0 flex-col gap-[3px]">
-        <p className="text-[15px] font-semibold text-text">{alert.title}</p>
-        {alert.cause ? <p className="text-[13px] text-ink-2">{alert.cause}</p> : null}
-        <p className="text-[13px] text-muted">
-          {where(alert, technical)}
-          {alert.since ? ` · ${formatSince(alert.since, now)}` : ""}
-        </p>
-      </div>
-      {device ? (
-        <button type="button" onClick={() => openDevice(device)} className="btn-line h-[34px] px-3.5 text-[13px]">
-          Cihaza git
-        </button>
-      ) : null}
+    <div className="flex flex-wrap gap-2">
+      {items.map((it) => (
+        <span
+          key={it.label}
+          className="inline-flex items-baseline gap-1.5 rounded-lg border border-border bg-panel px-3 py-1.5 text-[13px] text-muted"
+        >
+          <span className={`text-[15px] font-semibold tabular-nums ${it.value > 0 ? it.tone : "text-muted"}`}>
+            {it.value}
+          </span>
+          {it.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -96,11 +36,14 @@ function OpenAlert({ alert, now }: { alert: AlertItem; now: number | null }) {
  * raporunda bayrağı indirince (ya da başarılı komut yanıtıyla) kendiliğinden
  * çözülür ve geçmişe taşınır (bkz. lib/faultLog.ts).
  */
-export function FaultsView() {
+export function FaultsView({ initialZone = "" }: { initialZone?: string }) {
   const api = useApi();
-  const { faults, devices } = useLighting();
+  const { faults, devices, zones } = useLighting();
   const technical = useTechnical();
-  const alerts = openAlerts(faults, devices, technical);
+  const [zoneFilter, setZoneFilter] = useState(initialZone);
+  const alerts = openAlerts(faults, devices, technical).filter(
+    (a) => !zoneFilter || a.zoneSlug === zoneFilter,
+  );
   const [history, setHistory] = useState<FaultRecord[] | null>(null);
   const now = useNow(60_000);
 
@@ -119,19 +62,60 @@ export function FaultsView() {
     };
   }, [api, openKey]);
 
-  const resolved = (history ?? []).filter((h) => h.resolvedAt !== null);
+  const resolved = (history ?? []).filter(
+    (h) => h.resolvedAt !== null && (!zoneFilter || h.zoneSlug === zoneFilter),
+  );
+  const faultCount = alerts.filter((a) => a.kind === "fault" && !a.warning).length;
+  const warnCount = alerts.filter((a) => a.warning).length;
+  const commandCount = alerts.filter((a) => a.kind === "command").length;
+  const lampCount = new Set(
+    alerts.filter((a) => a.channel !== null).map((a) => `${a.deviceId}:${a.channel}`),
+  ).size;
+  const zoneName = zones.find((z) => z.id === zoneFilter)?.name;
 
   return (
     <div className="flex max-w-[1100px] flex-col gap-6">
       <PageHeader
         title="Arızalar ve uyarılar"
-        subtitle="Cihazlardan gelen sorunlar burada listelenir. Cihaz sorunun geçtiğini bildirince kayıt geçmişe taşınır."
+        subtitle="Cihazlardan gelen sorunlar burada listelenir. Cihaz sorunun geçtiğini bildirince kayıt kendiliğinden geçmişe taşınır."
+        actions={
+          zones.length > 1 || zoneFilter ? (
+            <label className="flex items-center gap-2 text-[13px] text-muted">
+              Bölge
+              <select
+                value={zoneFilter}
+                onChange={(e) => setZoneFilter(e.target.value)}
+                className="field !h-9 !w-auto !py-0 !text-[13.5px]"
+              >
+                <option value="">Tüm bölgeler</option>
+                {zones.map((z) => (
+                  <option key={z.id} value={z.id}>
+                    {z.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null
+        }
+      />
+
+      <Counts
+        items={[
+          { label: "arıza", value: faultCount, tone: "text-danger" },
+          { label: "uyarı", value: warnCount, tone: "text-accent" },
+          {
+            label: technical ? "komut hatası" : "uygulanamayan komut",
+            value: commandCount,
+            tone: "text-danger",
+          },
+          { label: "etkilenen lamba", value: lampCount, tone: "text-text" },
+        ]}
       />
 
       <section className="flex flex-col gap-3">
-        <h2 className="eyebrow">Açık · {alerts.length}</h2>
+        <h2 className="eyebrow">Süren · {alerts.length}</h2>
         {alerts.length > 0 ? (
-          alerts.map((a) => <OpenAlert key={a.key} alert={a} now={now} />)
+          alerts.map((a) => <OpenAlertCard key={a.key} alert={a} now={now} showZone={!zoneFilter} />)
         ) : (
           <div className="flex flex-col items-center gap-2.5 rounded-[14px] border border-border bg-panel px-[22px] py-9 text-center">
             <span className="grid h-11 w-11 place-items-center rounded-full bg-ok-soft" aria-hidden>
@@ -139,42 +123,27 @@ export function FaultsView() {
             </span>
             <p className="text-base font-semibold text-text">Açık arıza yok</p>
             <p className="text-sm text-muted">
-              {devices.length > 0
-                ? `${devices.length} cihazın tamamı normal çalışıyor.`
-                : "Henüz cihaz tanımlanmadı."}
+              {zoneName
+                ? `${zoneName} bölgesindeki cihazlar normal çalışıyor.`
+                : devices.length > 0
+                  ? `${devices.length} cihazın tamamı normal çalışıyor.`
+                  : "Henüz cihaz tanımlanmadı."}
             </p>
           </div>
         )}
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="eyebrow">Geçmiş · son {HISTORY_DAYS} gün</h2>
+        <h2 className="eyebrow">
+          Çözülenler · son {HISTORY_DAYS} gün{history ? ` · ${resolved.length}` : ""}
+        </h2>
         <div className="overflow-hidden rounded-[14px] border border-border bg-panel">
           {history === null ? (
             <p className="px-[22px] py-5 text-sm text-muted">Yükleniyor…</p>
           ) : resolved.length === 0 ? (
             <p className="px-[22px] py-5 text-sm text-muted">Son {HISTORY_DAYS} günde çözülmüş arıza yok.</p>
           ) : (
-            resolved.map((h) => {
-              const warn = WARNING_CODES.has(h.code);
-              const duration = new Date(h.resolvedAt!).getTime() - new Date(h.startedAt).getTime();
-              return (
-                <div
-                  key={h.id}
-                  className="grid items-center gap-x-[18px] gap-y-1.5 border-b border-border px-5 py-4 last:border-b-0 sm:grid-cols-[80px_minmax(0,1fr)_170px_140px] sm:px-[22px]"
-                >
-                  <span className="justify-self-start sm:justify-self-stretch">
-                    <Badge tone={warn ? "warn" : "bad"}>{warn ? "Uyarı" : "Arıza"}</Badge>
-                  </span>
-                  <div className="flex min-w-0 flex-col gap-[3px]">
-                    <p className="text-[14.5px] font-semibold text-text">{faultLabel(h.code, technical)}</p>
-                    <p className="text-[13px] text-muted">{where(h, technical)}</p>
-                  </div>
-                  <p className="text-[13px] text-ink-2">{formatWhen(h.startedAt)}</p>
-                  <p className="text-[13px] text-ok">Çözüldü · {formatDuration(duration)}</p>
-                </div>
-              );
-            })
+            <ResolvedFaultRows records={resolved} showZone={!zoneFilter} />
           )}
         </div>
       </section>

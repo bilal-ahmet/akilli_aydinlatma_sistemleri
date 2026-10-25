@@ -1,6 +1,6 @@
 import type { DeviceView, OpenFault } from "./types";
 import { describeDeviceError } from "@/lib/deviceErrors";
-import { faultLabel } from "@/lib/faults";
+import { faultCategory, faultDescription, faultLabel, isWarningCode, type FaultCategory } from "@/lib/faults";
 
 /**
  * Panelde "açık" sayılan her sorun: süren lamba arızaları (`fault_events`,
@@ -13,11 +13,18 @@ export interface AlertItem {
   kind: "fault" | "command";
   /** `fault_events.code` (lamba arızası) ya da null (komut hatası). */
   code: string | null;
+  /** Arızanın ait olduğu parça (lamba, sürücü, LED, bağlantı, komut). */
+  category: FaultCategory;
+  /** Işık hâlâ yanıyor (termal kısma, güç sınırlama) — arıza değil uyarı. */
+  warning: boolean;
   title: string;
-  /** Komut hatasında sebep metni (katalogdan). */
+  /** Ne oluyor: lamba arızasında katalog açıklaması, komut hatasında sebep. */
   cause: string | null;
+  /** Önerilen adım (katalogda varsa). */
+  hint: string | null;
   deviceId: string;
   deviceName: string | null;
+  zoneSlug: string | null;
   zoneName: string | null;
   channel: number | null;
   since: string | null;
@@ -29,18 +36,25 @@ export function openAlerts(
   devices: DeviceView[],
   technical = true,
 ): AlertItem[] {
-  const items: AlertItem[] = faults.map((f) => ({
-    key: `f:${f.deviceId}:${f.channel}:${f.code}`,
-    kind: "fault",
-    code: f.code,
-    title: faultLabel(f.code, technical),
-    cause: null,
-    deviceId: f.deviceId,
-    deviceName: f.deviceName,
-    zoneName: f.zoneName,
-    channel: f.channel,
-    since: f.startedAt,
-  }));
+  const items: AlertItem[] = faults.map((f) => {
+    const text = faultDescription(f.code, technical);
+    return {
+      key: `f:${f.deviceId}:${f.channel}:${f.code}`,
+      kind: "fault",
+      code: f.code,
+      category: faultCategory(f.code),
+      warning: isWarningCode(f.code),
+      title: faultLabel(f.code, technical),
+      cause: text?.what ?? null,
+      hint: text?.hint ?? null,
+      deviceId: f.deviceId,
+      deviceName: f.deviceName,
+      zoneSlug: f.zoneSlug,
+      zoneName: f.zoneName,
+      channel: f.channel,
+      since: f.startedAt,
+    };
+  });
   for (const d of devices) {
     if (!d.lastError) continue;
     const info = describeDeviceError(d.lastError, { technical });
@@ -48,10 +62,14 @@ export function openAlerts(
       key: `c:${d.deviceId}`,
       kind: "command",
       code: null,
+      category: "command",
+      warning: false,
       title: info.title,
       cause: info.cause,
+      hint: info.hint ?? null,
       deviceId: d.deviceId,
       deviceName: d.name,
+      zoneSlug: d.zoneSlug,
       zoneName: d.zoneName,
       channel: null,
       since: d.lastErrorAt,

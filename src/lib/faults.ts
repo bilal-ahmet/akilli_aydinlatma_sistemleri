@@ -110,6 +110,184 @@ export function faultLabel(code: string, technical = true): string {
   return technical ? code : "Diğer arıza";
 }
 
+/** Arızanın hangi parçaya ait olduğu — listelerde başlığın yanında gösterilir. */
+export type FaultCategory = "connection" | "lamp" | "driver" | "led" | "command";
+
+const CATEGORY_LABELS: Record<FaultCategory, { technical: string; plain: string }> = {
+  connection: { technical: "DALI bağlantısı", plain: "Bağlantı" },
+  lamp: { technical: "Lamba", plain: "Lamba" },
+  driver: { technical: "Sürücü", plain: "Güç ünitesi" },
+  led: { technical: "LED modülü", plain: "LED" },
+  command: { technical: "Komut", plain: "Komut" },
+};
+
+export function faultCategory(code: string): FaultCategory {
+  if (code === "offline") return "connection";
+  if (code === "lamp_failure") return "lamp";
+  if (code === "gear_failure" || code.startsWith("driver.")) return "driver";
+  if (code.startsWith("led.")) return "led";
+  return "command";
+}
+
+export function faultCategoryLabel(category: FaultCategory, technical = true): string {
+  return CATEGORY_LABELS[category][technical ? "technical" : "plain"];
+}
+
+/**
+ * Sürücünün kendini koruduğu durumlar arıza değil uyarıdır: ışık hâlâ yanıyor
+ * ama kısılmış.
+ */
+const WARNING_CODES = new Set(["driver.thermal_derating", "driver.power_limitation", "led.thermal_derating"]);
+
+export function isWarningCode(code: string): boolean {
+  return WARNING_CODES.has(code);
+}
+
+interface FaultText {
+  /** Ne oluyor. */
+  what: string;
+  /** Ne yapılmalı (yoksa gösterilmez). */
+  hint?: string;
+}
+
+/** Kod → açıklama. Teknik metin admin'e, `plain` müşteriye. */
+const DESCRIPTIONS: Record<string, { technical: FaultText; plain: FaultText }> = {
+  offline: {
+    technical: {
+      what: "ESP bu DALI adresindeki sürücüden yanıt alamıyor (online: false).",
+      hint: "Sürücünün enerjisini ve DALI hattını kontrol edin; adres değiştiyse lamba taraması yapın.",
+    },
+    plain: {
+      what: "Cihaz bu lambaya ulaşamıyor.",
+      hint: "Lambanın elektriği kesik ya da bağlantı kablosu kopuk olabilir; saha kontrolü gerekir.",
+    },
+  },
+  lamp_failure: {
+    technical: {
+      what: "Sürücü lamba arızası bildiriyor (lamp_failure / durum baytı 0x02).",
+      hint: "LED modülü ve sürücü çıkışı kontrol edilmeli.",
+    },
+    plain: {
+      what: "Lamba yanmıyor ya da LED modülü arızalı.",
+      hint: "Saha kontrolü gerekir; LED modülünün değişmesi gerekebilir.",
+    },
+  },
+  gear_failure: {
+    technical: {
+      what: "DALI durum baytında sürücü (control gear) arıza biti aktif (0x01).",
+      hint: "Sürücü kontrol edilmeli; sürüyorsa değişimi gerekebilir.",
+    },
+    plain: {
+      what: "Lambanın güç ünitesi arıza bildiriyor.",
+      hint: "Güç ünitesinin kontrol edilmesi gerekir.",
+    },
+  },
+  "driver.general_failure": {
+    technical: {
+      what: "Sürücünün D4i genel arıza bayrağı aktif.",
+      hint: "Ayrıntı için cihazın Telemetri sekmesindeki diğer bayraklara ve sayaçlara bakın.",
+    },
+    plain: { what: "Güç ünitesi genel bir arıza bildiriyor.", hint: "Sorun sürerse saha kontrolü gerekir." },
+  },
+  "driver.undervoltage_failure": {
+    technical: {
+      what: "Sürücü girişindeki şebeke gerilimi alt sınırın altında.",
+      hint: "Hat gerilimini ölçün; aynı hattaki başka lambalarda da varsa sorun şebekededir.",
+    },
+    plain: {
+      what: "Lambaya gelen şebeke elektriği düşük.",
+      hint: "Aynı bölgedeki başka lambalarda da görülüyorsa sorun elektrik şebekesinde olabilir.",
+    },
+  },
+  "driver.overvoltage_failure": {
+    technical: {
+      what: "Sürücü girişindeki şebeke gerilimi üst sınırın üstünde.",
+      hint: "Sürücü zarar görebilir; hat gerilimi ölçülmeli.",
+    },
+    plain: {
+      what: "Lambaya gelen şebeke elektriği yüksek.",
+      hint: "Güç ünitesi zarar görebilir; elektrik hattının kontrol edilmesi gerekir.",
+    },
+  },
+  "driver.power_limitation": {
+    technical: {
+      what: "Sürücü çıkış gücünü sınırlıyor; ışık istenen seviyenin altında olabilir.",
+      hint: "Genelde geçicidir; sık tekrarlanıyorsa yük ve sürücü uyumunu kontrol edin.",
+    },
+    plain: {
+      what: "Güç ünitesi kendini korumak için ışığı kıstı. Lamba yanmaya devam ediyor.",
+      hint: "Genelde kendiliğinden düzelir; sık tekrarlanırsa kontrol ettirin.",
+    },
+  },
+  "driver.thermal_derating": {
+    technical: {
+      what: "Sürücü sıcaklık sınırına yaklaştığı için çıkışı kısıyor.",
+      hint: "Soğuyunca kalkar; sürekli tekrarlıyorsa armatür havalandırmasını kontrol edin.",
+    },
+    plain: {
+      what: "Güç ünitesi ısındığı için ışığı kıstı. Lamba yanmaya devam ediyor.",
+      hint: "Soğuyunca kendiliğinden düzelir; sık tekrarlanırsa kontrol ettirin.",
+    },
+  },
+  "driver.thermal_shutdown": {
+    technical: {
+      what: "Sürücü aşırı sıcaklık nedeniyle çıkışı kapattı.",
+      hint: "Soğuyunca yeniden açılabilir; tekrarlıyorsa saha kontrolü gerekir.",
+    },
+    plain: {
+      what: "Güç ünitesi aşırı ısındığı için lamba kapandı.",
+      hint: "Soğuyunca yeniden yanabilir; tekrarlıyorsa saha kontrolü gerekir.",
+    },
+  },
+  "led.general_failure": {
+    technical: {
+      what: "LED modülünün D4i genel arıza bayrağı aktif.",
+      hint: "Ayrıntı için cihazın Telemetri sekmesindeki LED bayraklarına bakın.",
+    },
+    plain: { what: "LED modülü arıza bildiriyor.", hint: "Sorun sürerse saha kontrolü gerekir." },
+  },
+  "led.short_circuit": {
+    technical: { what: "LED çıkışında kısa devre algılandı.", hint: "LED modülü ve kablolama kontrol edilmeli." },
+    plain: { what: "LED modülünde kısa devre var; lamba yanmayabilir.", hint: "Saha kontrolü gerekir." },
+  },
+  "led.open_circuit": {
+    technical: {
+      what: "LED çıkışında açık devre: yük bağlı değil ya da kablo kopuk.",
+      hint: "Sürücü-LED bağlantısını ve LED modülünü kontrol edin.",
+    },
+    plain: {
+      what: "LED modülüne giden bağlantı kopuk; lamba yanmıyor.",
+      hint: "Kablo bağlantısının ve LED modülünün kontrol edilmesi gerekir.",
+    },
+  },
+  "led.thermal_derating": {
+    technical: {
+      what: "LED modülü sıcaklık sınırına yaklaştığı için akım kısılıyor.",
+      hint: "Soğuyunca kalkar; sürekli tekrarlıyorsa soğutucu/havalandırmayı kontrol edin.",
+    },
+    plain: {
+      what: "LED ısındığı için ışık kısıldı. Lamba yanmaya devam ediyor.",
+      hint: "Soğuyunca kendiliğinden düzelir; sık tekrarlanırsa kontrol ettirin.",
+    },
+  },
+  "led.thermal_shutdown": {
+    technical: {
+      what: "LED modülü aşırı sıcaklık nedeniyle kapatıldı.",
+      hint: "Soğuyunca yeniden açılabilir; tekrarlıyorsa saha kontrolü gerekir.",
+    },
+    plain: {
+      what: "LED aşırı ısındığı için lamba kapandı.",
+      hint: "Soğuyunca yeniden yanabilir; tekrarlıyorsa saha kontrolü gerekir.",
+    },
+  },
+};
+
+/** Arızanın açıklaması ve önerilen adım; katalogda yoksa null. */
+export function faultDescription(code: string, technical = true): FaultText | null {
+  const d = DESCRIPTIONS[code];
+  return d ? d[technical ? "technical" : "plain"] : null;
+}
+
 /** DALI durum baytı bitleri (IEC 62386 QUERY STATUS). */
 const STATUS_BIT_GEAR_FAILURE = 0x01;
 const STATUS_BIT_LAMP_FAILURE = 0x02;
