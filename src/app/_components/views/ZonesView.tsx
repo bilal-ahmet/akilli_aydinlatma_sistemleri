@@ -18,7 +18,7 @@ import { OpenAlertCard, ResolvedFaultRows } from "../FaultItems";
 import { Toggle } from "../Toggle";
 import { BrightnessSlider } from "../BrightnessSlider";
 import { useDialogs } from "../PanelDialogs";
-import { EmptyBox, PageHeader, PlusIcon, StatCard } from "../PanelUi";
+import { EmptyBox, PageHeader, Pager, PlusIcon, StatCard, pageSlice } from "../PanelUi";
 import { SelectionQuickBar } from "../SelectionQuickBar";
 import { SelectionActionBar } from "../SelectionActionBar";
 import { DeviceTable } from "./DeviceTable";
@@ -26,8 +26,8 @@ import { DeviceTable } from "./DeviceTable";
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
 
 const HISTORY_DAYS = 30;
-/** Bölge geçmişinde ilk açılışta gösterilen kayıt sayısı. */
-const HISTORY_PREVIEW = 5;
+/** Bölge geçmişinde sayfa başına kayıt. */
+const HISTORY_PAGE_SIZE = 10;
 
 /** Cihazlara kayıtlı lamba (DALI kanalı) toplamı. */
 function lampTotal(devices: DeviceView[]): number {
@@ -191,7 +191,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   // Bölgenin arıza geçmişi (son 30 gün). Süren arıza kümesi değişince tazelenir;
   // bileşen bölge başına `key`'lendiği için bölge değişince sıfırlanır.
   const [history, setHistory] = useState<FaultRecord[] | null>(null);
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
   const openKey = alerts.map((a) => a.key).join("|");
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +206,8 @@ function ZoneDetail({ zone }: { zone: Zone }) {
     };
   }, [api, zone.id, openKey]);
   const resolved = (history ?? []).filter((h) => h.resolvedAt !== null);
-  const shownHistory = showAllHistory ? resolved : resolved.slice(0, HISTORY_PREVIEW);
+  // Tazelemede kayıt azalırsa (eski kayıt 30 gün penceresinden düştü) son sayfaya çekilir.
+  const { page, rows: shownHistory } = pageSlice(resolved, historyPage, HISTORY_PAGE_SIZE);
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -425,15 +426,13 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           ) : (
             <>
               <ResolvedFaultRows records={shownHistory} showZone={false} />
-              {resolved.length > HISTORY_PREVIEW ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAllHistory((v) => !v)}
-                  className="w-full border-t border-border px-[22px] py-3 text-left text-[13px] font-medium text-accent hover:underline"
-                >
-                  {showAllHistory ? "Daha az göster" : `Tümünü göster (${resolved.length})`}
-                </button>
-              ) : null}
+              <Pager
+                page={page}
+                pageSize={HISTORY_PAGE_SIZE}
+                total={resolved.length}
+                onPage={setHistoryPage}
+                label="Geçmiş arıza sayfaları"
+              />
             </>
           )}
         </div>

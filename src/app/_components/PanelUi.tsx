@@ -94,6 +94,65 @@ export function PlusIcon() {
   );
 }
 
+/**
+ * Liste altı sayfalama: "11–20 / 34 kayıt" + Önceki / Sonraki. Tek sayfaysa
+ * hiç çizilmez. `page` sıfır tabanlı; çağıran sınırlar içinde tutar.
+ */
+export function Pager({
+  page,
+  pageSize,
+  total,
+  onPage,
+  label,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPage: (page: number) => void;
+  /** Erişilebilirlik etiketi, örn. "Geçmiş arıza sayfaları". */
+  label: string;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  if (pageCount <= 1) return null;
+  const from = page * pageSize + 1;
+  const to = Math.min(total, (page + 1) * pageSize);
+  return (
+    <nav aria-label={label} className="flex items-center justify-between gap-3 border-t border-border px-[22px] py-3">
+      <span className="text-[13px] text-muted">
+        {from}–{to} / {total} kayıt
+      </span>
+      <span className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPage(page - 1)}
+          disabled={page === 0}
+          className="btn-line h-8 px-3 text-[13px]"
+        >
+          ‹ Önceki
+        </button>
+        <span className="min-w-[52px] text-center text-[13px] tabular-nums text-ink-2">
+          {page + 1} / {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPage(page + 1)}
+          disabled={page >= pageCount - 1}
+          className="btn-line h-8 px-3 text-[13px]"
+        >
+          Sonraki ›
+        </button>
+      </span>
+    </nav>
+  );
+}
+
+/** Sayfa indeksini liste kısalınca son sayfaya çeker; o sayfanın dilimini döner. */
+export function pageSlice<T>(items: T[], page: number, pageSize: number): { page: number; rows: T[] } {
+  const last = Math.max(0, Math.ceil(items.length / pageSize) - 1);
+  const p = Math.min(page, last);
+  return { page: p, rows: items.slice(p * pageSize, (p + 1) * pageSize) };
+}
+
 /** Boş liste/sonuç kutusu. */
 export function EmptyBox({ children }: { children: React.ReactNode }) {
   return (
