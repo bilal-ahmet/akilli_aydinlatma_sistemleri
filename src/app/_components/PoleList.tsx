@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { PoleView, Zone } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel, useTechnical } from "@/app/_lib/panel";
@@ -10,74 +10,22 @@ import { lampOn } from "@/app/_lib/selection";
 import { POLE_STATE_DOT, POLE_STATE_LABELS, poleStateResolver } from "@/app/_lib/poles";
 import { useDialogs } from "./PanelDialogs";
 import { Pager, pageSlice } from "./PanelUi";
+import { RowMenu } from "./RowMenu";
 
 const PAGE_SIZE = 20;
 
 /** Satır sonundaki "···" menüsü: düzenle / sil. */
-function RowMenu({ pole }: { pole: PoleView }) {
+function PoleRowMenu({ pole }: { pole: PoleView }) {
   const { openPoleForm, confirmDeletePole } = useDialogs();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const item = "block w-full px-3.5 py-2 text-left text-sm transition-colors";
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`${pole.code} işlemleri`}
-        className="grid h-8 w-8 place-items-center rounded-lg text-lg leading-none text-muted transition-colors hover:bg-panel-2 hover:text-text"
-      >
-        ···
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-xl border border-border bg-panel py-1 shadow-xl"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-text hover:bg-panel-2`}
-            onClick={() => {
-              setOpen(false);
-              openPoleForm(pole);
-            }}
-          >
-            Düzenle
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-danger hover:bg-danger-soft`}
-            onClick={() => {
-              setOpen(false);
-              confirmDeletePole(pole);
-            }}
-          >
-            Sil
-          </button>
-        </div>
-      ) : null}
-    </div>
+    <RowMenu
+      label={`${pole.code} işlemleri`}
+      width={160}
+      items={[
+        { label: "Düzenle", onSelect: () => openPoleForm(pole) },
+        { label: "Sil", danger: true, onSelect: () => confirmDeletePole(pole) },
+      ]}
+    />
   );
 }
 
@@ -183,7 +131,7 @@ export function PoleList({ zone }: { zone: Zone }) {
                       <span className="text-muted">Konum yok</span>
                     )}
                   </span>
-                  {canWrite ? <RowMenu pole={p} /> : <span />}
+                  {canWrite ? <PoleRowMenu pole={p} /> : <span />}
                 </li>
               );
             })}

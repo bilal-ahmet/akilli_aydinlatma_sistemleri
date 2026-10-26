@@ -52,6 +52,15 @@ function CategoryChip({ category }: { category: FaultCategory }) {
   );
 }
 
+/** Cihazın bağlı olduğu, konumu girilmiş direğin harita bağlantısı; yoksa null. */
+function useMapHref(deviceId: string): string | null {
+  const { devices, poles } = useLighting();
+  const { customerSlug } = usePanel();
+  const poleId = devices.find((d) => d.deviceId === deviceId)?.poleId;
+  const pole = poleId ? poles.find((p) => p.id === poleId && p.lat !== null) : undefined;
+  return pole ? `/c/${customerSlug}/harita?direk=${pole.id}` : null;
+}
+
 function lampLabel(device: DeviceView | undefined, channel: number, technical: boolean): string {
   const name = device?.lamps.find((l) => l.channel === channel)?.name?.trim();
   const base = name || `Lamba ${channel}`;
@@ -140,11 +149,10 @@ export function OpenAlertCard({
   showZone?: boolean;
 }) {
   const technical = useTechnical();
-  const { devices, poles } = useLighting();
-  const { customerSlug } = usePanel();
+  const { devices } = useLighting();
   const { openDevice } = useDialogs();
   const device = devices.find((d) => d.deviceId === alert.deviceId);
-  const pole = device?.poleId ? poles.find((p) => p.id === device.poleId && p.lat !== null) : undefined;
+  const mapHref = useMapHref(alert.deviceId);
   const kindLabel =
     alert.kind === "command" ? (technical ? "Komut hatası" : "Komut uygulanamadı") : alert.warning ? "Uyarı" : "Arıza";
 
@@ -158,11 +166,8 @@ export function OpenAlertCard({
         <Badge tone={alert.warning ? "warn" : "bad"}>{kindLabel}</Badge>
         <CategoryChip category={alert.category} />
         <p className="min-w-0 flex-1 text-[15px] font-semibold text-text">{alert.title}</p>
-        {pole ? (
-          <Link
-            href={`/c/${customerSlug}/harita?direk=${pole.id}`}
-            className="btn-line h-[32px] px-3 text-[13px]"
-          >
+        {mapHref ? (
+          <Link href={mapHref} className="btn-line h-[32px] px-3 text-[13px]">
             Haritada göster
           </Link>
         ) : null}
@@ -203,32 +208,41 @@ export function ResolvedFaultRows({
   records: FaultRecord[];
   showZone?: boolean;
 }) {
-  const technical = useTechnical();
   return (
     <>
-      {records.map((h) => {
-        const warn = isWarningCode(h.code);
-        const text = faultDescription(h.code, technical);
-        const duration = new Date(h.resolvedAt!).getTime() - new Date(h.startedAt).getTime();
-        return (
-          <div
-            key={h.id}
-            className="flex flex-col gap-2 border-b border-border px-5 py-4 last:border-b-0 sm:px-[22px]"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={warn ? "warn" : "bad"}>{warn ? "Uyarı" : "Arıza"}</Badge>
-              <CategoryChip category={faultCategory(h.code)} />
-              <p className="min-w-0 flex-1 text-[14.5px] font-semibold text-text">{faultLabel(h.code, technical)}</p>
-              <span className="text-[12.5px] font-medium text-ok">Çözüldü</span>
-            </div>
-            {text ? <p className="text-[13px] text-ink-2">{text.what}</p> : null}
-            <Location {...h} showZone={showZone} />
-            <p className="text-[12.5px] text-muted">
-              {formatWhen(h.startedAt)} → {formatWhen(h.resolvedAt!)} · {formatDuration(duration)} sürdü
-            </p>
-          </div>
-        );
-      })}
+      {records.map((h) => (
+        <ResolvedFaultRow key={h.id} record={h} showZone={showZone} />
+      ))}
     </>
+  );
+}
+
+function ResolvedFaultRow({ record: h, showZone }: { record: FaultRecord; showZone: boolean }) {
+  const technical = useTechnical();
+  const mapHref = useMapHref(h.deviceId);
+  const warn = isWarningCode(h.code);
+  const text = faultDescription(h.code, technical);
+  const duration = new Date(h.resolvedAt!).getTime() - new Date(h.startedAt).getTime();
+  return (
+    <div className="flex flex-col gap-2 border-b border-border px-5 py-4 last:border-b-0 sm:px-[22px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={warn ? "warn" : "bad"}>{warn ? "Uyarı" : "Arıza"}</Badge>
+        <CategoryChip category={faultCategory(h.code)} />
+        <p className="min-w-0 flex-1 text-[14.5px] font-semibold text-text">{faultLabel(h.code, technical)}</p>
+        <span className="text-[12.5px] font-medium text-ok">Çözüldü</span>
+      </div>
+      {text ? <p className="text-[13px] text-ink-2">{text.what}</p> : null}
+      <Location {...h} showZone={showZone} />
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <p className="text-[12.5px] text-muted">
+          {formatWhen(h.startedAt)} → {formatWhen(h.resolvedAt!)} · {formatDuration(duration)} sürdü
+        </p>
+        {mapHref ? (
+          <Link href={mapHref} className="text-[13px] font-medium text-accent hover:underline">
+            Haritada göster
+          </Link>
+        ) : null}
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useState } from "react";
 import type { DeviceView, LampView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel } from "@/app/_lib/panel";
@@ -24,84 +24,21 @@ import {
 } from "@/app/_lib/selection";
 import { useDialogs } from "../PanelDialogs";
 import { StatusLabel } from "../PanelUi";
+import { RowMenu } from "../RowMenu";
 
-/** Satır sonundaki "···" menüsü: düzenle / sil. */
-function RowMenu({ device }: { device: DeviceView }) {
+/** Satır sonundaki "···" menüsü: kontrol / düzenle / sil. */
+function DeviceRowMenu({ device }: { device: DeviceView }) {
   const { technical } = usePanel();
   const { openDeviceForm, confirmDeleteDevice, openDevice } = useDialogs();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const item = "block w-full px-3.5 py-2 text-left text-sm transition-colors";
   return (
-    <div ref={ref} className="relative" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`${deviceName(device, technical)} işlemleri`}
-        className="grid h-8 w-8 place-items-center rounded-lg text-lg leading-none text-muted transition-colors hover:bg-panel-2 hover:text-text"
-      >
-        ···
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-panel py-1 shadow-xl"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-text hover:bg-panel-2`}
-            onClick={() => {
-              setOpen(false);
-              openDevice(device);
-            }}
-          >
-            {technical ? "Kontrol ve telemetri" : "Kontrol ve ölçümler"}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-text hover:bg-panel-2`}
-            onClick={() => {
-              setOpen(false);
-              openDeviceForm({ device });
-            }}
-          >
-            Düzenle
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} text-danger hover:bg-danger-soft`}
-            onClick={() => {
-              setOpen(false);
-              confirmDeleteDevice(device);
-            }}
-          >
-            Sil
-          </button>
-        </div>
-      ) : null}
-    </div>
+    <RowMenu
+      label={`${deviceName(device, technical)} işlemleri`}
+      items={[
+        { label: technical ? "Kontrol ve telemetri" : "Kontrol ve ölçümler", onSelect: () => openDevice(device) },
+        { label: "Düzenle", onSelect: () => openDeviceForm({ device }) },
+        { label: "Sil", danger: true, onSelect: () => confirmDeleteDevice(device) },
+      ]}
+    />
   );
 }
 
@@ -336,7 +273,7 @@ export function DeviceTable({
                   ) : null}
                   {canWrite && full ? (
                     <td className={td}>
-                      <RowMenu device={d} />
+                      <DeviceRowMenu device={d} />
                     </td>
                   ) : null}
                 </tr>
