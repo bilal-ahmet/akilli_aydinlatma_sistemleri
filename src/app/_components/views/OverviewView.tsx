@@ -11,6 +11,7 @@ import { isLit } from "@/app/_lib/mockData";
 import { formatInt } from "@/app/_lib/format";
 import { poleStateResolver, zonePoleCount, type PoleState } from "@/app/_lib/poles";
 import { countLamps, formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
+import { formatDate } from "@/lib/dateFormat";
 import { effectByNumber } from "@/lib/effects";
 import type { Zone } from "@/app/_lib/types";
 import { Toggle } from "../Toggle";
@@ -27,13 +28,13 @@ const KNOB_DEAD_ZONE_PX = 22;
 
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
 
-/** "28 Eylül Pazartesi" + "08:32" — saat mount'tan sonra gelir (hidrasyon). */
+/** "28/09/2026 Pazartesi" + "08:32" — saat mount'tan sonra gelir (hidrasyon). */
 function useToday() {
   const now = useNow(15_000);
   if (now === null) return { date: "", time: "--:--" };
   const d = new Date(now);
   return {
-    date: d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "long" }),
+    date: `${formatDate(d)} ${d.toLocaleDateString("tr-TR", { weekday: "long" })}`,
     time: d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
   };
 }

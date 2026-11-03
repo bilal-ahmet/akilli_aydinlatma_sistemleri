@@ -5,6 +5,7 @@ import Link from "next/link";
 import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserMenu, type MenuLink } from "./UserMenu";
+import { formatDate } from "@/lib/dateFormat";
 import type { Viewer } from "@/types/admin";
 
 function useClock() {
@@ -44,11 +45,7 @@ export function TopBar({
       })
     : "--:--:--";
   const date = now
-    ? now.toLocaleDateString("tr-TR", {
-        day: "numeric",
-        month: "long",
-        weekday: "long",
-      })
+    ? `${formatDate(now)} ${now.toLocaleDateString("tr-TR", { weekday: "long" })}`
     : "";
 
   return (

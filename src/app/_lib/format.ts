@@ -42,10 +42,5 @@ export function formatDuration(ms: number): string {
   return restH ? `${days} gün ${restH} sa` : `${days} gün`;
 }
 
-/** "22.07.2026 14:35" — arıza geçmişi gibi listelerde kullanılır. */
-export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("tr-TR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}
+// Tarih yazılışı tek yerde: gün/ay/yıl (bkz. lib/dateFormat.ts).
+export { formatDate, formatDateTime } from "@/lib/dateFormat";

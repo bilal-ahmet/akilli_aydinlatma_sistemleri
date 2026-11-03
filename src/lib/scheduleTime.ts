@@ -1,3 +1,4 @@
+import { formatDate } from "./dateFormat";
 import { sunEventUtc } from "./sun";
 
 /**
@@ -187,32 +188,20 @@ export function describeTime(spec: Pick<ScheduleSpec, "timeKind" | "timeMinutes"
   return `${name}ndan ${Math.abs(off)} dk ${off < 0 ? "önce" : "sonra"}`;
 }
 
-const dateFmt = new Intl.DateTimeFormat("tr-TR", {
-  timeZone: SCHEDULE_TZ,
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
-
 export function describeSchedule(spec: ScheduleSpec): string {
   const when =
     spec.repeat === "once"
       ? (() => {
           const date = parseDate(spec.runDate);
-          return date ? dateFmt.format(localToUtc(...date, 12 * 60)) : "Tarih yok";
+          return date ? formatDate(localToUtc(...date, 12 * 60), SCHEDULE_TZ) : "Tarih yok";
         })()
       : describeWeekdays(spec.weekdays ?? 0);
   return `${when} · ${describeTime(spec)}`;
 }
 
 const weekdayFmt = new Intl.DateTimeFormat("tr-TR", { timeZone: SCHEDULE_TZ, weekday: "long" });
-const shortDateFmt = new Intl.DateTimeFormat("tr-TR", {
-  timeZone: SCHEDULE_TZ,
-  day: "numeric",
-  month: "long",
-});
 
-/** "bugün 18:42", "yarın 06:31", "Cuma 18:40", "3 Kasım 18:40". */
+/** "bugün 18:42", "yarın 06:31", "Cuma 18:40", "03/11/2026 18:40". */
 export function formatRunAt(at: Date, now: Date = new Date()): string {
   const a = localParts(at);
   const n = localParts(now);
@@ -224,7 +213,7 @@ export function formatRunAt(at: Date, now: Date = new Date()): string {
   if (dayDiff === 1) return `yarın ${clock}`;
   if (dayDiff === -1) return `dün ${clock}`;
   if (dayDiff > 1 && dayDiff < 7) return `${weekdayFmt.format(at)} ${clock}`;
-  return `${shortDateFmt.format(at)} ${clock}`;
+  return `${formatDate(at, SCHEDULE_TZ)} ${clock}`;
 }
 
 /** Yerel bugünün tarihi (YYYY-MM-DD) — tarih alanının varsayılanı. */

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CUSTOMER_ROLES, PASSWORD_MIN, ROLE_LABELS, type CustomerRole } from "@/lib/auth/roles";
+import { formatDateTime } from "@/lib/dateFormat";
 import type { CustomerUser } from "@/types/admin";
 import { Modal } from "./Modal";
 
@@ -21,9 +22,8 @@ function generatePassword(length = 14): string {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "hiç";
-  return new Date(iso).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" });
+function formatLastLogin(iso: string | null): string {
+  return iso ? formatDateTime(iso) : "hiç";
 }
 
 type Form =
@@ -242,7 +242,7 @@ export function UserManager({
                       <span className="text-[10px] text-muted">(siz)</span>
                     ) : null}
                   </p>
-                  <p className="mt-0.5 text-[11px] text-muted">Son giriş: {formatDate(u.lastLoginAt)}</p>
+                  <p className="mt-0.5 text-[11px] text-muted">Son giriş: {formatLastLogin(u.lastLoginAt)}</p>
                 </div>
                 {canManage ? (
                   <div className="flex shrink-0 gap-1">

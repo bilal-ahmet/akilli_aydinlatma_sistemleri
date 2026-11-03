@@ -6,6 +6,7 @@ import { useLighting } from "@/app/_lib/lighting";
 import { useApi } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { isEmptyPlan, planTargets, pruneSelection, type Selection } from "@/app/_lib/selection";
+import { DATE_PLACEHOLDER, displayToIsoDate, isoDateToDisplay, maskDateInput } from "@/lib/dateFormat";
 import { EFFECTS, MORSE_TEXT_MAX, effectByNumber, normalizeMorseText } from "@/lib/effects";
 import { sunEventUtc } from "@/lib/sun";
 import {
@@ -78,6 +79,37 @@ const parseClock = (s: string): number | null => {
   const m = /^(\d{2}):(\d{2})$/.exec(s);
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
+
+/**
+ * Tarih alanı: gün/ay/yıl yazılır ("03/11/2026"). Tarayıcının yerel
+ * `type="date"` kutusu işletim sistemi diline göre ay/gün/yıl gösterebildiği
+ * için kullanılmaz. `value`/`onChange` API biçimindedir (YYYY-MM-DD); geçersiz
+ * ya da eksik girişte `onChange("")`.
+ */
+function DateField({ value, onChange }: { value: string; onChange: (iso: string) => void }) {
+  // Yazarken kullanıcının metni korunur; boşken (null) `value`dan türetilir.
+  const [text, setText] = useState<string | null>(null);
+  const shown = text ?? isoDateToDisplay(value);
+  const invalid = shown !== "" && displayToIsoDate(shown) === null;
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      placeholder={DATE_PLACEHOLDER}
+      maxLength={10}
+      value={shown}
+      aria-invalid={invalid}
+      onChange={(e) => {
+        const masked = maskDateInput(e.target.value);
+        setText(masked);
+        onChange(displayToIsoDate(masked) ?? "");
+      }}
+      onBlur={() => setText(null)}
+      className="field !w-52 font-mono"
+    />
+  );
+}
 
 /**
  * Zamanlama formu: Ne yapılsın · Nerede · Ne zaman · Ad. Hedef Efektler
@@ -404,13 +436,7 @@ export function ScheduleDialog({
           ) : (
             <label className="flex flex-col">
               <span className="field-label">Tarih</span>
-              <input
-                type="date"
-                value={runDate}
-                min={today || undefined}
-                onChange={(e) => setRunDate(e.target.value)}
-                className="field !w-52 cursor-pointer"
-              />
+              <DateField value={runDate} onChange={setRunDate} />
             </label>
           )}
 

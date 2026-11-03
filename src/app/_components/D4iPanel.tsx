@@ -2,6 +2,7 @@
 
 import type { D4iSnapshot } from "@/app/_lib/types";
 import { useTechnical } from "@/app/_lib/panel";
+import { formatDateTime } from "@/lib/dateFormat";
 import { MAX_ARC_LEVEL, levelToPercent } from "@/types/lighting";
 import {
   DRIVER_FAULTS,
@@ -811,10 +812,7 @@ export function D4iPanel({
                 {r.recordedAt ? (
                   <p className="mt-2.5 text-xs text-muted">
                     {technical ? "Son rapor" : "Son güncelleme"}:{" "}
-                    {new Date(r.recordedAt).toLocaleString("tr-TR", {
-                      dateStyle: "short",
-                      timeStyle: "medium",
-                    })}
+                    {formatDateTime(r.recordedAt, { seconds: true })}
                   </p>
                 ) : null}
               </div>

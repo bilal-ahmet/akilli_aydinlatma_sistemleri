@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Modal } from "@/app/_components/Modal";
+import { formatDateTime } from "@/lib/dateFormat";
 import type { AuditEntry } from "@/types/admin";
 import { CustomerForm, type CustomerFormValues } from "../../CustomerForm";
 
@@ -181,7 +182,7 @@ export function CustomerSettings({
                 </span>
                 <span className="text-xs text-muted">
                   <span className="font-mono">{a.username ?? "—"}</span> ·{" "}
-                  {new Date(a.at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}
+                  {formatDateTime(a.at)}
                 </span>
               </li>
             ))}

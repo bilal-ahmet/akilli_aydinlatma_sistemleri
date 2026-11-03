@@ -6,6 +6,7 @@ import type { AlertItem } from "@/app/_lib/alerts";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel, useTechnical } from "@/app/_lib/panel";
 import { deviceName, formatDuration } from "@/app/_lib/format";
+import { formatDate } from "@/lib/dateFormat";
 import { formatMac } from "@/lib/mac";
 import {
   faultCategory,
@@ -23,12 +24,11 @@ import { useDialogs } from "./PanelDialogs";
  * başlık, ne olduğu ve etiketli konum (bölge · cihaz · lamba).
  */
 
-/** "26 Eylül, 22:14" */
+/** "26/09/2026, 22:14" */
 export function formatWhen(iso: string): string {
   const d = new Date(iso);
-  const date = d.toLocaleDateString("tr-TR", { day: "numeric", month: "long" });
   const time = d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-  return `${date}, ${time}`;
+  return `${formatDate(d)}, ${time}`;
 }
 
 function Badge({ tone, children }: { tone: "bad" | "warn"; children: React.ReactNode }) {
