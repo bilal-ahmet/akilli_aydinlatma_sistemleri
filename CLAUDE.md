@@ -682,6 +682,8 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
 - **Durum** `app/_lib/poles.ts → poleState` (saf, mobil kopyası var):
   `no_device → offline (3 dk) → fault (uyarı olmayan lamba arızası ya da komut
   hatası) → on / off`. Envanter "Yanan direk", Genel Bakış ve harita bunu kullanır.
+  "Yanan lamba" da aynı kuralla sayılır (`deviceHealth.ts → countLamps`): bağlantısız
+  cihazın lambaları son komutun durumunda donduğu için yanan değil "bağlantısız" sayılır.
   Bölgede kayıtlı direk yoksa elle girilen `zones.pole_count` yalnızca sayı
   olarak gösterilir (`zonePoleCount`); direk sayısından güç tahmini yok.
 - **İçe aktarma** (`lib/poleImport.ts` saf ayrıştırıcı): CSV (`;` `,` sekme,

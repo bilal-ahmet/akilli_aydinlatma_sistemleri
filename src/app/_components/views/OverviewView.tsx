@@ -9,9 +9,8 @@ import { useZoneStats } from "@/app/_lib/useZoneStats";
 import { openAlerts } from "@/app/_lib/alerts";
 import { isLit } from "@/app/_lib/mockData";
 import { formatInt } from "@/app/_lib/format";
-import { lampOn } from "@/app/_lib/selection";
 import { poleStateResolver, zonePoleCount, type PoleState } from "@/app/_lib/poles";
-import { formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
+import { countLamps, formatPower, isOnline, splitPower } from "@/app/_lib/deviceHealth";
 import { effectByNumber } from "@/lib/effects";
 import type { Zone } from "@/app/_lib/types";
 import { Toggle } from "../Toggle";
@@ -520,14 +519,22 @@ function LitCard() {
     );
   }
 
-  const total = devices.reduce((a, d) => a + d.lamps.length, 0);
-  const lit = devices.reduce((a, d) => a + d.lamps.filter(lampOn).length, 0);
+  const lamps = countLamps(devices, now);
+  const hint =
+    lamps.total === 0
+      ? "Cihazlar henüz lamba bildirmedi"
+      : [
+          lamps.offline > 0 ? `${formatInt(lamps.offline)} bağlantısız` : null,
+          lamps.off > 0 ? `${formatInt(lamps.off)} kapalı` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || "Kapalı lamba yok";
   return (
     <StatCard
       label="Yanan lamba"
-      value={formatInt(lit)}
-      unit={`/ ${formatInt(total)}`}
-      hint={total === 0 ? "Cihazlar henüz lamba bildirmedi" : total === lit ? "Kapalı lamba yok" : `${formatInt(total - lit)} lamba kapalı`}
+      value={formatInt(lamps.lit)}
+      unit={`/ ${formatInt(lamps.total)}`}
+      hint={now === null ? "…" : hint}
     />
   );
 }

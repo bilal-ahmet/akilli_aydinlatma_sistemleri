@@ -1,5 +1,6 @@
 import type { DeviceMeasure, DeviceView, OpenFault, Zone } from "./types";
 import { formatKw } from "./format";
+import { lampOn } from "./selection";
 
 /**
  * Cihazın "çevrimiçi" sayıldığı pencere. ESP kanal başına ~30 sn'de bir rapor
@@ -31,6 +32,35 @@ export const TONE_DOT: Record<HealthTone, string> = {
 export function isOnline(d: DeviceView, now: number | null): boolean {
   if (!d.lastSeen || now === null) return false;
   return now - new Date(d.lastSeen).getTime() < ONLINE_WINDOW_MS;
+}
+
+export interface LampCounts {
+  total: number;
+  lit: number;
+  off: number;
+  /** Bağlantısız cihazların lambaları — yanıyor/kapalı hakkında bilgi yok. */
+  offline: number;
+}
+
+/**
+ * "Yanan lamba" sayımı. Bağlantısız cihazın lamba kaydı son komutun durumunda
+ * donar (cihaz düzeltemez), bu yüzden yanan sayılmaz — `poleState` ile aynı
+ * kural. Saat henüz yoksa (ilk render) bağlantı yargısına varılmaz.
+ */
+export function countLamps(devices: DeviceView[], now: number | null): LampCounts {
+  const c: LampCounts = { total: 0, lit: 0, off: 0, offline: 0 };
+  for (const d of devices) {
+    const n = Math.max(d.lampCount, d.lamps.length);
+    c.total += n;
+    if (now !== null && !isOnline(d, now)) {
+      c.offline += n;
+      continue;
+    }
+    const lit = d.lamps.filter(lampOn).length;
+    c.lit += lit;
+    c.off += n - lit;
+  }
+  return c;
 }
 
 /**

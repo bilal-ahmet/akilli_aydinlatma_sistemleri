@@ -3,17 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { DeviceView, FaultRecord, Zone } from "@/app/_lib/types";
+import type { FaultRecord, Zone } from "@/app/_lib/types";
 import { isLit } from "@/app/_lib/mockData";
 import { useLighting } from "@/app/_lib/lighting";
 import { useApi, usePanel, useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { useZoneStats } from "@/app/_lib/useZoneStats";
-import { isOnline, splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
+import { countLamps, isOnline, splitPower, zoneMeta } from "@/app/_lib/deviceHealth";
 import { openAlerts } from "@/app/_lib/alerts";
 import { effectByNumber } from "@/lib/effects";
 import { formatInt } from "@/app/_lib/format";
-import { emptySelection, lampOn, pruneSelection, type Selection } from "@/app/_lib/selection";
+import { emptySelection, pruneSelection, type Selection } from "@/app/_lib/selection";
 import { poleStateResolver, zonePoleCount } from "@/app/_lib/poles";
 import { OpenAlertCard, ResolvedFaultRows } from "../FaultItems";
 import { Toggle } from "../Toggle";
@@ -31,11 +31,6 @@ const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
 const HISTORY_DAYS = 30;
 /** Bölge geçmişinde sayfa başına kayıt. */
 const HISTORY_PAGE_SIZE = 10;
-
-/** Cihazlara kayıtlı lamba (DALI kanalı) toplamı. */
-function lampTotal(devices: DeviceView[]): number {
-  return devices.reduce((n, d) => n + Math.max(d.lampCount, d.lamps.length), 0);
-}
 
 /**
  * Envanter kutusu: "çalışan / toplam" + oran çubuğu + kısa açıklama. Çubuk
@@ -133,7 +128,7 @@ function ZoneList({ selected }: { selected: string | null }) {
               <span className="truncate text-[12.5px] text-muted">
                 {zoneMeta(z, {
                   devices: stats(z.id).devices.length,
-                  lamps: lampTotal(stats(z.id).devices),
+                  lamps: countLamps(stats(z.id).devices, null).total,
                   poles: zonePoleCount(z, poles),
                 })}
               </span>
@@ -194,8 +189,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
     ]
       .filter(Boolean)
       .join(" · ") || "Hepsi yanıyor";
-  const lampsTotal = lampTotal(devices);
-  const lampsLit = devices.reduce((n, d) => n + d.lamps.filter(lampOn).length, 0);
+  const lamps = countLamps(devices, now);
   const faultyLamps = new Set(
     alerts
       .filter((a) => a.kind === "fault" && !a.warning && a.channel !== null)
@@ -204,9 +198,13 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   const online = now === null ? 0 : devices.filter((d) => isOnline(d, now)).length;
   const offline = now === null ? 0 : devices.length - online;
   const lampHint =
-    lampsTotal === 0
+    lamps.total === 0
       ? "Kayıtlı lamba yok"
-      : [faultyLamps > 0 ? `${faultyLamps} arızalı` : null, lampsTotal - lampsLit > 0 ? `${lampsTotal - lampsLit} kapalı` : null]
+      : [
+          faultyLamps > 0 ? `${faultyLamps} arızalı` : null,
+          lamps.offline > 0 ? `${lamps.offline} bağlantısız` : null,
+          lamps.off > 0 ? `${lamps.off} kapalı` : null,
+        ]
           .filter(Boolean)
           .join(" · ") || "Hepsi yanıyor";
 
@@ -343,10 +341,10 @@ function ZoneDetail({ zone }: { zone: Zone }) {
         />
         <CountTile
           label="Yanan lamba"
-          active={lampsLit}
-          total={lampsTotal}
-          alert={faultyLamps > 0}
-          hint={lampHint}
+          active={lamps.lit}
+          total={lamps.total}
+          alert={faultyLamps > 0 || lamps.offline > 0}
+          hint={now === null ? "…" : lampHint}
         />
       </section>
 
