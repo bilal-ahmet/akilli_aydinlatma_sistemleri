@@ -31,6 +31,9 @@ import { deviceHealthSchema, parseUplink } from "../src/types/lighting";
 import { activeFaultCodes } from "../src/lib/faults";
 import { readMeasurement, type D4iBlock } from "../src/lib/d4i";
 import { describeDeviceError } from "../src/lib/deviceErrors";
+import { encodeCommand } from "../src/lib/binproto/command";
+import { ShortIdTable } from "../src/lib/binproto/shortIds";
+import { commandAckSchema } from "../src/types/lighting";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -586,6 +589,83 @@ for (const raw of [
 ]) {
   check(`hata metni tanınıyor: "${raw}"`, describeDeviceError(raw).known);
 }
+
+// ── Binary komut (downlink) ──────────────────────────────────
+check(
+  "encodeCommand dim = doküman baytları",
+  Buffer.from(encodeCommand({ action: "dim", id: 7, channel: 0, value: 25 })).equals(Buffer.from(hex(examples.dim))),
+);
+check(
+  "encodeCommand efekt (kanal 255, Mors) = doküman baytları",
+  Buffer.from(encodeCommand({ action: "efekt", id: 8, channel: 255, number: 22, text: "MEVEN" })).equals(
+    Buffer.from(hex(examples.efekt)),
+  ),
+);
+const allLamps = Object.fromEntries(decoded(encodeCommand({ action: "efekt", id: 9, number: 14 })).fields);
+same("kanalsız efekt: COMMAND_CHANNEL yok (= tüm lambalar), metin yok", allLamps, {
+  TYPE: 8,
+  COMMAND_ACTION: 2,
+  COMMAND_ID: 9,
+  COMMAND_EFFECT_NUMBER: 14,
+});
+const dimAll = Object.fromEntries(decoded(encodeCommand({ action: "dim", id: 10, value: 0 })).fields);
+same("kanalsız dim 0 (kapat)", dimAll, { TYPE: 8, COMMAND_ACTION: 1, COMMAND_ID: 10, COMMAND_VALUE: 0 });
+check(
+  "boş Mors metni yazılmaz",
+  !decoded(encodeCommand({ action: "efekt", id: 11, number: 22, text: "" })).fields.some(
+    ([n]) => n === "COMMAND_EFFECT_TEXT",
+  ),
+);
+same(
+  "bakım: commission=4, ota_check=5",
+  [
+    Object.fromEntries(decoded(encodeCommand({ action: "commission", id: 12 })).fields).COMMAND_ACTION,
+    Object.fromEntries(decoded(encodeCommand({ action: "ota_check", id: 13 })).fields).COMMAND_ACTION,
+  ],
+  [4, 5],
+);
+const throws = (f: () => unknown) => {
+  try {
+    f();
+    return false;
+  } catch {
+    return true;
+  }
+};
+check(
+  "id 0 / 65536 reddedilir",
+  throws(() => encodeCommand({ action: "dim", id: 0, value: 1 })) &&
+    throws(() => encodeCommand({ action: "dim", id: 65536, value: 1 })),
+);
+check("on/off binary'de yok", throws(() => encodeCommand({ action: "on" as "dim" })));
+
+// Kısa id tablosu: 0 atlanır, 65535'ten 1'e döner, TTL'de düşer
+const ids = new ShortIdTable(1000, 65534);
+same("kısa id sarmalaması 65534 → 65535 → 1", [ids.issue("uuid-a", 0), ids.issue("uuid-b", 0), ids.issue("uuid-c", 0)], [
+  65534, 65535, 1,
+]);
+check("kısa id → UUID", ids.resolve(65535, 500) === "uuid-b");
+check("süresi geçen kısa id eşlenmez", ids.resolve(1, 2000) === undefined);
+check("verilmemiş kısa id eşlenmez", ids.resolve(42, 0) === undefined);
+
+// Binary ack → JSON ack şeması (id sayı; lib/mqtt.ts shortIds ile UUID'ye çevirir)
+const ackOk = legacy(
+  encodeFrame("COMMAND_ACK", [
+    ["COMMAND_ACTION", 1],
+    ["COMMAND_ID", 513],
+    ["COMMAND_RESULT", 0],
+  ]),
+);
+const ackParsed = ackOk?.kind === "ack" ? commandAckSchema.safeParse(ackOk.json) : null;
+check(
+  "binary ack ok → {action:dim, id:513, status:ok}",
+  !!ackParsed?.success && ackParsed.data.id === 513 && ackParsed.data.status === "ok" && ackParsed.data.action === "dim",
+);
+const ackCrc = legacy(encodeFrame("COMMAND_ACK", [["COMMAND_RESULT", -15]]));
+check(
+  "id'siz CRC ack'i → hata metni, id yok",
+  ackCrc?.kind === "ack" && ackCrc.json.id === undefined && ackCrc.json.error === "crc hatali, paket islenmedi",
+);
 
 console.log(failures ? `\n${failures} kontrol başarısız` : "\nHepsi geçti");
 process.exit(failures ? 1 : 0);

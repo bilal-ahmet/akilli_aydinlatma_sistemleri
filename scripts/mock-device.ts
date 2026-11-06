@@ -19,8 +19,11 @@
  *   npm run mock:device A842E3123456 3 ataturk-bulvari --bin   # binary protokol v1
  *
  * `--bin`: yeni firmware gibi d4i_periodic, health ve HELLO'yu binary olarak
- * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). JSON komuta yanıt yine
- * JSON ack'tir (/data) — firmware geçiş döneminde de böyle davranır.
+ * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). Komutlarda iki biçim
+ * de kabul edilir (firmware geçiş dönemi): ilk bayt 0x01-0x1F ise binary
+ * komut → binary COMMAND_ACK (/bin, u16 id aynen döner); `{` ise JSON komut →
+ * JSON ack (/data). `--bin` olmadan eski firmware gibi davranır: binary komuta
+ * "gecersiz json" döner.
  *
  * Not: adres 0 bilerek `d4i_supported:false` raporlar (sahadaki örnekle aynı) —
  * dashboard'un D4i'siz sürücüyü de doğru gösterdiğini test etmek için.
@@ -31,7 +34,15 @@ import mqtt from "mqtt";
 import { effectByNumber, EFFECT_MAX_NUMBER, MORSE_TEXT_MAX } from "@/lib/effects";
 import { MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
 import { encodeFrame, type FieldValue } from "@/lib/binproto/codec";
-import { OTA_RESULTS, OTA_STATES, type EnumTable } from "@/lib/binproto/fields";
+import { decodeFrame } from "@/lib/binproto/codec";
+import {
+  COMMAND_ACTIONS,
+  COMMAND_RESULT_NOT_ENOUGH_LAMPS,
+  COMMAND_RESULT_TEXTS,
+  OTA_RESULTS,
+  OTA_STATES,
+  type EnumTable,
+} from "@/lib/binproto/fields";
 
 const ARGS = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const BIN = process.argv.includes("--bin");
@@ -71,8 +82,12 @@ const bootAt = Date.now();
 /** Firmware sınırı: cihaz başına en fazla 5 lamba, kanallar 0-4. */
 const MAX_COMMISSION_CH = 4;
 
-/** Komutun action + id'si — yanıtta aynen geri gönderilir (firmware 1.0.9). */
-let current: { action?: unknown; id?: unknown } = {};
+/**
+ * Komutun action + id'si — yanıtta aynen geri gönderilir (firmware 1.0.9).
+ * `binary`: komut binary geldiyse yanıt binary COMMAND_ACK olur (/bin).
+ * `result`: binary pakette biçim hatası (yalnızca sonuç kodu döner).
+ */
+let current: { action?: unknown; id?: unknown; binary?: boolean } = {};
 
 const client = mqtt.connect({
   protocol: "mqtts",
@@ -84,7 +99,36 @@ const client = mqtt.connect({
   clientId: `mock-${MAC}-${Math.random().toString(16).slice(2, 8)}`,
 });
 
+/** Firmware'in hata metni → binary COMMAND_RESULT kodu (+ -10'un lamba sayıları). */
+function resultCode(error: string): { code: number; needed?: number; available?: number } {
+  const lamps = /en az (\d+) lamba ister, hatta (\d+) lamba var/.exec(error);
+  if (lamps) return { code: COMMAND_RESULT_NOT_ENOUGH_LAMPS, needed: +lamps[1], available: +lamps[2] };
+  const exact = Object.entries(COMMAND_RESULT_TEXTS).find(([, t]) => t === error);
+  if (exact) return { code: Number(exact[0]) };
+  // Mock'un eski metin varyantları (aralık yazımı farklı) → aynı kod.
+  if (error.startsWith("dim icin")) return { code: -3 };
+  if (error.startsWith("efekt icin") || error.startsWith("mors icin")) return { code: -4 };
+  return { code: -5 };
+}
+
+function binaryAck(error?: string, onlyResult?: number) {
+  const r = onlyResult !== undefined ? { code: onlyResult } : error ? resultCode(error) : { code: 0 };
+  const action =
+    onlyResult === undefined && typeof current.action === "string"
+      ? Number(Object.entries(COMMAND_ACTIONS).find(([, n]) => n === current.action)?.[0] ?? 0) || undefined
+      : undefined;
+  publishBin("COMMAND_ACK", [
+    ["COMMAND_ACTION", action],
+    ["COMMAND_ID", onlyResult === undefined && typeof current.id === "number" && current.id > 0 ? current.id : undefined],
+    ["COMMAND_RESULT", r.code],
+    ["COMMAND_LAMPS_NEEDED", r.needed],
+    ["COMMAND_LAMPS_AVAILABLE", r.available],
+  ]);
+  console.log(error || onlyResult ? `  → binary ack: HATA ${r.code}${error ? ` "${error}"` : ""}` : "  → binary ack: ok");
+}
+
 function ack(error?: string) {
+  if (current.binary) return binaryAck(error);
   const echo = {
     ...(current.action !== undefined ? { action: current.action } : {}),
     ...(current.id !== undefined ? { id: current.id } : {}),
@@ -493,14 +537,39 @@ client.on("message", (topic, raw) => {
     text?: string;
     id?: string | number;
   };
-  try {
-    cmd = JSON.parse(raw.toString());
-  } catch {
-    console.warn("◀ geçersiz JSON");
-    current = {}; // geçersiz JSON'da action/id geri gelmez
-    return ack("gecersiz json");
+  if (BIN && raw.length > 0 && raw[0] >= 0x01 && raw[0] <= 0x1f) {
+    // Binary komut (protokol v1). Bozuk pakette action/id güvenilmez: yalnızca sonuç.
+    current = { binary: true };
+    const frame = decodeFrame(raw);
+    if (!frame.ok) {
+      console.warn(`◀ bozuk binary komut (${frame.reason}: ${frame.detail})`);
+      return binaryAck(undefined, frame.reason === "CRC" ? -15 : frame.reason === "VERSION" ? -16 : -17);
+    }
+    if (frame.typeName !== "COMMAND") return binaryAck(undefined, -17);
+    const f = new Map(frame.fields);
+    const num = (k: string) => (typeof f.get(k) === "number" ? (f.get(k) as number) : undefined);
+    const code = num("COMMAND_ACTION");
+    const ch = num("COMMAND_CHANNEL");
+    cmd = {
+      action: code === undefined ? undefined : (COMMAND_ACTIONS[code] ?? `bilinmeyen-${code}`),
+      value: num("COMMAND_VALUE"),
+      number: num("COMMAND_EFFECT_NUMBER"),
+      channel: ch === 255 ? undefined : ch, // 255 = broadcast
+      text: typeof f.get("COMMAND_EFFECT_TEXT") === "string" ? (f.get("COMMAND_EFFECT_TEXT") as string) : undefined,
+      id: num("COMMAND_ID"),
+    };
+    current = { action: cmd.action, id: cmd.id, binary: true };
+    console.log(`◀ binary komut (${raw.length} B, id ${cmd.id ?? "yok"})`);
+  } else {
+    try {
+      cmd = JSON.parse(raw.toString());
+    } catch {
+      console.warn("◀ geçersiz JSON");
+      current = {}; // geçersiz JSON'da action/id geri gelmez
+      return ack("gecersiz json");
+    }
+    current = { action: cmd.action, id: cmd.id };
   }
-  current = { action: cmd.action, id: cmd.id };
 
   const via = topic === T_ALL ? "all" : topic === T_CMD ? "MAC" : "bölge";
   const { action, value, number, channel, text } = cmd;

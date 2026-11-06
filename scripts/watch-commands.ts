@@ -10,12 +10,17 @@
  *   npm run watch:cmd 1CC3ABF99E18 # yalnızca bu MAC'in topic'i
  *
  * Kullanım: bunu açık bırak, dashboard'dan komutu tetikle, çıktıya bak.
+ *
+ * Binary komutlar (protokol v1, ilk bayt 0x01) çözülüp aynı denetimden geçer;
+ * hex'i ve kısa id'si (u16) ayrıca yazılır.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import mqtt from "mqtt";
 import { effectByNumber } from "@/lib/effects";
 import { MAX_CHANNEL } from "@/types/lighting";
+import { decodeFrame, toHex } from "@/lib/binproto/codec";
+import { COMMAND_ACTIONS } from "@/lib/binproto/fields";
 
 const ONLY = process.argv[2]?.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
 // "+/cmd" tüm Meven:<x>/cmd topic'lerini kapsar (MAC, bölge slug'ı ve "all").
@@ -90,6 +95,25 @@ function audit(p: Record<string, unknown>): string[] {
   return notes;
 }
 
+/** Binary komutu JSON komut biçimine çevirir (denetim aynı kalsın). */
+function binaryToCommand(raw: Buffer): Record<string, unknown> | string {
+  const frame = decodeFrame(raw);
+  if (!frame.ok) return `✗ HATA: binary paket bozuk (${frame.reason}: ${frame.detail}) — cihaz -15/-16/-17 döner`;
+  if (frame.typeName !== "COMMAND") return `✗ HATA: tip COMMAND değil (${frame.typeName ?? frame.type})`;
+  const f = new Map(frame.fields);
+  const out: Record<string, unknown> = {};
+  const action = f.get("COMMAND_ACTION");
+  if (action !== undefined) out.action = COMMAND_ACTIONS[action as number] ?? `bilinmeyen(${String(action)})`;
+  if (f.has("COMMAND_VALUE")) out.value = f.get("COMMAND_VALUE");
+  if (f.has("COMMAND_EFFECT_NUMBER")) out.number = f.get("COMMAND_EFFECT_NUMBER");
+  if (f.has("COMMAND_EFFECT_TEXT")) out.text = f.get("COMMAND_EFFECT_TEXT");
+  // Binary'de 255 = broadcast, yokluğuyla aynı anlamda.
+  const ch = f.get("COMMAND_CHANNEL");
+  if (ch !== undefined && ch !== 255) out.channel = ch;
+  if (f.has("COMMAND_ID")) out.id = f.get("COMMAND_ID");
+  return out;
+}
+
 client.on("message", (topic, raw) => {
   const body = raw.toString();
   const stamp = new Date().toLocaleTimeString("tr-TR");
@@ -97,6 +121,19 @@ client.on("message", (topic, raw) => {
   const kind = target === "all" ? "TÜM SİSTEM" : /^[0-9A-F]{12}$/.test(target) ? "cihaz" : "bölge";
 
   console.log(`[${stamp}] ${kind}: ${target}`);
+  if (raw.length > 0 && raw[0] >= 0x01 && raw[0] <= 0x1f) {
+    console.log(`  binary (${raw.length} B): ${toHex(raw)}`);
+    const cmd = binaryToCommand(raw);
+    if (typeof cmd === "string") {
+      console.log(`  ${cmd}`);
+    } else {
+      console.log(`  = ${JSON.stringify(cmd)}`);
+      if (cmd.action === "commission" || cmd.action === "ota_check") console.log(`  ✓ bakım komutu`);
+      else for (const n of audit(cmd)) console.log(`  ${n}`);
+    }
+    console.log();
+    return;
+  }
   console.log(`  ${body}`);
   try {
     for (const n of audit(JSON.parse(body))) console.log(`  ${n}`);
