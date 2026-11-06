@@ -32,10 +32,11 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
 | `Meven:<slug>/cmd` (bölge, müşteri "Tüm Sistem"i) | Bölgenin kayıtlı cihazlarının **hepsi** binary-yetenekliyse binary, değilse JSON |
 | `Meven:all/cmd` | Her zaman JSON (kayıtsız cihazlar da dinliyor) |
 
-- **Binary-yetenekli** (`binCommandCapable`): son 10 dk'da geçerli `/bin`
-  paketi gelmiş ve ondan sonra JSON telemetri/health gelmemiş. OTA ile eski
-  firmware'e dönen cihaz JSON basmaya başlar ve hemen JSON komuta düşer.
-  Backend yeniden başladığında ilk raporlar gelene kadar (~30 sn) JSON gider.
+- **Binary-yetenekli** (`binCommandCapable`): geçerli `/bin` paketi görülmüş
+  ve ondan sonra JSON telemetri/health gelmemiş. Süre sınırı yok (cihaz
+  dakikalarca sessiz kalabilir). OTA ile eski firmware'e dönen cihaz JSON
+  basmaya başlar ve hemen JSON komuta düşer. Backend yeniden başladığında
+  cihazın ilk binary paketine kadar JSON gider.
 - **Sınır:** bölge kararı DB'deki kayıtlara göre verilir. Panele eklenmemiş
   ama o bölge slug'ıyla flaşlanmış eski firmware'li bir cihaz binary bölge
   komutunu anlamaz (`gecersiz json`).
@@ -51,6 +52,11 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
   (delivered/failed, rozet, arıza geçmişi, Bakım sekmesi). Eşlenemeyen ack
   (restart sonrası, süresi geçmiş, id'siz -15/-16/-17) bir komutu tahminle
   `failed` yapmaz; hata yine cihaz rozetine yazılır.
+- **Toplu komuta cevap yok** (firmware kararı, binary ve JSON): bölge ve
+  `all` topic'lerine gelen komuta cihaz başarı cevabı dönmez. `commands`
+  satırı cihazın sonraki telemetrisiyle `delivered` olur. Firmware ileride
+  yalnızca hata cevabını rastgele gecikmeyle gönderirse id ile bölge
+  komutuna bağlanır.
 - **Kapatma anahtarı:** `MQTT_BINARY_COMMANDS=off` → bütün komutlar JSON.
 - Admin kartı cihaz başına komut biçimini gösterir.
 
@@ -58,7 +64,7 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
 
 | Dosya | Görev |
 |---|---|
-| `src/lib/binproto/fields.ts` | Alan tablosu (136 alan) + enum'lar — `msg_fields.h`'nin kopyası |
+| `src/lib/binproto/fields.ts` | Alan tablosu (138 alan) + enum'lar — `msg_fields.h`'nin kopyası |
 | `src/lib/binproto/codec.ts` | CRC-16/CCITT-FALSE, `decodeFrame`, `encodeFrame` |
 | `src/lib/binproto/toJson.ts` | Python `to_legacy` portu (d4i, health, ack, commission…) |
 | `src/lib/binproto/espErr.ts` | OTA hata kodu → ESP-IDF adı |
@@ -87,6 +93,13 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
    `thread.network_name`) bağlantı başına bir kez gelir ve cihaz başına bellekte
    tutulur. Backend yeniden başlarsa ilk health'te `devices.health`'teki son
    değerle tohumlanır.
+   **Rapor aralıkları** (`0xB9 HEALTH_INTERVAL_S` → `health_interval_s`,
+   `0xBA HEALTH_REPORT_INTERVAL_S` → `report_interval_s`, u32 saniye; 06.11.2026)
+   yalnızca ilk kayıtta (join) gelir. Önbelleğe alınmaz, `devices`
+   sütunlarında kalıcı tutulur; panelin "bağlantı yok" ve ölçüm tazelik
+   pencereleri bunlardan hesaplanır (`src/lib/deviceWindows.ts`). Backend
+   join anında kapalıysa (deploy) değer kaçırılır ve cihaz bir sonraki join'e
+   kadar varsayılan pencereyle (3 dk) değerlendirilir.
 5. **LoRa gateway paketleri** (ilk bayt `0x02`) bu fazda desteklenmez. Hata
    sayılmaz; admin kartında "LoRa (desteklenmiyor)" olarak sayılır.
 

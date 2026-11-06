@@ -225,8 +225,10 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   karar, DB'siz — Kural #10). Cihaz iki biçimi de kabul eder; binary komuta
   `/bin`'e binary ack, JSON komuta `/data`'ya JSON ack döner.
   - Tek cihaz (`Meven:<MAC>/cmd`, bakım dahil): cihaz binary-yetenekliyse
-    binary (`binCommandCapable`: son 10 dk'da geçerli `/bin` gelmiş VE ondan
-    sonra JSON telemetri/health gelmemiş — OTA geri dönüşü JSON'a düşürür).
+    binary (`binCommandCapable`: geçerli `/bin` görülmüş VE ondan sonra JSON
+    telemetri/health gelmemiş — süre sınırı yok, seyrek rapor veren cihaz da
+    binary alır; OTA geri dönüşü JSON'a düşürür; bellek içi, restart sonrası
+    ilk `/bin`'e kadar JSON).
   - Bölge ve müşteri "Tüm Sistem"i: bölgenin **kayıtlı** cihazlarının hepsi
     binary-yetenekliyse binary (`tenancy.zoneMacs`), biri bile değilse JSON.
     DB'de kaydı olmayan ama o slug'la flaşlanmış eski cihaz binary bölge
@@ -246,6 +248,10 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
 - **Bir-kezlik health alanları** (`idf_version`, derleme zamanı, Thread ağ adı)
   bağlantı başına bir kez gelir; cihaz başına bellekte tutulur. Önbellek boşsa
   `devices.health`'ten tohumlanır.
+- **Rapor aralıkları** (`0xB9 health_interval_s`, `0xBA report_interval_s`,
+  saniye) yalnızca **ilk kayıtta (join)** gelir. Önbelleğe değil
+  `devices.health_interval_s / report_interval_s` sütunlarına yazılır
+  (`handleHealth`; gelmediği mesajda ezilmez). Bkz. "Cihaz başına pencereler".
 - **Yok sayılanlar:** ilk bayt `0x02` LoRa gateway protokolüdür (henüz
   desteklenmez, sayılır). HELLO JSON değildir, `/data`'ya düz `"data"` metni
   olarak gelir. `dali_status`, `d4i` (tek bank) ve `commission_result` tipleri
@@ -305,7 +311,8 @@ aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür. Firmware 1
 sahada cihaz başına en fazla 5 lamba, kanal **0–4** kullanır (taramada atanır).
 `id`: komut kimliği = `commands.request_id`. `publishCommand` publish'ten ÖNCE
 üretir ve **her** komuta koyar; cihaz yanıtında aynen geri yollar (bkz. Komut
-yanıtı). Bölge/"Tüm Sistem" komutunda tek id, her cihaz onunla yanıtlar.
+yanıtı). Bölge/"Tüm Sistem" komutunda tek id vardır; toplu komuta cihaz
+başarı cevabı dönmez (bkz. Komut yanıtı).
 Binary komutta kabloda UUID yerine u16 kısa id gider (bkz. Binary protokol v1).
 
 > **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
@@ -348,7 +355,7 @@ tek lamba seçilse bile `channel` alanını hiç koymaz,
 `DeviceControlModal` tek lamba seçili olsa da komutu cihazın tamamına gönderir,
 `EffectPicker` lambası yetmeyen efektleri pasif gösterir (`lampCount` yalnızca
 tek cihaz hedefinde bilinir; bölge/"tüm sistem"de efekt sunulur, yetersiz cihaz
-kendi hatasını döner). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
+efekti başlatmaz — toplu komuta cevap dönmediği için hatası panelde görünmez). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
 — dolduğunda `efekt baslatilamadi (bos slot yok…)` döner.
 
 **Çok lambalı efekt cihaz geneli durur.** Böyle bir efekt çalışırken bir lambada
@@ -434,7 +441,17 @@ Bu topic'te **üç kontrat** akar; ayrım `src/types/lighting.ts` → `parseUpli
 içinde yapılır. Yeni iki formatta payload'da `deviceId` **yoktur** — MAC
 topic'ten çözülür (`macFromDataTopic`).
 
-**1. Komut yanıtı** — cihaz her komuttan sonra sonucu yayınlar:
+**1. Komut yanıtı** — cihaz tekil (`Meven:<MAC>/cmd`) komuttan sonra sonucu yayınlar:
+
+> **Toplu komuta (bölge, "Tüm Sistem", `Meven:all/cmd`) cihaz cevap DÖNMEZ**
+> (firmware kararı: yüzlerce cihazın aynı anda cevabı Thread ağını tıkar).
+> Yanıt yalnızca `Meven:<MAC>/cmd` komutlarına gelir. Toplu komutun `commands`
+> satırı cihazın sonraki telemetrisiyle `delivered` olur (`markDelivered` →
+> `commandTargets`: MAC, bölge, müşteri, `all`). Firmware toplu komutta
+> yalnızca hata cevabını rastgele gecikmeyle göndermeye karar verirse id ile
+> bölge komutuna bağlanır (kod hazır); vermezse toplu komut hataları (ör.
+> yetersiz lambalı efekt) panelde görünmez.
+
 
 ```json
 { "action": "dim", "id": "51f2d445-…", "status": "ok" }
@@ -672,14 +689,27 @@ GET /api/summary                     → Dashboard üst şeridi: ölçülmüş s
 ```
 
 `/api/summary`, her lambanın **son** D4i raporundan (kanal başına `DISTINCT ON`,
-son 10 dakika) toplar: çekilen güç, yük gücü, ortalama LED gerilimi (**gerilim
+cihazın tazelik penceresi içinde) toplar: çekilen güç, yük gücü, ortalama LED gerilimi (**gerilim
 toplanmaz**) ve `fault_events`'ten açık arızası olan **farklı lamba** sayısı.
 Ölçüm yoksa `powerW: null` döner ve dashboard direk sayısına dayalı tahmine
 düşer. Değerler ham `raw` bloğundan `lib/d4i.ts` ile okunur — panelle aynı
 doğrulanmış → tahmini → ham kuralı. Yanıt ayrıca `devices` (MAC → aynı
 ölçümler) kırılımını taşır; cihaz tablosu ve bölge detayı (istemcide
-cihazlarından toplanır) bunu kullanır. Son 10 dk'da rapor vermeyen cihaz
+cihazlarından toplanır) bunu kullanır. Penceresinde rapor vermeyen cihaz
 kırılımda yoktur → panelde "Veri bekleniyor".
+
+**Cihaz başına pencereler** (`lib/deviceWindows.ts`, saf). Sahadaki cihazlar
+~30 sn'de bir göndermez; firmware aralıklarını ilk kayıtta bildirir
+(`devices.*_interval_s`). Bildirmeyen cihaz (eski firmware, ~30 sn) eski
+sabitlerle değerlendirilir:
+- **Çevrimiçi:** `max(3 dk, 2,5 × min(health, rapor aralığı))` — `last_seen`
+  her mesajla tazelendiği için en sık gelen mesaja bakılır. Sunucu
+  `GET /api/devices`'ta `onlineWindowMs` (+ `healthIntervalS`,
+  `reportIntervalS`) döner; `deviceHealth.ts → isOnline` bunu kullanır
+  (yoksa 3 dk), `poleState`, `countLamps`, sayaçlar ve harita da.
+  Admin müşteri listesindeki "çevrimiçi" sayısı aynı kural (`lib/customers.ts`).
+- **Ölçüm tazeliği:** `max(10 dk, 2,5 × rapor aralığı)` (`computeSummary`).
+- Admin cihaz modalı → Bakım: "Rapor aralığı" satırı.
 
 ```
 GET /api/faults             → süren lamba arızaları (cihaz + bölge bilgisiyle)
@@ -737,7 +767,7 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
   `manual`; konumu değişmeyen PATCH'te gönderilmez (GPS/içe aktarma kaynağı
   korunur). Komut yolu değişmez: direk komutu = cihazın MAC komutu.
 - **Durum** `app/_lib/poles.ts → poleState` (saf, mobil kopyası var):
-  `no_device → offline (3 dk) → fault (uyarı olmayan lamba arızası ya da komut
+  `no_device → offline (cihazın penceresi, varsayılan 3 dk) → fault (uyarı olmayan lamba arızası ya da komut
   hatası) → on / off`. Envanter "Yanan direk", Genel Bakış ve harita bunu kullanır.
   "Yanan lamba" da aynı kuralla sayılır (`deviceHealth.ts → countLamps`): bağlantısız
   cihazın lambaları son komutun durumunda donduğu için yanan değil "bağlantısız" sayılır.
@@ -909,6 +939,8 @@ CREATE TABLE devices (
   firmware_version VARCHAR(32), -- son /health mesajındaki sürüm
   health        JSONB,          -- son /health mesajı (ham; OTA durumu dahil)
   health_at     TIMESTAMPTZ,    -- son /health zamanı
+  health_interval_s INTEGER,    -- firmware'in join'de bildirdiği aralıklar (sn);
+  report_interval_s INTEGER,    --   NULL = bildirilmedi (0012_device_intervals)
   gateway_id    VARCHAR(100),   -- bağlı gateway (GW_ID, mantıksal ref; nodes / health'ten)
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1202,7 +1234,7 @@ MQTT_BINARY_COMMANDS=
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `routeUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
 19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: dinleyenlerin hepsi binary gönderiyorsa binary (u16 kısa id), değilse JSON; `Meven:all/cmd` her zaman JSON. Bkz. "Binary protokol v1".

@@ -66,7 +66,7 @@ Cihazdaki **tüm lambalar** — `channel` alanı hiç yok:
   uygulanır.**
 - `id`: komut kimliği (UUID, backend'de `commands.request_id`). Backend **her**
   komuta ekler; cihaz yanıtında aynen geri yollar (§5.1). Bölge / "Tüm Sistem"
-  komutunda tek id vardır, o topic'i dinleyen her cihaz aynı id ile yanıtlar.
+  komutunda tek id vardır; toplu komuta başarı cevabı dönülmez (§5.1).
   ```json
   { "action": "dim", "value": 40, "channel": 1, "id": "51f2d445-ec29-42d7-a2a9-901682322c49" }
   ```
@@ -184,7 +184,15 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 `Meven:<MAC>/data` üzerinde **üç ayrı mesaj tipi** akar. Yeni tiplerde payload'da
 `deviceId` **yoktur** — backend MAC'i topic'ten okur (`macFromDataTopic`).
 
-### 5.1) Komut yanıtı (her komuttan sonra)
+### 5.1) Komut yanıtı (tekil komuttan sonra)
+
+> **Toplu komut (bölge topic'i, `Meven:all/cmd`) cevapsızdır** — yüzlerce
+> cihazın aynı anda cevabı Thread ağını tıkar. Backend toplu komutu cihazın
+> sonraki telemetrisiyle "teslim edildi" sayar. Önerimiz: toplu komutta
+> yalnızca **hata** cevabı, MAC'ten türetilmiş 0–10 sn rastgele gecikmeyle
+> (ör. yetersiz lambalı efekt kullanıcıya görünsün). Böyle bir cevap gelirse
+> backend onu id ile bölge komutuna bağlar.
+
 Firmware 1.0.9+ komutun `action`'ını ve gönderilen `id`'yi aynen geri yollar:
 ```json
 { "action": "dim", "id": "51f2d445-…", "status": "ok" }
@@ -314,6 +322,12 @@ Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → h
 ```
 - `ota.state`: `idle` · `waiting_network` · `checking` · `downloading` · `verifying` · `updated` · `failed`
 - `ota.last_result`: `up_to_date` · `updated` · `blocked` · `failed`
+- **Rapor aralıkları** (yalnızca ilk kayıtta / join'de): `"health_interval_s"`
+  (health aralığı) ve `"report_interval_s"` (D4i rapor aralığı), saniye; binary
+  `0xB9` / `0xBA`. Backend bunları `devices.health_interval_s /
+  report_interval_s`'e yazar; cihaz "bağlantı yok" sayılmadan önce en sık
+  mesajının ~2,5 katı (en az 3 dk) sessiz kalabilir. Bildirmeyen cihazda
+  ~30 sn varsayılır.
 - Backend mesajı `devices.firmware_version / health (ham JSON) / health_at`
   sütunlarına yazar (mesaj başına satır açmaz) ve SSE ile `kind:"health"`
   olarak panele iletir. OTA bitti mi: yeniden başlamadan sonraki ilk health'te
