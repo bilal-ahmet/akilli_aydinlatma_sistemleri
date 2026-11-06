@@ -1,0 +1,1008 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>MQTT Binary Protokolü v1</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: teknik sartname; masaustunde solda yapiskan icindekiler, sagda tek
+   kolon metin; tablolar ve kod kendi kaydirma kutusunda. Vurgu rengi sokak
+   lambasinin sodyum amberi. */
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --ink: #142030;
+  --muted: #586579;
+  --line: #dbe1ea;
+  --accent: #a85f00;
+  --accent-soft: #fff1dc;
+  --code-bg: #edf1f6;
+  --ok: #1d7448;
+  --ok-soft: #e1f3e9;
+  --next: #8a5a00;
+  --next-soft: #fbefd9;
+  --wip: #3d5a86;
+  --wip-soft: #e3ebf7;
+  --bad: #b3261e;
+  --chip-head: #dfe5ee;
+  --chip-crc: #dfe7f5;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-2: 1.5rem;
+  --step-3: 2.25rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141c; --surface: #141c26; --ink: #e5eaf1; --muted: #98a4b5;
+    --line: #243040; --accent: #f0a63a; --accent-soft: #2b2316; --code-bg: #101822;
+    --ok: #5ec28f; --ok-soft: #15281f; --next: #e9b25a; --next-soft: #2a2415;
+    --wip: #8eaee0; --wip-soft: #18222f; --bad: #ff8a80;
+    --chip-head: #1f2a37; --chip-crc: #1b2638;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141c; --surface: #141c26; --ink: #e5eaf1; --muted: #98a4b5;
+  --line: #243040; --accent: #f0a63a; --accent-soft: #2b2316; --code-bg: #101822;
+  --ok: #5ec28f; --ok-soft: #15281f; --next: #e9b25a; --next-soft: #2a2415;
+  --wip: #8eaee0; --wip-soft: #18222f; --bad: #ff8a80;
+  --chip-head: #1f2a37; --chip-crc: #1b2638;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.6;
+}
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px;
+}
+@media (min-width: 980px) {
+  .shell { grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+  .toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; }
+}
+
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: var(--step-3); letter-spacing: -0.01em; }
+h2 { font-size: var(--step-2); }
+h3 { font-size: var(--step-1); margin-top: 8px; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+code, pre, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+
+.toc nav { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--step--1); }
+@media (min-width: 980px) { .toc nav { flex-direction: column; gap: 6px; } }
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--ink); }
+.label {
+  font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+
+main { display: flex; flex-direction: column; gap: 56px; min-width: 0; }
+section { display: flex; flex-direction: column; gap: 16px; min-width: 0; scroll-margin-top: 24px; }
+
+.masthead { display: flex; flex-direction: column; gap: 14px; border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+.lede { font-size: var(--step-1); color: var(--muted); max-width: 62ch; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: var(--step--1); }
+.facts div { display: flex; flex-direction: column; }
+.facts dd { margin: 0; font-family: var(--font-mono); }
+.facts dt { color: var(--muted); }
+dl { margin: 0; }
+
+.bars { display: flex; flex-direction: column; gap: 14px; max-width: 720px; }
+.bar-row { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 4px 12px; align-items: center; }
+.bar-name { font-family: var(--font-mono); font-size: var(--step--1); }
+.bar-pair { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bar { height: 10px; border-radius: 2px; }
+.bar.json { background: var(--line); }
+.bar.bin { background: var(--accent); }
+.bar-text { font-size: var(--step--1); color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 16px; font-size: var(--step--1); color: var(--muted); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+@media (max-width: 520px) { .bar-row { grid-template-columns: minmax(0, 1fr); } }
+
+ol.tasks { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: 10px; max-width: 72ch; }
+ol.tasks li::marker { font-family: var(--font-mono); color: var(--accent); }
+ul.plain { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 6px; max-width: 72ch; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-weight: 600; color: var(--muted); background: var(--surface); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+td.hex, td.name, td.num, td.kind { font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+td.hex { color: var(--accent); }
+td.num { font-variant-numeric: tabular-nums; }
+tr.group-row th { background: var(--code-bg); font-family: var(--font-display); font-size: var(--step-0); color: var(--ink); }
+
+pre {
+  margin: 0; padding: 14px 16px; background: var(--code-bg); border-radius: 6px;
+  overflow-x: auto; line-height: 1.5; position: relative;
+}
+.code-block { position: relative; min-width: 0; }
+.copy {
+  position: absolute; top: 8px; right: 8px; font: inherit; font-size: 0.72rem;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--surface); color: var(--muted); cursor: pointer;
+}
+.copy:hover { color: var(--ink); }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 760px) { .two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+.frame { display: flex; flex-wrap: wrap; gap: 8px; }
+.seg { display: flex; flex-direction: column; gap: 4px; }
+.bytes { display: flex; gap: 3px; }
+.byte {
+  font-family: var(--font-mono); font-size: 0.9rem; padding: 6px 7px; border-radius: 4px;
+  background: var(--code-bg); min-width: 2.4em; text-align: center;
+}
+.seg.head .byte { background: var(--chip-head); }
+.seg.field .byte.id { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.seg.crc .byte { background: var(--chip-crc); color: var(--wip); }
+.seg .what { font-size: 0.72rem; color: var(--muted); max-width: 11em; line-height: 1.3; }
+
+.filter { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.filter input {
+  font: inherit; padding: 7px 11px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); width: min(100%, 22rem);
+}
+.filter .count { font-size: var(--step--1); color: var(--muted); }
+
+.enums { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 16px; }
+.enum h3 { font-family: var(--font-mono); font-size: 0.85rem; font-weight: 500; margin: 0 0 6px; }
+.enum ol { margin: 0; padding: 0; list-style: none; font-size: var(--step--1); }
+.enum li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 8px; padding: 2px 0; }
+.enum li span:first-child { font-family: var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.enum li span:last-child { overflow-wrap: anywhere; }
+
+.decoder { display: flex; flex-direction: column; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.decoder textarea {
+  font-family: var(--font-mono); font-size: 0.9rem; width: 100%; min-height: 4.5em; resize: vertical;
+  padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--code-bg); color: var(--ink);
+}
+.examples { display: flex; flex-wrap: wrap; gap: 6px; }
+.examples button, .decode-btn {
+  font: inherit; font-size: var(--step--1); padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.examples button:hover { border-color: var(--accent); }
+.verdict { font-size: var(--step--1); font-weight: 600; }
+.verdict.good { color: var(--ok); }
+.verdict.fail { color: var(--bad); }
+
+.note { font-size: var(--step--1); color: var(--muted); max-width: 72ch; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<div class="shell">
+  <aside class="toc" aria-label="İçindekiler">
+    <p class="label" style="margin-bottom:10px">İçindekiler</p>
+    <nav>
+      <a href="#yapilacaklar">Backend'den beklenenler</a>
+      <a href="#topicler">Topic'ler</a>
+      <a href="#paket">Paket biçimi ve CRC</a>
+      <a href="#cozme">Çözme algoritması</a>
+      <a href="#ornek">Bayt bayt örnek</a>
+      <a href="#alanlar">Alan tablosu</a>
+      <a href="#enumlar">Değer enum'ları</a>
+      <a href="#mesajlar">Mesaj tipleri</a>
+      <a href="#json">JSON'a çevirme</a>
+      <a href="#komutlar">Komutlar</a>
+      <a href="#cozucu">Paket çözücü</a>
+      <a href="#devreye">Devreye alma</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="masthead">
+      <p class="label">Elektrik direği DALI/D4i cihazları · backend entegrasyonu</p>
+      <h1>MQTT Binary Protokolü v1</h1>
+      <p class="lede">Cihazlar MQTT mesajlarını JSON yerine kompakt bir bayt dizisi olarak gönderir. Bu doküman, backend tarafında paketlerin doğrulanması, çözülmesi, dashboard için mevcut JSON biçimine çevrilmesi ve cihaza komut gönderilmesi için gereken sözleşmeyi tanımlar.</p>
+      <dl class="facts">
+        <div><dt>Versiyon baytı</dt><dd>0x01</dd></div>
+        <div><dt>Bütünlük</dt><dd>CRC-16/CCITT-FALSE</dd></div>
+        <div><dt>Bayt sırası</dt><dd>little-endian</dd></div>
+        <div><dt>Alan sayısı</dt><dd>136</dd></div>
+        <div><dt>Doküman</dt><dd>rev. 1.0 · 3 Kasım 2026</dd></div>
+      </dl>
+    </header>
+
+    <section aria-labelledby="neden-h">
+      <h2 id="neden-h">Neden değişti</h2>
+      <p>JSON'da her mesaj <code>"voltage_plausibility_checked"</code> gibi key'leri string olarak tekrar tekrar taşıyor; hücresel hatta asıl veriden çok bu isimler gidiyor. Yeni biçimde her JSON key'i tek bir enum'daki (<code>msg_field_t</code>) 1 baytlık bir koda karşılık geliyor, her alanın kaç bayt olduğu bir boy tablosunda duruyor ve paketin son 2 baytı CRC.</p>
+      <div class="legend" aria-hidden="true">
+        <span><span class="swatch" style="background:var(--line)"></span>JSON</span>
+        <span><span class="swatch" style="background:var(--accent)"></span>binary</span>
+      </div>
+      <div class="bars">
+        <div class="bar-row">
+          <span class="bar-name">d4i_periodic</span>
+          <div class="bar-pair">
+            <div class="bar json" style="width:100%"></div>
+            <div class="bar bin" style="width:7.9%"></div>
+            <span class="bar-text">2137 → en fazla ~170 bayt (D4i'li lamba, tüm alanlar) · lamba başına 30 sn'de bir</span>
+          </div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-name">d4i_periodic, D4i'siz</span>
+          <div class="bar-pair">
+            <div class="bar json" style="width:10.7%"></div>
+            <div class="bar bin" style="width:1.3%"></div>
+            <span class="bar-text">228 → 27 bayt (cihazdan ölçüldü)</span>
+          </div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-name">health</span>
+          <div class="bar-pair">
+            <div class="bar json" style="width:55.2%"></div>
+            <div class="bar bin" style="width:4.9%"></div>
+            <span class="bar-text">1180 → ~105 bayt · 30 sn'de bir, içinde metin yok</span>
+          </div>
+        </div>
+        <div class="bar-row">
+          <span class="bar-name">dim komutu</span>
+          <div class="bar-pair">
+            <div class="bar json" style="width:2.2%"></div>
+            <div class="bar bin" style="width:0.7%"></div>
+            <span class="bar-text">46 → 14 bayt (ölçüldü)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="yapilacaklar" aria-labelledby="yap-h">
+      <h2 id="yap-h">Backend'den beklenenler</h2>
+      <ol class="tasks">
+        <li><strong><code>+/bin</code> topic'ine abone olun.</strong> Yeni firmware'li cihazlar tüm mesajlarını <code>Meven:&lt;MAC&gt;/bin</code>'e binary basar.</li>
+        <li><strong>Her paketi doğrulayın.</strong> İlk bayt versiyon (<code>0x01</code>), son 2 bayt CRC. Uymayan paketi atın, loglayın ve sayaç artırın.</li>
+        <li><strong>Alanları boy tablosuyla çözün.</strong> Tabloda olmayan bir alan gelirse paketin tamamını atın ve alarm üretin: cihaz backend'den daha yeni bir tablo kullanıyor demektir.</li>
+        <li><strong>JSON köprüsü:</strong> çözülen mesajı bugünkü JSON'un aynısına çevirip eski topic'lere basın. <code>HEALTH</code> → <code>Meven:&lt;MAC&gt;/health</code>, diğerleri → <code>Meven:&lt;MAC&gt;/data</code>. Dashboard hiçbir şey değiştirmeden çalışmaya devam eder. Bu işi <code>scripts/mqtt_bridge.py</code> yapar; sunucuda 7/24 çalışması yeterli (<code>python scripts/mqtt_bridge.py</code>, broker bilgisi <code>MQTT_URI</code>, <code>MQTT_USERNAME</code>, <code>MQTT_PASSWORD</code> ortam değişkenlerinden). Kendi dilinizde yazmak isterseniz kurallar aşağıda.</li>
+        <li><strong>Health'in sabit alanlarını saklayın.</strong> <code>idf_version</code>, <code>build_date</code>, <code>build_time</code> ve <code>thread.network_name</code> her MQTT bağlantısında yalnızca bir kez gelir. Cihaz başına son değeri saklayıp her health JSON'una ekleyin.</li>
+        <li><strong>Sıraya uyun.</strong> Köprü çalışmadan hiçbir cihaza yeni firmware OTA'sı gönderilmemeli; yoksa dashboard o cihazın verisini göremez.</li>
+        <li><strong>İsteğe bağlı:</strong> komutları binary göndermeye geçin. Cihaz geçiş döneminde JSON komutları da kabul eder.</li>
+      </ol>
+    </section>
+
+    <section id="topicler" aria-labelledby="topic-h">
+      <h2 id="topic-h">Topic'ler</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Yön</th><th scope="col">Topic</th><th scope="col">İçerik</th><th scope="col">QoS</th></tr></thead>
+          <tbody>
+            <tr><td>cihaz → sunucu</td><td><code>Meven:&lt;MAC&gt;/bin</code></td><td>tüm binary mesajlar</td><td>health 2, diğerleri 0</td></tr>
+            <tr><td>sunucu → cihaz</td><td><code>Meven:&lt;MAC&gt;/cmd</code></td><td>komut (binary veya JSON)</td><td>–</td></tr>
+            <tr><td>sunucu → cihaz</td><td><code>Meven:&lt;zone&gt;/cmd</code>, <code>Meven:all/cmd</code>, <code>Meven:ekaldes/cmd</code></td><td>toplu komut (binary veya JSON)</td><td>–</td></tr>
+            <tr><td>köprü → dashboard</td><td><code>Meven:&lt;MAC&gt;/data</code>, <code>Meven:&lt;MAC&gt;/health</code></td><td>eski JSON (köprü üretir)</td><td>–</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note"><code>&lt;MAC&gt;</code> 12 haneli büyük harf hex'tir (<code>Meven:404CCA544378</code>). <code>:</code> MQTT topic ayıracı olmadığı için tüm cihazlar <code>+/bin</code> ile dinlenir. Eski firmware'li cihazlar <code>/data</code> ve <code>/health</code>'e doğrudan JSON basmaya devam eder; bir cihaz ya eski ya yeni firmware'de olduğu için köprü çıktısıyla çakışmaz.</p>
+    </section>
+
+    <section id="paket" aria-labelledby="paket-h">
+      <h2 id="paket-h">Paket biçimi ve CRC</h2>
+      <p>Örnek: kanal 0'daki lambayı %25'e çeken dim komutu, id 7.</p>
+      <div class="frame" role="img" aria-label="Dim komutunun baytları: versiyon 01, TYPE alanı 01 08, COMMAND_ACTION A0 01, COMMAND_ID A1 07 00, COMMAND_CHANNEL A2 00, COMMAND_VALUE A3 19, CRC 17 33">
+        <div class="seg head"><div class="bytes"><span class="byte">01</span></div><span class="what">versiyon</span></div>
+        <div class="seg field"><div class="bytes"><span class="byte id">01</span><span class="byte">08</span></div><span class="what">TYPE = COMMAND</span></div>
+        <div class="seg field"><div class="bytes"><span class="byte id">A0</span><span class="byte">01</span></div><span class="what">ACTION = dim</span></div>
+        <div class="seg field"><div class="bytes"><span class="byte id">A1</span><span class="byte">07</span><span class="byte">00</span></div><span class="what">ID = 7 (LE)</span></div>
+        <div class="seg field"><div class="bytes"><span class="byte id">A2</span><span class="byte">00</span></div><span class="what">CHANNEL = 0</span></div>
+        <div class="seg field"><div class="bytes"><span class="byte id">A3</span><span class="byte">19</span></div><span class="what">VALUE = 25</span></div>
+        <div class="seg crc"><div class="bytes"><span class="byte">17</span><span class="byte">33</span></div><span class="what">CRC 0x3317</span></div>
+      </div>
+      <p class="note">14 bayt; aynı komut JSON'da 46 bayt. Amber baytlar alan kodu, yanındakiler değer.</p>
+      <ul class="plain">
+        <li><strong>Bayt 0</strong> protokol versiyonu, şu an <code>0x01</code>.</li>
+        <li><strong>İlk alan her zaman <code>MSG_FIELD_TYPE</code> (0x01)</strong>; değeri mesaj tipidir.</li>
+        <li>Ardından istenen sırada <code>[alan kodu][değer]</code> çiftleri gelir. Değerin boyu boy tablosundan okunur (1–4 bayt, little-endian). <code>i8</code> alanlar ikiye tümleyendir.</li>
+        <li><strong>Değişken boylu alan</strong> (metin, bayt dizisi, liste): önce 1 bayt uzunluk (0–255), sonra veri. Metin UTF-8/ASCII, NUL yok.</li>
+        <li><strong>Değeri olmayan alan pakete hiç yazılmaz.</strong> JSON'daki <code>null</code> bundan gelir.</li>
+        <li><strong>Son 2 bayt</strong> paketin geri kalanının (versiyon dahil, CRC hariç) CRC'si, önce alt bayt.</li>
+      </ul>
+      <div class="table-wrap" style="max-width:520px">
+        <table>
+          <thead><tr><th scope="col">CRC parametresi</th><th scope="col">Değer</th></tr></thead>
+          <tbody>
+            <tr><td>polinom</td><td class="name">0x1021</td></tr>
+            <tr><td>başlangıç</td><td class="name">0xFFFF</td></tr>
+            <tr><td>giriş/çıkış yansıtma</td><td>yok</td></tr>
+            <tr><td>son XOR</td><td class="name">0x0000</td></tr>
+            <tr><td>kontrol değeri</td><td><code>"123456789"</code> → <code>0x29B1</code></td></tr>
+            <tr><td>gerçek paket</td><td><a href="#ornek">Bayt bayt örnek</a>teki paketin ilk 25 baytı → <code>0x03C8</code> (pakette <code>C8 03</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="two-col">
+        <div class="code-block">
+          <p class="label" style="margin-bottom:6px">Python</p>
+<pre><code>import binascii
+crc = binascii.crc_hqx(data, 0xFFFF)</code></pre>
+          <button class="copy" type="button">Kopyala</button>
+        </div>
+        <div class="code-block">
+          <p class="label" style="margin-bottom:6px">JavaScript / TypeScript</p>
+<pre><code>function crc16(bytes) {
+  let crc = 0xffff;
+  for (const b of bytes) {
+    crc ^= b &lt;&lt; 8;
+    for (let i = 0; i &lt; 8; i++)
+      crc = crc &amp; 0x8000
+        ? ((crc &lt;&lt; 1) ^ 0x1021) &amp; 0xffff
+        : (crc &lt;&lt; 1) &amp; 0xffff;
+  }
+  return crc;
+}</code></pre>
+          <button class="copy" type="button">Kopyala</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="cozme" aria-labelledby="cozme-h">
+      <h2 id="cozme-h">Çözme algoritması</h2>
+      <div class="code-block">
+<pre><code>paket boyu &lt; 5                        → reddet (TOO_SHORT)
+paket[0] != 0x01                      → reddet (VERSION)
+crc = paket[son 2 bayt], little-endian
+crc != CRC16(paket[0 .. son-2])       → reddet (CRC)
+
+i = 1
+while i &lt; boy - 2:
+    alan = paket[i];  i += 1
+    n = BOY_TABLOSU[alan]
+    n tanımsız                        → reddet (FIELD)
+    n == değişken:
+        n = paket[i];  i += 1
+    i + n &gt; boy - 2                   → reddet (TRUNCATED)
+    değer = paket[i .. i + n];  i += n
+
+ilk alan TYPE değil                   → reddet (NO_TYPE)</code></pre>
+        <button class="copy" type="button">Kopyala</button>
+      </div>
+      <p class="note">Paketin tamamı doğrulanmadan hiçbir alan kullanılmamalı. Aynı alan bir pakette birden fazla geçebilir; bu yalnızca health'teki komşu listesinde olur.</p>
+    </section>
+
+    <section id="ornek" aria-labelledby="ornek-h">
+      <h2 id="ornek-h">Örnek: bir paketin bayt bayt çözümü</h2>
+      <p>Cihazdan alınmış gerçek bir <code>d4i_periodic</code> paketi. Adres 2'deki lamba hatta ve cevap veriyor, kapalı ve D4i desteklemiyor; bu yüzden paket <code>D4I_SUPPORTED</code> alanıyla biter, enerji, sürücü ve LED alanları yazılmaz.</p>
+      <div class="code-block">
+<pre><code>01 01 01 02 02 03 01 10 00 11 FF 12 00 13 00 14 00 15 FE 16 55 17 64 20 00 C8 03</code></pre>
+        <button class="copy" type="button">Kopyala</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Bayt</th><th scope="col">Hex</th><th scope="col">Alan</th><th scope="col">Anlamı</th><th scope="col">Değer</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0</td><td class="hex">01</td><td class="name">—</td><td>Protokol versiyonu</td><td>1</td></tr>
+            <tr><td class="num">1–2</td><td class="hex">01 01</td><td class="name">TYPE</td><td>Mesaj tipi</td><td>1 → <code>d4i_periodic</code></td></tr>
+            <tr><td class="num">3–4</td><td class="hex">02 02</td><td class="name">ADDRESS</td><td>DALI kısa adresi</td><td>2</td></tr>
+            <tr><td class="num">5–6</td><td class="hex">03 01</td><td class="name">ONLINE</td><td>Lamba cevap veriyor</td><td>1 → <code>true</code></td></tr>
+            <tr><td class="num">7–8</td><td class="hex">10 00</td><td class="name">STATUS</td><td>DALI durum baytı</td><td>0x00, hata bayrağı yok</td></tr>
+            <tr><td class="num">9–10</td><td class="hex">11 FF</td><td class="name">CONTROL_GEAR_PRESENT</td><td>Sürücü mevcut</td><td>255 (evet)</td></tr>
+            <tr><td class="num">11–12</td><td class="hex">12 00</td><td class="name">LAMP_FAILURE</td><td>Lamba arızası</td><td>0 (hayır)</td></tr>
+            <tr><td class="num">13–14</td><td class="hex">13 00</td><td class="name">LAMP_POWER_ON</td><td>Lamba yanıyor</td><td>0 (kapalı)</td></tr>
+            <tr><td class="num">15–16</td><td class="hex">14 00</td><td class="name">ACTUAL_LEVEL</td><td>Anlık ışık seviyesi</td><td>0</td></tr>
+            <tr><td class="num">17–18</td><td class="hex">15 FE</td><td class="name">MAX_LEVEL</td><td>Maksimum seviye</td><td>254</td></tr>
+            <tr><td class="num">19–20</td><td class="hex">16 55</td><td class="name">PHYSICAL_MIN_LEVEL</td><td>Fiziksel minimum seviye</td><td>85</td></tr>
+            <tr><td class="num">21–22</td><td class="hex">17 64</td><td class="name">MIN_LEVEL</td><td>Minimum seviye</td><td>100</td></tr>
+            <tr><td class="num">23–24</td><td class="hex">20 00</td><td class="name">D4I_SUPPORTED</td><td>D4i desteği</td><td>0 → <code>false</code></td></tr>
+            <tr><td class="num">25–26</td><td class="hex">C8 03</td><td class="name">CRC16</td><td>Bayt 0–24'ün CRC'si, little-endian</td><td>0x03C8, doğru</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Toplam 27 bayt: 1 versiyon + 12 alan × 2 bayt + 2 CRC. Köprünün bu paketten üreteceği JSON 228 bayttır:</p>
+      <div class="code-block">
+<pre><code>{"type":"d4i_periodic","address":2,"online":true,
+ "status":{"status":0,"control_gear_present":255,"lamp_failure":0,"lamp_power_on":0,
+           "actual_level":0,"max_level":254,"physical_min_level":85,"min_level":100},
+ "d4i_supported":false}</code></pre>
+        <button class="copy" type="button">Kopyala</button>
+      </div>
+      <p class="note">D4i'li lambalarda paket 0x28–0x78 aralığındaki enerji, sürücü ve LED alanlarıyla devam eder; çözme kuralı aynıdır.</p>
+    </section>
+
+    <section id="alanlar" aria-labelledby="alan-h">
+      <h2 id="alan-h">Alan tablosu</h2>
+      <p>Sözleşmenin kaynağı <code>components/msg_codec/include/msg_fields.h</code> ve boy tablosu <code>src/msg_fields.c</code>. Kod değerinin ilk hanesi alanın hangi gruba ait olduğunu gösterir.</p>
+      <div class="filter">
+        <label class="label" for="field-filter">Ara</label>
+        <input id="field-filter" type="search" placeholder="ör. actual_level, 0xC7, rssi" autocomplete="off">
+        <span class="count" id="field-count" aria-live="polite">136 alan</span>
+      </div>
+      <div class="table-wrap">
+        <table id="field-table">
+          <thead><tr><th scope="col">Kod</th><th scope="col">Alan</th><th scope="col">Bayt</th><th scope="col">Tip</th><th scope="col">JSON karşılığı</th><th scope="col">Açıklama</th></tr></thead>
+          <tbody>
+<tr class="group-row"><th colspan="6" scope="colgroup">Ortak</th></tr>
+<tr data-search="0x01 type `type` mesaj tipi (bkz. Mesaj tipleri)"><td class="hex">0x01</td><td class="name">MSG_FIELD_TYPE</td><td class="num">1</td><td class="kind">u8</td><td><code>type</code></td><td>mesaj tipi (bkz. Mesaj tipleri)</td></tr>
+<tr data-search="0x02 address `address` dali short address 0..63"><td class="hex">0x02</td><td class="name">MSG_FIELD_ADDRESS</td><td class="num">1</td><td class="kind">u8</td><td><code>address</code></td><td>DALI short address 0..63</td></tr>
+<tr data-search="0x03 online `online` 0/1"><td class="hex">0x03</td><td class="name">MSG_FIELD_ONLINE</td><td class="num">1</td><td class="kind">u8</td><td><code>online</code></td><td>0/1</td></tr>
+<tr data-search="0x04 error `error` `msg_error_t`, bkz. Değer enum'ları"><td class="hex">0x04</td><td class="name">MSG_FIELD_ERROR</td><td class="num">1</td><td class="kind">u8</td><td><code>error</code></td><td><code>msg_error_t</code>, bkz. Değer enum'ları</td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">DALI durum sorguları</th></tr>
+<tr data-search="0x10 status `status` dali query status cevabi"><td class="hex">0x10</td><td class="name">MSG_FIELD_STATUS</td><td class="num">1</td><td class="kind">u8</td><td><code>status</code></td><td>DALI QUERY STATUS cevabi</td></tr>
+<tr data-search="0x11 control_gear_present `control_gear_present` 255 evet, 0 hayır"><td class="hex">0x11</td><td class="name">MSG_FIELD_CONTROL_GEAR_PRESENT</td><td class="num">1</td><td class="kind">u8</td><td><code>control_gear_present</code></td><td>255 evet, 0 hayır</td></tr>
+<tr data-search="0x12 lamp_failure `lamp_failure` 255 evet, 0 hayır"><td class="hex">0x12</td><td class="name">MSG_FIELD_LAMP_FAILURE</td><td class="num">1</td><td class="kind">u8</td><td><code>lamp_failure</code></td><td>255 evet, 0 hayır</td></tr>
+<tr data-search="0x13 lamp_power_on `lamp_power_on` 255 evet, 0 hayır"><td class="hex">0x13</td><td class="name">MSG_FIELD_LAMP_POWER_ON</td><td class="num">1</td><td class="kind">u8</td><td><code>lamp_power_on</code></td><td>255 evet, 0 hayır</td></tr>
+<tr data-search="0x14 actual_level `actual_level` ışık seviyesi 0..254, 255 = bilinmiyor"><td class="hex">0x14</td><td class="name">MSG_FIELD_ACTUAL_LEVEL</td><td class="num">1</td><td class="kind">u8</td><td><code>actual_level</code></td><td>ışık seviyesi 0..254, 255 = bilinmiyor</td></tr>
+<tr data-search="0x15 max_level `max_level` "><td class="hex">0x15</td><td class="name">MSG_FIELD_MAX_LEVEL</td><td class="num">1</td><td class="kind">u8</td><td><code>max_level</code></td><td></td></tr>
+<tr data-search="0x16 physical_min_level `physical_min_level` "><td class="hex">0x16</td><td class="name">MSG_FIELD_PHYSICAL_MIN_LEVEL</td><td class="num">1</td><td class="kind">u8</td><td><code>physical_min_level</code></td><td></td></tr>
+<tr data-search="0x17 min_level `min_level` "><td class="hex">0x17</td><td class="name">MSG_FIELD_MIN_LEVEL</td><td class="num">1</td><td class="kind">u8</td><td><code>min_level</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">D4i genel</th></tr>
+<tr data-search="0x20 d4i_supported `d4i_supported` 0/1"><td class="hex">0x20</td><td class="name">MSG_FIELD_D4I_SUPPORTED</td><td class="num">1</td><td class="kind">u8</td><td><code>d4i_supported</code></td><td>0/1</td></tr>
+<tr data-search="0x21 bank `bank` memory bank numarası"><td class="hex">0x21</td><td class="name">MSG_FIELD_BANK</td><td class="num">1</td><td class="kind">u8</td><td><code>bank</code></td><td>memory bank numarası</td></tr>
+<tr data-search="0x22 bank_ok `ok` 0/1"><td class="hex">0x22</td><td class="name">MSG_FIELD_BANK_OK</td><td class="num">1</td><td class="kind">u8</td><td><code>ok</code></td><td>0/1</td></tr>
+<tr data-search="0x23 bank_length `length` okunan bank boyu"><td class="hex">0x23</td><td class="name">MSG_FIELD_BANK_LENGTH</td><td class="num">2</td><td class="kind">u16</td><td><code>length</code></td><td>okunan bank boyu</td></tr>
+<tr data-search="0x24 bank_raw `raw_hex` json&#x27;da büyük harf hex string"><td class="hex">0x24</td><td class="name">MSG_FIELD_BANK_RAW</td><td class="num">değişken</td><td class="kind">bayt</td><td><code>raw_hex</code></td><td>JSON&#x27;da büyük harf hex string</td></tr>
+<tr data-search="0x25 last_bank `last_bank` "><td class="hex">0x25</td><td class="name">MSG_FIELD_LAST_BANK</td><td class="num">1</td><td class="kind">u8</td><td><code>last_bank</code></td><td></td></tr>
+<tr data-search="0x26 decode_ok `decode_ok` 0/1"><td class="hex">0x26</td><td class="name">MSG_FIELD_DECODE_OK</td><td class="num">1</td><td class="kind">u8</td><td><code>decode_ok</code></td><td>0/1</td></tr>
+<tr data-search="0x27 decode_error `decode_error` `msg_decode_error_t`"><td class="hex">0x27</td><td class="name">MSG_FIELD_DECODE_ERROR</td><td class="num">1</td><td class="kind">u8</td><td><code>decode_error</code></td><td><code>msg_decode_error_t</code></td></tr>
+<tr data-search="0x28 read_errors `read_errors` okunamayan bank numaraları"><td class="hex">0x28</td><td class="name">MSG_FIELD_READ_ERRORS</td><td class="num">değişken</td><td class="kind">liste</td><td><code>read_errors</code></td><td>okunamayan bank numaraları</td></tr>
+<tr data-search="0x29 decode_errors `decode_errors` çözülemeyen bank numaraları"><td class="hex">0x29</td><td class="name">MSG_FIELD_DECODE_ERRORS</td><td class="num">değişken</td><td class="kind">liste</td><td><code>decode_errors</code></td><td>çözülemeyen bank numaraları</td></tr>
+<tr data-search="0x2a sample_coherent `d4i.sample_coherent` 0/1, yoksa null"><td class="hex">0x2A</td><td class="name">MSG_FIELD_SAMPLE_COHERENT</td><td class="num">1</td><td class="kind">u8</td><td><code>d4i.sample_coherent</code></td><td>0/1, yoksa null</td></tr>
+<tr data-search="0x2b sample_state `d4i.sample_state` `msg_measurement_state_t`"><td class="hex">0x2B</td><td class="name">MSG_FIELD_SAMPLE_STATE</td><td class="num">1</td><td class="kind">u8</td><td><code>d4i.sample_state</code></td><td><code>msg_measurement_state_t</code></td></tr>
+<tr data-search="0x2c sample_status `d4i.sample_status` `msg_measurement_status_t`"><td class="hex">0x2C</td><td class="name">MSG_FIELD_SAMPLE_STATUS</td><td class="num">1</td><td class="kind">u8</td><td><code>d4i.sample_status</code></td><td><code>msg_measurement_status_t</code></td></tr>
+<tr data-search="0x2d bank_206_length `d4i.bank_206_length` "><td class="hex">0x2D</td><td class="name">MSG_FIELD_BANK_206_LENGTH</td><td class="num">2</td><td class="kind">u16</td><td><code>d4i.bank_206_length</code></td><td></td></tr>
+<tr data-search="0x2e bank_206_version `d4i.bank_206_version` "><td class="hex">0x2E</td><td class="name">MSG_FIELD_BANK_206_VERSION</td><td class="num">1</td><td class="kind">u8</td><td><code>d4i.bank_206_version</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Enerji ve güç (bank 202, 204)</th></tr>
+<tr data-search="0x30 energy_raw_low `energy.raw_integer` 48 bit enerjinin alt 32 biti"><td class="hex">0x30</td><td class="name">MSG_FIELD_ENERGY_RAW_LOW</td><td class="num">4</td><td class="kind">u32</td><td><code>energy.raw_integer</code></td><td>48 bit enerjinin alt 32 biti</td></tr>
+<tr data-search="0x31 energy_raw_high `energy.raw_integer` 48 bit enerjinin üst 16 biti"><td class="hex">0x31</td><td class="name">MSG_FIELD_ENERGY_RAW_HIGH</td><td class="num">2</td><td class="kind">u16</td><td><code>energy.raw_integer</code></td><td>48 bit enerjinin üst 16 biti</td></tr>
+<tr data-search="0x32 energy_scale `energy.scale_raw` "><td class="hex">0x32</td><td class="name">MSG_FIELD_ENERGY_SCALE</td><td class="num">1</td><td class="kind">u8</td><td><code>energy.scale_raw</code></td><td></td></tr>
+<tr data-search="0x33 power_raw `power.raw_integer` "><td class="hex">0x33</td><td class="name">MSG_FIELD_POWER_RAW</td><td class="num">4</td><td class="kind">u32</td><td><code>power.raw_integer</code></td><td></td></tr>
+<tr data-search="0x34 power_scale `power.scale_raw` "><td class="hex">0x34</td><td class="name">MSG_FIELD_POWER_SCALE</td><td class="num">1</td><td class="kind">u8</td><td><code>power.scale_raw</code></td><td></td></tr>
+<tr data-search="0x35 load_power_raw `load_power.value` bank 204 ham güç"><td class="hex">0x35</td><td class="name">MSG_FIELD_LOAD_POWER_RAW</td><td class="num">4</td><td class="kind">u32</td><td><code>load_power.value</code></td><td>bank 204 ham güç</td></tr>
+<tr data-search="0x36 load_power_scale `load_power.value` bank 204 ölçek"><td class="hex">0x36</td><td class="name">MSG_FIELD_LOAD_POWER_SCALE</td><td class="num">1</td><td class="kind">u8</td><td><code>load_power.value</code></td><td>bank 204 ölçek</td></tr>
+<tr data-search="0x37 load_power_check `load_power.plausible...` `msg_load_power_check_t`"><td class="hex">0x37</td><td class="name">MSG_FIELD_LOAD_POWER_CHECK</td><td class="num">1</td><td class="kind">u8</td><td><code>load_power.plausible...</code></td><td><code>msg_load_power_check_t</code></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Sürücü (bank 205), <code>d4i.driver</code> nesnesi</th></tr>
+<tr data-search="0x40 driver_bank_version `bank_version` "><td class="hex">0x40</td><td class="name">MSG_FIELD_DRIVER_BANK_VERSION</td><td class="num">1</td><td class="kind">u8</td><td><code>bank_version</code></td><td></td></tr>
+<tr data-search="0x41 driver_operating_time_s `operating_time_s` sayaç kuralı"><td class="hex">0x41</td><td class="name">MSG_FIELD_DRIVER_OPERATING_TIME_S</td><td class="num">4</td><td class="kind">u32</td><td><code>operating_time_s</code></td><td>sayaç kuralı</td></tr>
+<tr data-search="0x42 driver_startup_count `startup_count` sayaç kuralı"><td class="hex">0x42</td><td class="name">MSG_FIELD_DRIVER_STARTUP_COUNT</td><td class="num">3</td><td class="kind">u24</td><td><code>startup_count</code></td><td>sayaç kuralı</td></tr>
+<tr data-search="0x43 driver_input_voltage `input_voltage_v` 0.1 v"><td class="hex">0x43</td><td class="name">MSG_FIELD_DRIVER_INPUT_VOLTAGE</td><td class="num">2</td><td class="kind">u16</td><td><code>input_voltage_v</code></td><td>0.1 V</td></tr>
+<tr data-search="0x44 driver_mains_frequency `mains_frequency_hz` hz"><td class="hex">0x44</td><td class="name">MSG_FIELD_DRIVER_MAINS_FREQUENCY</td><td class="num">1</td><td class="kind">u8</td><td><code>mains_frequency_hz</code></td><td>Hz</td></tr>
+<tr data-search="0x45 driver_power_factor `power_factor` yüzde, 95 -&gt; 0.95"><td class="hex">0x45</td><td class="name">MSG_FIELD_DRIVER_POWER_FACTOR</td><td class="num">1</td><td class="kind">u8</td><td><code>power_factor</code></td><td>yüzde, 95 -&gt; 0.95</td></tr>
+<tr data-search="0x46 driver_temperature `temperature_c` c = değer - 60"><td class="hex">0x46</td><td class="name">MSG_FIELD_DRIVER_TEMPERATURE</td><td class="num">1</td><td class="kind">u8</td><td><code>temperature_c</code></td><td>°C = değer − 60</td></tr>
+<tr data-search="0x47 driver_output_current_percent `output_current_percent` "><td class="hex">0x47</td><td class="name">MSG_FIELD_DRIVER_OUTPUT_CURRENT_PERCENT</td><td class="num">1</td><td class="kind">u8</td><td><code>output_current_percent</code></td><td></td></tr>
+<tr data-search="0x48 driver_general_failure `general_failure` hata kuralı"><td class="hex">0x48</td><td class="name">MSG_FIELD_DRIVER_GENERAL_FAILURE</td><td class="num">1</td><td class="kind">u8</td><td><code>general_failure</code></td><td>hata kuralı</td></tr>
+<tr data-search="0x49 driver_general_failure_count `general_failure_count` hata kuralı"><td class="hex">0x49</td><td class="name">MSG_FIELD_DRIVER_GENERAL_FAILURE_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>general_failure_count</code></td><td>hata kuralı</td></tr>
+<tr data-search="0x4a driver_undervoltage_failure `undervoltage_failure` "><td class="hex">0x4A</td><td class="name">MSG_FIELD_DRIVER_UNDERVOLTAGE_FAILURE</td><td class="num">1</td><td class="kind">u8</td><td><code>undervoltage_failure</code></td><td></td></tr>
+<tr data-search="0x4b driver_undervoltage_failure_count `undervoltage_failure_count` "><td class="hex">0x4B</td><td class="name">MSG_FIELD_DRIVER_UNDERVOLTAGE_FAILURE_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>undervoltage_failure_count</code></td><td></td></tr>
+<tr data-search="0x4c driver_overvoltage_failure `overvoltage_failure` "><td class="hex">0x4C</td><td class="name">MSG_FIELD_DRIVER_OVERVOLTAGE_FAILURE</td><td class="num">1</td><td class="kind">u8</td><td><code>overvoltage_failure</code></td><td></td></tr>
+<tr data-search="0x4d driver_overvoltage_failure_count `overvoltage_failure_count` "><td class="hex">0x4D</td><td class="name">MSG_FIELD_DRIVER_OVERVOLTAGE_FAILURE_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>overvoltage_failure_count</code></td><td></td></tr>
+<tr data-search="0x4e driver_power_limitation `power_limitation` "><td class="hex">0x4E</td><td class="name">MSG_FIELD_DRIVER_POWER_LIMITATION</td><td class="num">1</td><td class="kind">u8</td><td><code>power_limitation</code></td><td></td></tr>
+<tr data-search="0x4f driver_power_limitation_count `power_limitation_count` "><td class="hex">0x4F</td><td class="name">MSG_FIELD_DRIVER_POWER_LIMITATION_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>power_limitation_count</code></td><td></td></tr>
+<tr data-search="0x50 driver_thermal_derating `thermal_derating` "><td class="hex">0x50</td><td class="name">MSG_FIELD_DRIVER_THERMAL_DERATING</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_derating</code></td><td></td></tr>
+<tr data-search="0x51 driver_thermal_derating_count `thermal_derating_count` "><td class="hex">0x51</td><td class="name">MSG_FIELD_DRIVER_THERMAL_DERATING_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_derating_count</code></td><td></td></tr>
+<tr data-search="0x52 driver_thermal_shutdown `thermal_shutdown` "><td class="hex">0x52</td><td class="name">MSG_FIELD_DRIVER_THERMAL_SHUTDOWN</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_shutdown</code></td><td></td></tr>
+<tr data-search="0x53 driver_thermal_shutdown_count `thermal_shutdown_count` "><td class="hex">0x53</td><td class="name">MSG_FIELD_DRIVER_THERMAL_SHUTDOWN_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_shutdown_count</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">LED (bank 206), <code>d4i.led</code> nesnesi</th></tr>
+<tr data-search="0x60 led_bank_version `bank_version` "><td class="hex">0x60</td><td class="name">MSG_FIELD_LED_BANK_VERSION</td><td class="num">1</td><td class="kind">u8</td><td><code>bank_version</code></td><td></td></tr>
+<tr data-search="0x61 led_startup_count `startup_count` sayaç kuralı"><td class="hex">0x61</td><td class="name">MSG_FIELD_LED_STARTUP_COUNT</td><td class="num">3</td><td class="kind">u24</td><td><code>startup_count</code></td><td>sayaç kuralı</td></tr>
+<tr data-search="0x62 led_operating_time_s `operating_time_s` sayaç kuralı"><td class="hex">0x62</td><td class="name">MSG_FIELD_LED_OPERATING_TIME_S</td><td class="num">4</td><td class="kind">u32</td><td><code>operating_time_s</code></td><td>sayaç kuralı</td></tr>
+<tr data-search="0x63 led_voltage `voltage_reported_v` 0.1 v"><td class="hex">0x63</td><td class="name">MSG_FIELD_LED_VOLTAGE</td><td class="num">2</td><td class="kind">u16</td><td><code>voltage_reported_v</code></td><td>0.1 V</td></tr>
+<tr data-search="0x64 led_current `current_reported_a` ma"><td class="hex">0x64</td><td class="name">MSG_FIELD_LED_CURRENT</td><td class="num">2</td><td class="kind">u16</td><td><code>current_reported_a</code></td><td>mA</td></tr>
+<tr data-search="0x65 led_temperature `temperature_raw` c = değer - 60"><td class="hex">0x65</td><td class="name">MSG_FIELD_LED_TEMPERATURE</td><td class="num">1</td><td class="kind">u8</td><td><code>temperature_raw</code></td><td>°C = değer − 60</td></tr>
+<tr data-search="0x66 led_general_failure `general_failure` hata kuralı"><td class="hex">0x66</td><td class="name">MSG_FIELD_LED_GENERAL_FAILURE</td><td class="num">1</td><td class="kind">u8</td><td><code>general_failure</code></td><td>hata kuralı</td></tr>
+<tr data-search="0x67 led_general_failure_count `general_failure_count` "><td class="hex">0x67</td><td class="name">MSG_FIELD_LED_GENERAL_FAILURE_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>general_failure_count</code></td><td></td></tr>
+<tr data-search="0x68 led_short_circuit `short_circuit` "><td class="hex">0x68</td><td class="name">MSG_FIELD_LED_SHORT_CIRCUIT</td><td class="num">1</td><td class="kind">u8</td><td><code>short_circuit</code></td><td></td></tr>
+<tr data-search="0x69 led_short_circuit_count `short_circuit_count` "><td class="hex">0x69</td><td class="name">MSG_FIELD_LED_SHORT_CIRCUIT_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>short_circuit_count</code></td><td></td></tr>
+<tr data-search="0x6a led_open_circuit `open_circuit` "><td class="hex">0x6A</td><td class="name">MSG_FIELD_LED_OPEN_CIRCUIT</td><td class="num">1</td><td class="kind">u8</td><td><code>open_circuit</code></td><td></td></tr>
+<tr data-search="0x6b led_open_circuit_count `open_circuit_count` "><td class="hex">0x6B</td><td class="name">MSG_FIELD_LED_OPEN_CIRCUIT_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>open_circuit_count</code></td><td></td></tr>
+<tr data-search="0x6c led_thermal_derating `thermal_derating` "><td class="hex">0x6C</td><td class="name">MSG_FIELD_LED_THERMAL_DERATING</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_derating</code></td><td></td></tr>
+<tr data-search="0x6d led_thermal_derating_count `thermal_derating_count` "><td class="hex">0x6D</td><td class="name">MSG_FIELD_LED_THERMAL_DERATING_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_derating_count</code></td><td></td></tr>
+<tr data-search="0x6e led_thermal_shutdown `thermal_shutdown` "><td class="hex">0x6E</td><td class="name">MSG_FIELD_LED_THERMAL_SHUTDOWN</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_shutdown</code></td><td></td></tr>
+<tr data-search="0x6f led_thermal_shutdown_count `thermal_shutdown_count` "><td class="hex">0x6F</td><td class="name">MSG_FIELD_LED_THERMAL_SHUTDOWN_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>thermal_shutdown_count</code></td><td></td></tr>
+<tr data-search="0x70 led_measurement_state `measurement_state` `msg_measurement_state_t`"><td class="hex">0x70</td><td class="name">MSG_FIELD_LED_MEASUREMENT_STATE</td><td class="num">1</td><td class="kind">u8</td><td><code>measurement_state</code></td><td><code>msg_measurement_state_t</code></td></tr>
+<tr data-search="0x71 led_measurement_status `measurement_status` `msg_measurement_status_t`"><td class="hex">0x71</td><td class="name">MSG_FIELD_LED_MEASUREMENT_STATUS</td><td class="num">1</td><td class="kind">u8</td><td><code>measurement_status</code></td><td><code>msg_measurement_status_t</code></td></tr>
+<tr data-search="0x72 led_voltage_plausibility_checked `voltage_plausibility_checked` 0/1"><td class="hex">0x72</td><td class="name">MSG_FIELD_LED_VOLTAGE_PLAUSIBILITY_CHECKED</td><td class="num">1</td><td class="kind">u8</td><td><code>voltage_plausibility_checked</code></td><td>0/1</td></tr>
+<tr data-search="0x73 led_voltage_plausible `voltage_plausible` 0/1, yoksa null"><td class="hex">0x73</td><td class="name">MSG_FIELD_LED_VOLTAGE_PLAUSIBLE</td><td class="num">1</td><td class="kind">u8</td><td><code>voltage_plausible</code></td><td>0/1, yoksa null</td></tr>
+<tr data-search="0x74 led_voltage_corrected `voltage_corrected` 1: 16 bit mv taşması düzeltildi"><td class="hex">0x74</td><td class="name">MSG_FIELD_LED_VOLTAGE_CORRECTED</td><td class="num">1</td><td class="kind">u8</td><td><code>voltage_corrected</code></td><td>1: 16 bit mV taşması düzeltildi</td></tr>
+<tr data-search="0x75 led_voltage_estimated `voltage_estimated_v` 0.1 v; 6553,5 v üstü tahmin gönderilmez"><td class="hex">0x75</td><td class="name">MSG_FIELD_LED_VOLTAGE_ESTIMATED</td><td class="num">2</td><td class="kind">u16</td><td><code>voltage_estimated_v</code></td><td>0.1 V; 6553,5 V üstü tahmin gönderilmez</td></tr>
+<tr data-search="0x76 led_temperature_plausibility_checked `temperature_plausibility_checked` 0/1"><td class="hex">0x76</td><td class="name">MSG_FIELD_LED_TEMPERATURE_PLAUSIBILITY_CHECKED</td><td class="num">1</td><td class="kind">u8</td><td><code>temperature_plausibility_checked</code></td><td>0/1</td></tr>
+<tr data-search="0x77 led_temperature_plausible `temperature_plausible` 0/1, yoksa null"><td class="hex">0x77</td><td class="name">MSG_FIELD_LED_TEMPERATURE_PLAUSIBLE</td><td class="num">1</td><td class="kind">u8</td><td><code>temperature_plausible</code></td><td>0/1, yoksa null</td></tr>
+<tr data-search="0x78 led_temperature_estimated `temperature_estimated_c` c"><td class="hex">0x78</td><td class="name">MSG_FIELD_LED_TEMPERATURE_ESTIMATED</td><td class="num">1</td><td class="kind">u8</td><td><code>temperature_estimated_c</code></td><td>C</td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Commissioning sonucu</th></tr>
+<tr data-search="0x90 commission_trigger `trigger` `msg_commission_trigger_t`"><td class="hex">0x90</td><td class="name">MSG_FIELD_COMMISSION_TRIGGER</td><td class="num">1</td><td class="kind">u8</td><td><code>trigger</code></td><td><code>msg_commission_trigger_t</code></td></tr>
+<tr data-search="0x91 commission_count `count` "><td class="hex">0x91</td><td class="name">MSG_FIELD_COMMISSION_COUNT</td><td class="num">1</td><td class="kind">u8</td><td><code>count</code></td><td></td></tr>
+<tr data-search="0x92 commission_addresses `addresses` short address listesi"><td class="hex">0x92</td><td class="name">MSG_FIELD_COMMISSION_ADDRESSES</td><td class="num">değişken</td><td class="kind">liste</td><td><code>addresses</code></td><td>short address listesi</td></tr>
+<tr data-search="0x93 commission_rechecked `rechecked` short address listesi"><td class="hex">0x93</td><td class="name">MSG_FIELD_COMMISSION_RECHECKED</td><td class="num">değişken</td><td class="kind">liste</td><td><code>rechecked</code></td><td>short address listesi</td></tr>
+<tr data-search="0x94 commission_rx_idle_level `rx_idle_level` "><td class="hex">0x94</td><td class="name">MSG_FIELD_COMMISSION_RX_IDLE_LEVEL</td><td class="num">1</td><td class="kind">i8</td><td><code>rx_idle_level</code></td><td></td></tr>
+<tr data-search="0x95 commission_rx_idle_changed `rx_idle_changed` 0/1"><td class="hex">0x95</td><td class="name">MSG_FIELD_COMMISSION_RX_IDLE_CHANGED</td><td class="num">1</td><td class="kind">u8</td><td><code>rx_idle_changed</code></td><td>0/1</td></tr>
+<tr data-search="0x96 commission_duration_ms `duration_ms` "><td class="hex">0x96</td><td class="name">MSG_FIELD_COMMISSION_DURATION_MS</td><td class="num">4</td><td class="kind">u32</td><td><code>duration_ms</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Komut ve ack</th></tr>
+<tr data-search="0xa0 command_action `action` `msg_command_action_t`"><td class="hex">0xA0</td><td class="name">MSG_FIELD_COMMAND_ACTION</td><td class="num">1</td><td class="kind">u8</td><td><code>action</code></td><td><code>msg_command_action_t</code></td></tr>
+<tr data-search="0xa1 command_id `id` isteğin numarası, ack&#x27;te aynen döner"><td class="hex">0xA1</td><td class="name">MSG_FIELD_COMMAND_ID</td><td class="num">2</td><td class="kind">u16</td><td><code>id</code></td><td>isteğin numarası, ack&#x27;te aynen döner</td></tr>
+<tr data-search="0xa2 command_channel `channel` 0..63, 255 = broadcast"><td class="hex">0xA2</td><td class="name">MSG_FIELD_COMMAND_CHANNEL</td><td class="num">1</td><td class="kind">u8</td><td><code>channel</code></td><td>0..63, 255 = broadcast</td></tr>
+<tr data-search="0xa3 command_value `value` dim yüzdesi 0..100"><td class="hex">0xA3</td><td class="name">MSG_FIELD_COMMAND_VALUE</td><td class="num">1</td><td class="kind">u8</td><td><code>value</code></td><td>dim yüzdesi 0..100</td></tr>
+<tr data-search="0xa4 command_effect_number `number` 0 durdur, 1.. efekt"><td class="hex">0xA4</td><td class="name">MSG_FIELD_COMMAND_EFFECT_NUMBER</td><td class="num">1</td><td class="kind">u8</td><td><code>number</code></td><td>0 durdur, 1.. efekt</td></tr>
+<tr data-search="0xa5 command_effect_text `text` mors efekti metni, en fazla 32 ascii"><td class="hex">0xA5</td><td class="name">MSG_FIELD_COMMAND_EFFECT_TEXT</td><td class="num">değişken</td><td class="kind">metin</td><td><code>text</code></td><td>mors efekti metni, en fazla 32 ASCII karakter</td></tr>
+<tr data-search="0xa6 command_result `status`, `error` `msg_command_result_t`, 0 = ok"><td class="hex">0xA6</td><td class="name">MSG_FIELD_COMMAND_RESULT</td><td class="num">1</td><td class="kind">i8</td><td><code>status</code>, <code>error</code></td><td><code>msg_command_result_t</code>, 0 = ok</td></tr>
+<tr data-search="0xa7 command_lamps_needed `error` metni yalnızca sonuç −10 iken"><td class="hex">0xA7</td><td class="name">MSG_FIELD_COMMAND_LAMPS_NEEDED</td><td class="num">1</td><td class="kind">u8</td><td><code>error</code> metni</td><td>yalnızca sonuç −10 iken</td></tr>
+<tr data-search="0xa8 command_lamps_available `error` metni yalnızca sonuç −10 iken"><td class="hex">0xA8</td><td class="name">MSG_FIELD_COMMAND_LAMPS_AVAILABLE</td><td class="num">1</td><td class="kind">u8</td><td><code>error</code> metni</td><td>yalnızca sonuç −10 iken</td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Health</th></tr>
+<tr data-search="0xb0 health_uptime_s `uptime_s` "><td class="hex">0xB0</td><td class="name">MSG_FIELD_HEALTH_UPTIME_S</td><td class="num">4</td><td class="kind">u32</td><td><code>uptime_s</code></td><td></td></tr>
+<tr data-search="0xb1 health_free_heap_bytes `free_heap_bytes` "><td class="hex">0xB1</td><td class="name">MSG_FIELD_HEALTH_FREE_HEAP_BYTES</td><td class="num">4</td><td class="kind">u32</td><td><code>free_heap_bytes</code></td><td></td></tr>
+<tr data-search="0xb2 health_firmware_version `firmware_version` major&lt;&lt;16 | minor&lt;&lt;8 | patch"><td class="hex">0xB2</td><td class="name">MSG_FIELD_HEALTH_FIRMWARE_VERSION</td><td class="num">3</td><td class="kind">u24</td><td><code>firmware_version</code></td><td><code>major&lt;&lt;16 | minor&lt;&lt;8 | patch</code>, örn. 1.0.26 → <code>0x01001A</code></td></tr>
+<tr data-search="0xb3 health_idf_version `idf_version` aynı biçim; bağlantı başına bir kez"><td class="hex">0xB3</td><td class="name">MSG_FIELD_HEALTH_IDF_VERSION</td><td class="num">3</td><td class="kind">u24</td><td><code>idf_version</code></td><td>aynı biçim; bağlantı başına bir kez</td></tr>
+<tr data-search="0xb4 health_build_timestamp `build_date`, `build_time` derleme zamanı, unix saniye; bağlantı başına bir kez"><td class="hex">0xB4</td><td class="name">MSG_FIELD_HEALTH_BUILD_TIMESTAMP</td><td class="num">4</td><td class="kind">u32</td><td><code>build_date</code>, <code>build_time</code></td><td>derleme zamanı, Unix saniye; bağlantı başına bir kez</td></tr>
+<tr data-search="0xb6 health_reset_reason `reset_reason` `msg_reset_reason_t`"><td class="hex">0xB6</td><td class="name">MSG_FIELD_HEALTH_RESET_REASON</td><td class="num">1</td><td class="kind">u8</td><td><code>reset_reason</code></td><td><code>msg_reset_reason_t</code></td></tr>
+<tr data-search="0xb7 health_mqtt_connected `mqtt_connected` 0/1"><td class="hex">0xB7</td><td class="name">MSG_FIELD_HEALTH_MQTT_CONNECTED</td><td class="num">1</td><td class="kind">u8</td><td><code>mqtt_connected</code></td><td>0/1</td></tr>
+<tr data-search="0xb8 health_dropped_commands `dropped_commands` "><td class="hex">0xB8</td><td class="name">MSG_FIELD_HEALTH_DROPPED_COMMANDS</td><td class="num">4</td><td class="kind">u32</td><td><code>dropped_commands</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">Thread ve komşular, <code>thread</code> nesnesi</th></tr>
+<tr data-search="0xc0 thread_role `role` `msg_thread_role_t`"><td class="hex">0xC0</td><td class="name">MSG_FIELD_THREAD_ROLE</td><td class="num">1</td><td class="kind">u8</td><td><code>role</code></td><td><code>msg_thread_role_t</code></td></tr>
+<tr data-search="0xc1 thread_attached `attached` 0/1"><td class="hex">0xC1</td><td class="name">MSG_FIELD_THREAD_ATTACHED</td><td class="num">1</td><td class="kind">u8</td><td><code>attached</code></td><td>0/1</td></tr>
+<tr data-search="0xc2 thread_parent_rssi_avg `parent_rssi_avg_dbm` dbm, yoksa null"><td class="hex">0xC2</td><td class="name">MSG_FIELD_THREAD_PARENT_RSSI_AVG</td><td class="num">1</td><td class="kind">i8</td><td><code>parent_rssi_avg_dbm</code></td><td>dBm, yoksa null</td></tr>
+<tr data-search="0xc3 thread_parent_rssi_last `parent_rssi_last_dbm` dbm, yoksa null"><td class="hex">0xC3</td><td class="name">MSG_FIELD_THREAD_PARENT_RSSI_LAST</td><td class="num">1</td><td class="kind">i8</td><td><code>parent_rssi_last_dbm</code></td><td>dBm, yoksa null</td></tr>
+<tr data-search="0xc4 thread_parent_link_quality_in `parent_link_quality_in` yoksa null"><td class="hex">0xC4</td><td class="name">MSG_FIELD_THREAD_PARENT_LINK_QUALITY_IN</td><td class="num">1</td><td class="kind">u8</td><td><code>parent_link_quality_in</code></td><td>yoksa null</td></tr>
+<tr data-search="0xc5 thread_parent_link_quality_out `parent_link_quality_out` yoksa null"><td class="hex">0xC5</td><td class="name">MSG_FIELD_THREAD_PARENT_LINK_QUALITY_OUT</td><td class="num">1</td><td class="kind">u8</td><td><code>parent_link_quality_out</code></td><td>yoksa null</td></tr>
+<tr data-search="0xc6 thread_rloc16 `rloc16` "><td class="hex">0xC6</td><td class="name">MSG_FIELD_THREAD_RLOC16</td><td class="num">2</td><td class="kind">u16</td><td><code>rloc16</code></td><td></td></tr>
+<tr data-search="0xc7 thread_partition_id `partition_id` "><td class="hex">0xC7</td><td class="name">MSG_FIELD_THREAD_PARTITION_ID</td><td class="num">4</td><td class="kind">u32</td><td><code>partition_id</code></td><td></td></tr>
+<tr data-search="0xc8 thread_channel `channel` "><td class="hex">0xC8</td><td class="name">MSG_FIELD_THREAD_CHANNEL</td><td class="num">1</td><td class="kind">u8</td><td><code>channel</code></td><td></td></tr>
+<tr data-search="0xc9 thread_pan_id `pan_id` "><td class="hex">0xC9</td><td class="name">MSG_FIELD_THREAD_PAN_ID</td><td class="num">2</td><td class="kind">u16</td><td><code>pan_id</code></td><td></td></tr>
+<tr data-search="0xca thread_network_name `network_name` bağlantı başına bir kez"><td class="hex">0xCA</td><td class="name">MSG_FIELD_THREAD_NETWORK_NAME</td><td class="num">değişken</td><td class="kind">metin</td><td><code>network_name</code></td><td>bağlantı başına bir kez</td></tr>
+<tr data-search="0xcb thread_parent_changes `parent_changes` "><td class="hex">0xCB</td><td class="name">MSG_FIELD_THREAD_PARENT_CHANGES</td><td class="num">2</td><td class="kind">u16</td><td><code>parent_changes</code></td><td></td></tr>
+<tr data-search="0xcc thread_partition_id_changes `partition_id_changes` "><td class="hex">0xCC</td><td class="name">MSG_FIELD_THREAD_PARTITION_ID_CHANGES</td><td class="num">2</td><td class="kind">u16</td><td><code>partition_id_changes</code></td><td></td></tr>
+<tr data-search="0xcd thread_attach_attempts `attach_attempts` "><td class="hex">0xCD</td><td class="name">MSG_FIELD_THREAD_ATTACH_ATTEMPTS</td><td class="num">2</td><td class="kind">u16</td><td><code>attach_attempts</code></td><td></td></tr>
+<tr data-search="0xd0 neighbor_rloc16 `neighbors[].rloc16` yeni komşu kaydını başlatır"><td class="hex">0xD0</td><td class="name">MSG_FIELD_NEIGHBOR_RLOC16</td><td class="num">2</td><td class="kind">u16</td><td><code>neighbors[].rloc16</code></td><td>yeni komşu kaydını başlatır</td></tr>
+<tr data-search="0xd1 neighbor_is_child `neighbors[].role` 1 `&quot;child&quot;`, 0 `&quot;router&quot;`"><td class="hex">0xD1</td><td class="name">MSG_FIELD_NEIGHBOR_IS_CHILD</td><td class="num">1</td><td class="kind">u8</td><td><code>neighbors[].role</code></td><td>1 <code>&quot;child&quot;</code>, 0 <code>&quot;router&quot;</code></td></tr>
+<tr data-search="0xd2 neighbor_rssi_avg `neighbors[].rssi_avg_dbm` dbm"><td class="hex">0xD2</td><td class="name">MSG_FIELD_NEIGHBOR_RSSI_AVG</td><td class="num">1</td><td class="kind">i8</td><td><code>neighbors[].rssi_avg_dbm</code></td><td>dBm</td></tr>
+<tr data-search="0xd3 neighbor_rssi_last `neighbors[].rssi_last_dbm` dbm"><td class="hex">0xD3</td><td class="name">MSG_FIELD_NEIGHBOR_RSSI_LAST</td><td class="num">1</td><td class="kind">i8</td><td><code>neighbors[].rssi_last_dbm</code></td><td>dBm</td></tr>
+<tr data-search="0xd4 neighbor_link_margin `neighbors[].link_margin` "><td class="hex">0xD4</td><td class="name">MSG_FIELD_NEIGHBOR_LINK_MARGIN</td><td class="num">1</td><td class="kind">u8</td><td><code>neighbors[].link_margin</code></td><td></td></tr>
+<tr data-search="0xd5 neighbor_link_quality_in `neighbors[].link_quality_in` "><td class="hex">0xD5</td><td class="name">MSG_FIELD_NEIGHBOR_LINK_QUALITY_IN</td><td class="num">1</td><td class="kind">u8</td><td><code>neighbors[].link_quality_in</code></td><td></td></tr>
+<tr class="group-row"><th colspan="6" scope="colgroup">OTA, <code>ota</code> nesnesi</th></tr>
+<tr data-search="0xe0 ota_state `state` `msg_ota_state_t`"><td class="hex">0xE0</td><td class="name">MSG_FIELD_OTA_STATE</td><td class="num">1</td><td class="kind">u8</td><td><code>state</code></td><td><code>msg_ota_state_t</code></td></tr>
+<tr data-search="0xe1 ota_last_result `last_result` `msg_ota_result_t`"><td class="hex">0xE1</td><td class="name">MSG_FIELD_OTA_LAST_RESULT</td><td class="num">1</td><td class="kind">u8</td><td><code>last_result</code></td><td><code>msg_ota_result_t</code></td></tr>
+<tr data-search="0xe2 ota_busy `busy` 0/1"><td class="hex">0xE2</td><td class="name">MSG_FIELD_OTA_BUSY</td><td class="num">1</td><td class="kind">u8</td><td><code>busy</code></td><td>0/1</td></tr>
+<tr data-search="0xe3 ota_check_count `check_count` "><td class="hex">0xE3</td><td class="name">MSG_FIELD_OTA_CHECK_COUNT</td><td class="num">4</td><td class="kind">u32</td><td><code>check_count</code></td><td></td></tr>
+<tr data-search="0xe4 ota_last_check_uptime_s `last_check_uptime_s` "><td class="hex">0xE4</td><td class="name">MSG_FIELD_OTA_LAST_CHECK_UPTIME_S</td><td class="num">4</td><td class="kind">u32</td><td><code>last_check_uptime_s</code></td><td></td></tr>
+<tr data-search="0xe5 ota_last_success_uptime_s `last_success_uptime_s` "><td class="hex">0xE5</td><td class="name">MSG_FIELD_OTA_LAST_SUCCESS_UPTIME_S</td><td class="num">4</td><td class="kind">u32</td><td><code>last_success_uptime_s</code></td><td></td></tr>
+<tr data-search="0xe6 ota_last_target_version `last_target_version` firmware versiyonu biçimi; yoksa `&quot;&quot;`"><td class="hex">0xE6</td><td class="name">MSG_FIELD_OTA_LAST_TARGET_VERSION</td><td class="num">3</td><td class="kind">u24</td><td><code>last_target_version</code></td><td>firmware versiyonu biçimi; yoksa <code>&quot;&quot;</code></td></tr>
+<tr data-search="0xe7 ota_message `last_message` `msg_ota_message_t`"><td class="hex">0xE7</td><td class="name">MSG_FIELD_OTA_MESSAGE</td><td class="num">1</td><td class="kind">u8</td><td><code>last_message</code></td><td><code>msg_ota_message_t</code></td></tr>
+<tr data-search="0xe8 ota_download_percent `download_percent` "><td class="hex">0xE8</td><td class="name">MSG_FIELD_OTA_DOWNLOAD_PERCENT</td><td class="num">1</td><td class="kind">u8</td><td><code>download_percent</code></td><td></td></tr>
+<tr data-search="0xe9 ota_download_bytes `download_bytes` "><td class="hex">0xE9</td><td class="name">MSG_FIELD_OTA_DOWNLOAD_BYTES</td><td class="num">4</td><td class="kind">u32</td><td><code>download_bytes</code></td><td></td></tr>
+<tr data-search="0xea ota_download_total_bytes `download_total_bytes` "><td class="hex">0xEA</td><td class="name">MSG_FIELD_OTA_DOWNLOAD_TOTAL_BYTES</td><td class="num">4</td><td class="kind">u32</td><td><code>download_total_bytes</code></td><td></td></tr>
+<tr data-search="0xeb ota_last_error `last_message` esp-idf `esp_err_t`; yalnızca mesaj error iken"><td class="hex">0xEB</td><td class="name">MSG_FIELD_OTA_LAST_ERROR</td><td class="num">4</td><td class="kind">i32</td><td><code>last_message</code></td><td>ESP-IDF <code>esp_err_t</code>; yalnızca mesaj ERROR iken</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note"><strong>Bayt</strong>: değerin kapladığı bayt; <em>değişken</em> ise önce 1 bayt uzunluk. <strong>Tip</strong>: <code>u</code> işaretsiz, <code>i</code> işaretli; <em>liste</em> u8 dizisi, <em>bayt</em> ham veri. Sayaç ve hata kuralları için JSON'a çevirme bölümüne bakın.</p>
+    </section>
+
+    <section id="enumlar" aria-labelledby="enum-h">
+      <h2 id="enum-h">Değer enum'ları</h2>
+      <p>JSON karşılığı, aksi belirtilmedikçe enum adının küçük harfli hâlidir.</p>
+      <div class="enums">
+        <div class="enum"><h3>msg_type_t · TYPE</h3><ol>
+          <li><span>1</span><span>d4i_periodic</span></li><li><span>2</span><span>dali_status</span></li><li><span>3</span><span>d4i (tek bank)</span></li><li><span>4</span><span>commission_result</span></li><li><span>5</span><span>health</span></li><li><span>6</span><span>komut ack'i</span></li><li><span>7</span><span>hello</span></li><li><span>8</span><span>komut (→ cihaz)</span></li></ol></div>
+        <div class="enum"><h3>msg_command_action_t</h3><ol>
+          <li><span>1</span><span>dim</span></li><li><span>2</span><span>efekt</span></li><li><span>3</span><span>d4i_read</span></li><li><span>4</span><span>commission</span></li><li><span>5</span><span>ota_check</span></li></ol></div>
+        <div class="enum"><h3>msg_measurement_state_t</h3><ol>
+          <li><span>0</span><span>unknown</span></li><li><span>1</span><span>on</span></li><li><span>2</span><span>off</span></li><li><span>3</span><span>transitioning</span></li></ol></div>
+        <div class="enum"><h3>msg_measurement_status_t</h3><ol>
+          <li><span>1</span><span>local_level_command_during_sample</span></li><li><span>2</span><span>snapshot_query_failed</span></li><li><span>3</span><span>operating_state_changed_during_sample</span></li><li><span>4</span><span>fade_in_progress</span></li><li><span>5</span><span>status_level_mismatch</span></li><li><span>6</span><span>light_source_off</span></li><li><span>7</span><span>operating_state_unknown</span></li><li><span>8</span><span>plausibility_context_unavailable</span></li><li><span>9</span><span>voltage_corrected_16bit_mv_wrap</span></li><li><span>10</span><span>load_power_current_mismatch</span></li><li><span>11</span><span>input_power_current_mismatch</span></li><li><span>12</span><span>current_too_low_for_check</span></li><li><span>13</span><span>power_reference_unavailable</span></li></ol></div>
+        <div class="enum"><h3>msg_load_power_check_t</h3><ol>
+          <li><span>0</span><span>kontrol yapılamadı</span></li><li><span>1</span><span>tutarlı</span></li><li><span>2</span><span>tutarsız (yük gücü hatalı)</span></li><li><span>3</span><span>çözümsüz</span></li></ol></div>
+        <div class="enum"><h3>msg_error_t · ERROR</h3><ol>
+          <li><span>1</span><span>no_response</span></li><li><span>2</span><span>bank0_unreadable</span></li><li><span>3</span><span>bank_not_implemented</span></li></ol>
+          <h3 style="margin-top:12px">msg_decode_error_t</h3><ol><li><span>1</span><span>unsupported_bank_layout_or_version</span></li></ol></div>
+        <div class="enum"><h3>msg_commission_trigger_t</h3><ol>
+          <li><span>0</span><span>unknown</span></li><li><span>1</span><span>boot</span></li><li><span>2</span><span>mqtt</span></li><li><span>3</span><span>auto</span></li></ol>
+          <h3 style="margin-top:12px">msg_thread_role_t</h3><ol>
+          <li><span>0</span><span>disabled</span></li><li><span>1</span><span>detached</span></li><li><span>2</span><span>child</span></li><li><span>3</span><span>router</span></li><li><span>4</span><span>leader</span></li></ol></div>
+        <div class="enum"><h3>msg_reset_reason_t</h3><ol>
+          <li><span>0</span><span>unknown</span></li><li><span>1</span><span>power_on</span></li><li><span>2</span><span>external_pin</span></li><li><span>3</span><span>software</span></li><li><span>4</span><span>panic</span></li><li><span>5</span><span>int_wdt</span></li><li><span>6</span><span>task_wdt</span></li><li><span>7</span><span>wdt</span></li><li><span>8</span><span>deep_sleep</span></li><li><span>9</span><span>brownout</span></li><li><span>10</span><span>sdio</span></li><li><span>11</span><span>usb</span></li><li><span>12</span><span>jtag</span></li><li><span>13</span><span>efuse</span></li><li><span>14</span><span>power_glitch</span></li><li><span>15</span><span>cpu_lockup</span></li></ol></div>
+        <div class="enum"><h3>msg_ota_state_t</h3><ol>
+          <li><span>0</span><span>idle</span></li><li><span>1</span><span>waiting_network</span></li><li><span>2</span><span>checking</span></li><li><span>3</span><span>downloading</span></li><li><span>4</span><span>verifying</span></li><li><span>5</span><span>updated</span></li><li><span>6</span><span>failed</span></li></ol>
+          <h3 style="margin-top:12px">msg_ota_result_t</h3><ol>
+          <li><span>0</span><span>up_to_date</span></li><li><span>1</span><span>blocked</span></li><li><span>2</span><span>updated</span></li><li><span>3</span><span>failed</span></li></ol></div>
+        <div class="enum"><h3>msg_ota_message_t · ota.last_message</h3><ol>
+          <li><span>0</span><span>(boş)</span></li><li><span>1</span><span>Firmware dogrulaniyor</span></li><li><span>2</span><span>Firmware indiriliyor</span></li><li><span>3</span><span>Ag bekleniyor</span></li><li><span>4</span><span>Ag yok, ertelendi</span></li><li><span>5</span><span>Varsayilan URL, atlandi</span></li><li><span>6</span><span>Metadata kontrol ediliyor</span></li><li><span>7</span><span><code>OTA_LAST_ERROR</code> kodunun ESP-IDF adı (0x7002 → ESP_ERR_HTTP_CONNECT)</span></li><li><span>8</span><span>Guncelleme tamamlandi</span></li><li><span>9</span><span>Bloklu surum atlandi</span></li><li><span>10</span><span>Firmware guncel</span></li></ol></div>
+      </div>
+      <h3>Versiyon ve derleme zamanı</h3>
+      <ul class="plain">
+        <li><strong>Versiyonlar</strong> (<code>HEALTH_FIRMWARE_VERSION</code>, <code>HEALTH_IDF_VERSION</code>, <code>OTA_LAST_TARGET_VERSION</code>): <code>major &lt;&lt; 16 | minor &lt;&lt; 8 | patch</code>, her parça 0–255. JSON metni firmware ve hedef versiyon için <code>"1.0.25"</code> (<code>0x010019</code>); IDF için başına <code>v</code> eklenir, patch 0 ise yazılmaz (<code>0x060000</code> → <code>"v6.0"</code>).</li>
+        <li><strong>Derleme zamanı</strong> (<code>HEALTH_BUILD_TIMESTAMP</code>): <code>__DATE__</code> + <code>__TIME__</code> değerinin Unix saniyesi (saat dilimi yok, UTC gibi okunur). JSON'da <code>build_date</code> C <code>__DATE__</code> biçiminde (<code>"Nov  2 2026"</code>, gün 2 haneye boşluklu), <code>build_time</code> <code>"HH:MM:SS"</code>.</li>
+        <li>Periyodik health'te metin alan yoktur; tek metin olan ağ adı bağlantı başına bir kez gelir.</li>
+      </ul>
+      <h3>Komut sonuç kodları (COMMAND_RESULT) ve ack metni</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Kod</th><th scope="col">Anlam</th><th scope="col">JSON <code>error</code> metni</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0</td><td>başarılı</td><td><code>status: "ok"</code>, error yok</td></tr>
+            <tr><td class="num">-2</td><td>action yok</td><td>action alani yok</td></tr>
+            <tr><td class="num">-3</td><td>dim parametresi geçersiz</td><td>dim icin value (0..100) ve channel (0..63 veya 255) gerekli</td></tr>
+            <tr><td class="num">-4</td><td>efekt parametresi geçersiz</td><td>efekt icin number (0..28) ve channel (0..63 veya 255) gerekli</td></tr>
+            <tr><td class="num">-5</td><td>bilinmeyen action</td><td>bilinmeyen action</td></tr>
+            <tr><td class="num">-6</td><td>d4i_read kanalsız</td><td>d4i_read icin channel (0..63) gerekli</td></tr>
+            <tr><td class="num">-7</td><td>kanal hatta yok</td><td>bu channel DALI hattinda bulunamadi</td></tr>
+            <tr><td class="num">-8</td><td>çok lambalı efekte kanal verildi</td><td>chase efekti tum lambalari surer, channel gondermeyin</td></tr>
+            <tr><td class="num">-9</td><td>efekt başlatılamadı</td><td>efekt baslatilamadi (bos slot yok veya bellek yetersiz)</td></tr>
+            <tr><td class="num">-10</td><td>yeterli lamba yok</td><td>bu efekt en az &lt;LAMPS_NEEDED&gt; lamba ister, hatta &lt;LAMPS_AVAILABLE&gt; lamba var</td></tr>
+            <tr><td class="num">-11</td><td>commissioning hazır değil</td><td>commissioning servisi henuz hazir degil</td></tr>
+            <tr><td class="num">-12</td><td>OTA hazır değil</td><td>ota servisi henuz hazir degil</td></tr>
+            <tr><td class="num">-13</td><td>D4i rapor servisi hazır değil</td><td>d4i rapor servisi henuz hazir degil</td></tr>
+            <tr><td class="num">-14</td><td>komut kuyruğu dolu</td><td>cihaz mesgul, komut kuyrugu dolu</td></tr>
+            <tr><td class="num">-15</td><td>CRC hatalı (yalnızca binary)</td><td>crc hatali, paket islenmedi</td></tr>
+            <tr><td class="num">-16</td><td>desteklenmeyen versiyon (yalnızca binary)</td><td>desteklenmeyen protokol versiyonu</td></tr>
+            <tr><td class="num">-17</td><td>paket biçimi bozuk (yalnızca binary)</td><td>paket bicimi bozuk</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">-1 (<code>gecersiz json</code>) ve -22 (<code>action string degil</code>) yalnızca JSON komutlarında oluşur. Metinler firmware'deki metinlerle aynıdır ve ASCII yazılır.</p>
+    </section>
+
+    <section id="mesajlar" aria-labelledby="mesaj-h">
+      <h2 id="mesaj-h">Mesaj tipleri</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Tip</th><th scope="col">JSON <code>type</code></th><th scope="col">Köprü çıktısı</th><th scope="col">Taşıdığı alanlar</th></tr></thead>
+          <tbody>
+            <tr><td class="name">0x01 D4I_PERIODIC</td><td><code>d4i_periodic</code></td><td><code>/data</code></td><td><code>ADDRESS</code>, <code>ONLINE</code>; çevrimdışıysa <code>ERROR</code>; çevrimiçiyse 0x10–0x17 ve <code>D4I_SUPPORTED</code>; D4i destekliyse 0x28–0x2E, 0x30–0x37, 0x40–0x53, 0x60–0x78</td></tr>
+            <tr><td class="name">0x02 DALI_STATUS</td><td><code>dali_status</code></td><td><code>/data</code></td><td><code>ADDRESS</code>, 0x10–0x17</td></tr>
+            <tr><td class="name">0x03 D4I_BANK</td><td><code>d4i</code></td><td><code>/data</code></td><td><code>ADDRESS</code>, <code>BANK</code>, <code>BANK_OK</code>; okunduysa <code>BANK_LENGTH</code>, <code>BANK_RAW</code> ve bankın çözülmüş alanları (202–204: 0x30–0x34; 205: 0x40–0x53 + <code>DECODE_OK</code>; 206: 0x60–0x78 + <code>DECODE_OK</code>). Hata varyantı: <code>BANK_OK</code>=0, <code>ERROR</code>, <code>LAST_BANK</code></td></tr>
+            <tr><td class="name">0x04 COMMISSION_RESULT</td><td><code>commission_result</code></td><td><code>/data</code></td><td>0x90–0x96</td></tr>
+            <tr><td class="name">0x05 HEALTH</td><td><code>health</code></td><td><code>/health</code></td><td>0xB0–0xB8, 0xC0–0xD5, 0xE0–0xEA</td></tr>
+            <tr><td class="name">0x06 COMMAND_ACK</td><td>(yok)</td><td><code>/data</code></td><td><code>COMMAND_ACTION</code>, <code>COMMAND_ID</code> (istekte varsa), <code>COMMAND_RESULT</code>; sonuç -10 ise <code>COMMAND_LAMPS_*</code></td></tr>
+            <tr><td class="name">0x07 HELLO</td><td>(yok)</td><td><code>/data</code>'ya <code>data</code> metni</td><td>alan yok</td></tr>
+            <tr><td class="name">0x08 COMMAND</td><td>(yok)</td><td>–</td><td>sunucudan cihaza; Komutlar bölümü</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Bilinmeyen tip gelirse paket loglanıp atlanır.</p>
+    </section>
+
+    <section id="json" aria-labelledby="json-h">
+      <h2 id="json-h">JSON'a çevirme kuralları</h2>
+      <p>Köprü, dashboard'un bugün aldığı JSON'un aynısını üretmeli. Pakette yalnızca ham değerler ve cihazın kararları var; birim, ölçeklenmiş değer, durum metinleri gibi key'ler aşağıdaki kurallarla hesaplanıyor.</p>
+
+      <h3>Maskeli değer, sayaç ve hata kuralları</h3>
+      <p><strong>Maskeli değer:</strong> u8 için <code>0xFE</code>/<code>0xFF</code>, u16 için <code>0xFFFE</code>/<code>0xFFFF</code>, u32 için <code>0xFFFFFFFE</code>/<code>0xFFFFFFFF</code>. <code>…E</code> = <code>temporary_unavailable</code>, <code>…F</code> = <code>unavailable</code>.</p>
+      <div class="two-col">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col" colspan="2">Sayaç (<code>operating_time_s</code> u32, <code>startup_count</code> u24), <code>N</code> = key</th></tr></thead>
+            <tbody>
+              <tr><td>≤ <code>0x…FD</code></td><td><code>N: değer</code></td></tr>
+              <tr><td>= <code>0x…FD</code></td><td>ayrıca <code>N_saturated: true</code></td></tr>
+              <tr><td>= <code>0x…FE</code></td><td><code>N: null</code>, <code>N_status: "temporary_unavailable"</code></td></tr>
+              <tr><td>= <code>0x…FF</code></td><td><code>N: null</code>, <code>N_status: "unavailable"</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col" colspan="2">Hata bayrağı ve sayacı (ayrı alanlar), <code>N</code> = key</th></tr></thead>
+            <tbody>
+              <tr><td>bayrak 0/1</td><td><code>N: değer</code></td></tr>
+              <tr><td>bayrak 0xFE / 0xFF</td><td><code>N: null</code>, <code>N_status: "temporary_unavailable"</code> / <code>"unavailable"</code></td></tr>
+              <tr><td>bayrak diğer</td><td><code>N: null</code>, <code>N_status: "invalid"</code></td></tr>
+              <tr><td>sayaç ≤ 0xFC</td><td><code>N_count: değer</code></td></tr>
+              <tr><td>sayaç 0xFD</td><td><code>N_count: 253</code>, <code>N_count_saturated: true</code>, <code>N_count_text: "253+"</code></td></tr>
+              <tr><td>sayaç 0xFE / 0xFF</td><td><code>N_count: null</code>, <code>N_count_status</code> buna göre</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p><strong>Ölçek:</strong> <code>scale_raw</code> geçerliyse (≤ <code>0x06</code> veya ≥ <code>0xFA</code>) üs, baytın işaretli 8 bit hâlidir (<code>0xFF</code> → −1). Değer = ham × 10<sup>üs</sup>.</p>
+
+      <h3>Enerji, güç, yük gücü</h3>
+      <ul class="plain">
+        <li>Enerji ham = <code>ENERGY_RAW_HIGH &lt;&lt; 32 | ENERGY_RAW_LOW</code> (48 bit). <code>energy.raw_integer</code> bu değerin <strong>ondalık string</strong>'i (48 bit JSON number'a güvenle sığmaz); <code>power.raw_integer</code> number.</li>
+        <li><code>scale_raw</code> ölçek baytı; <code>scale_exponent</code> ölçek geçerliyse üs, değilse null. Ölçek geçersizse <code>value: null</code>, <code>status: "invalid_scale"</code>.</li>
+        <li>Enerji <code>0xFFFFFFFFFFFE</code>/<code>…FF</code> (güç <code>0xFFFFFFFE</code>/<code>…FF</code>) → <code>value: null</code>, <code>status</code> buna göre. Diğer durumda <code>value</code> = ham × 10<sup>üs</sup>; ham <code>…FD</code> ise ayrıca <code>saturated: true</code>, <code>value_is_lower_bound: true</code>.</li>
+        <li><code>unit</code>: enerji <code>"Wh"</code>, güç <code>"W"</code>; yalnızca tek bank okumasında bank 203 için <code>"VAh"</code>/<code>"VA"</code>.</li>
+        <li><code>load_power</code> yalnızca <code>LOAD_POWER_RAW</code> varsa yazılır: <code>value</code> = ham × 10<sup>üs</sup>, <code>unit: "W"</code>. <code>LOAD_POWER_CHECK</code> 0 → <code>plausibility_checked: false, plausible: null</code>; 1 → <code>true, true</code>; 2 → <code>true, false</code> ve <code>implausibility_reason: "led_voltage_current_mismatch"</code>; 3 → <code>true, null</code>.</li>
+      </ul>
+
+      <h3>Sürücü (<code>driver</code>, bank 205)</h3>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><code>bank_version</code></td><td>aynen</td></tr>
+            <tr><td><code>fault_counts_are_historical</code></td><td>her zaman <code>true</code></td></tr>
+            <tr><td><code>operating_time_s</code>, <code>startup_count</code></td><td>sayaç kuralı</td></tr>
+            <tr><td><code>input_voltage_v</code></td><td>maskeli değilse ham / 10, değilse null</td></tr>
+            <tr><td><code>mains_frequency_hz</code></td><td>maskeli değilse ham, değilse null</td></tr>
+            <tr><td><code>power_factor</code></td><td>ham ≤ 100 ise ham / 100, değilse null</td></tr>
+            <tr><td><code>temperature_c</code></td><td>maskeli değilse ham − 60, değilse null</td></tr>
+            <tr><td><code>output_current_percent</code></td><td>ham ≤ 100 ise ham, değilse null</td></tr>
+            <tr><td>6 hata alanı</td><td>hata kuralı</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>LED (<code>led</code>, bank 206)</h3>
+      <p class="note">V = <code>LED_VOLTAGE</code>, I = <code>LED_CURRENT</code>, T = <code>LED_TEMPERATURE</code>, pc/pp = <code>LED_VOLTAGE_PLAUSIBILITY_CHECKED</code>/<code>_PLAUSIBLE</code>, tc/tp = <code>LED_TEMPERATURE_PLAUSIBILITY_CHECKED</code>/<code>_PLAUSIBLE</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><code>bank_version</code>, <code>fault_counts_are_historical</code></td><td>aynen, her zaman <code>true</code></td></tr>
+            <tr><td><code>startup_count</code>, <code>operating_time_s</code></td><td>sayaç kuralı</td></tr>
+            <tr><td><code>sample_coherent</code></td><td><code>SAMPLE_COHERENT</code> (0/1 → bool), yoksa null</td></tr>
+            <tr><td><code>measurement_state</code> / <code>measurement_status</code></td><td>enum adları; status yalnızca alan varsa</td></tr>
+            <tr><td><code>current_available</code>, <code>current_reported_a</code>, <code>current_status</code></td><td>I maskeli değilse <code>true</code> ve I / 1000; maskeliyse <code>current_status</code></td></tr>
+            <tr><td><code>voltage_available</code>, <code>voltage_reported_v</code></td><td>V maskeli değilse <code>true</code> ve V / 10</td></tr>
+            <tr><td><code>voltage_corrected</code>, <code>voltage_corrected_v</code>, <code>voltage_correction_reason</code></td><td><code>LED_VOLTAGE_CORRECTED</code>=1 ise <code>true</code>, V/10 + 65.536, <code>"suspected_16bit_mv_wrap"</code></td></tr>
+            <tr><td><code>voltage_estimated_v</code></td><td><code>LED_VOLTAGE_ESTIMATED</code> varsa / 10</td></tr>
+            <tr><td><code>voltage_v</code>, <code>current_a</code></td><td>pc ve pp 1 ise gerilim (düzeltildiyse düzeltilmiş) ve akım; değilse null. <code>voltage_v</code> null ve V maskeliyse <code>voltage_status</code></td></tr>
+            <tr><td><code>voltage_plausible</code>, <code>current_plausible</code></td><td>pc=1 ise pp, değilse null</td></tr>
+            <tr><td><code>voltage_/current_plausibility_checked</code></td><td>pc</td></tr>
+            <tr><td><code>voltage_/current_implausibility_reason</code></td><td>pc=1 ve pp=0 ise <code>measurement_status</code> metni</td></tr>
+            <tr><td>5 hata alanı</td><td>hata kuralı</td></tr>
+            <tr><td><code>temperature_raw</code>, <code>temperature_reported_c</code></td><td>T maskeli değilse T, T − 60</td></tr>
+            <tr><td><code>temperature_implausibility_reason</code></td><td>tc=1 ve tp=0 ise <code>"gear_temperature_mismatch"</code></td></tr>
+            <tr><td><code>temperature_estimated_c</code>, <code>temperature_estimation_reason</code></td><td><code>LED_TEMPERATURE_ESTIMATED</code> varsa değer, <code>"suspected_missing_plus_60_offset"</code></td></tr>
+            <tr><td><code>temperature_c</code></td><td>tc ve tp 1 ise T − 60, değilse null; T maskeliyse ayrıca <code>temperature_status</code></td></tr>
+            <tr><td><code>temperature_available</code>, <code>temperature_plausible</code>, <code>temperature_plausibility_checked</code></td><td>T maskeli değil; tc=1 ise tp yoksa null; tc</td></tr>
+            <tr><td><code>measurements_available</code></td><td>gerilim, akım ve sıcaklık mevcut</td></tr>
+            <tr><td><code>measurements_plausibility_checked</code></td><td>pc ve tc</td></tr>
+            <tr><td><code>measurements_plausible</code></td><td>kontrol edildiyse available ve pp ve tp, değilse null</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Tek bank okumasında (<code>D4I_BANK</code>) cihazın bağlamı olmadığı için <code>measurement_state</code> <code>unknown</code>, <code>measurement_status</code> <code>plausibility_context_unavailable</code> gelir ve kontroller 0'dır.</p>
+
+      <h3>Mesaj iskeletleri</h3>
+      <ul class="plain">
+        <li><strong><code>d4i_periodic</code></strong>: <code>type</code>, <code>address</code>, <code>online</code>; <code>status</code> nesnesinde 8 durum key'i (eksikse null); <code>d4i_supported</code>; <code>d4i</code> nesnesinde <code>energy</code>, <code>power</code>, <code>load_power</code>, <code>driver</code>, <code>led</code>, <code>sample_coherent</code>, <code>sample_state</code>, <code>sample_status</code>, <code>bank_206_length</code>, <code>bank_206_version</code>. <code>read_errors</code>/<code>decode_errors</code> yalnızca alan varsa. Çevrimdışı: <code>online: false, error: "no_response"</code>. Eski JSON'daki <code>d4i.bank_206_raw_hex</code> <strong>kaldırıldı</strong>; ham bank gerekirse <code>d4i_read</code> ile istenir.</li>
+        <li><strong><code>dali_status</code></strong>: <code>type</code>, <code>address</code> ve 8 durum key'i üst seviyede (eksikse null).</li>
+        <li><strong><code>d4i</code></strong> (tek bank): <code>type</code>, <code>address</code>, <code>bank</code>, <code>ok</code>; okunduysa <code>length</code>, <code>raw_hex</code> (büyük harf hex) ve bankın çözülmüş nesneleri; 205/206 için <code>decode_ok</code> ve gerekirse <code>decode_error</code>. Hata varyantı: <code>ok: false</code>, <code>error</code>, <code>last_bank</code>.</li>
+        <li><strong><code>commission_result</code></strong>: <code>type</code>, <code>trigger</code>, <code>count</code>, <code>addresses</code>, <code>rechecked</code>, <code>rx_idle_level</code>, <code>rx_idle_changed</code> (bool), <code>duration_ms</code>.</li>
+        <li><strong>Komut ack'i</strong> (<code>type</code> yok): <code>{"action":"dim","id":7,"status":"ok"}</code> veya <code>{"action":"efekt","id":8,"status":"error","error":"…"}</code>; <code>action</code> ve <code>id</code> yalnızca pakette varsa.</li>
+        <li><strong>HELLO</strong>: <code>/data</code>'ya JSON değil, düz <code>data</code> metni.</li>
+        <li><strong><code>health</code></strong>: <code>device_id</code> pakette yok, topic'teki <code>Meven:&lt;MAC&gt;</code> kullanılır. <code>idf_version</code>, <code>build_date</code>, <code>build_time</code> ve <code>thread.network_name</code> bağlantı başına bir kez gelir; köprü cihaz başına son değeri saklayıp her health'e ekler. <code>thread.neighbors</code> her zaman dizi; her <code>NEIGHBOR_RLOC16</code> yeni eleman başlatır, sonraki <code>NEIGHBOR_*</code> alanları o elemana ait. <code>NEIGHBOR_IS_CHILD</code> → <code>role: "child"</code>/<code>"router"</code>. Komşular paketin sonunda ve 512 baytlık pakete sığdığı kadar (yaklaşık 16 komşu) gider. <code>parent_rssi_*</code> ve <code>parent_link_quality_*</code> yoksa null. 0/1 alanlar bool olur.</li>
+      </ul>
+    </section>
+
+    <section id="komutlar" aria-labelledby="komut-h">
+      <h2 id="komut-h">Komutlar (sunucu → cihaz)</h2>
+      <p>Mesaj tipi <code>COMMAND</code> (0x08). <code>COMMAND_ID</code> isteğe bağlı (1–65535), ack'te aynen döner; 0 ya da yok = id yok. <code>COMMAND_CHANNEL</code> yoksa broadcast (255).</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Komut</th><th scope="col">Zorunlu</th><th scope="col">İsteğe bağlı</th></tr></thead>
+          <tbody>
+            <tr><td>dim</td><td><code>COMMAND_ACTION</code>=1, <code>COMMAND_VALUE</code> (0–100)</td><td><code>COMMAND_CHANNEL</code>, <code>COMMAND_ID</code></td></tr>
+            <tr><td>efekt</td><td><code>COMMAND_ACTION</code>=2, <code>COMMAND_EFFECT_NUMBER</code> (0 durdur)</td><td><code>COMMAND_CHANNEL</code>, <code>COMMAND_EFFECT_TEXT</code>, <code>COMMAND_ID</code></td></tr>
+            <tr><td>d4i_read</td><td><code>COMMAND_ACTION</code>=3, <code>COMMAND_CHANNEL</code> (0–63)</td><td><code>COMMAND_ID</code></td></tr>
+            <tr><td>commission</td><td><code>COMMAND_ACTION</code>=4</td><td><code>COMMAND_ID</code></td></tr>
+            <tr><td>ota_check</td><td><code>COMMAND_ACTION</code>=5</td><td><code>COMMAND_ID</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="plain">
+        <li>Dim yüzdesi: 0 kapalı, 1 lambanın minimumu, 100 maksimumu; cihaz kendi aralığına ölçekler.</li>
+        <li>Cihaz her komuta <code>Meven:&lt;MAC&gt;/bin</code>'e <code>COMMAND_ACK</code> ile cevap verir. CRC veya biçim hatalı pakette action/id güvenilir olmadığından ack'te yalnızca sonuç (-15/-16/-17) bulunur ve komut uygulanmaz.</li>
+        <li>Tipi <code>COMMAND</code> olmayan paket -17 alır. <code>COMMAND_ACTION</code> yoksa -2, bilinmeyen değerse -5.</li>
+        <li>Komutla ilgisi olmayan ama tabloda tanımlı alanlar yok sayılır. <code>COMMAND_EFFECT_TEXT</code> 32 karakterden uzunsa ilk 32'si kullanılır.</li>
+        <li><strong>Geçiş dönemi:</strong> cihaz aynı topic'lerde eski JSON komutlarını da kabul eder ve onlara bugünkü gibi <code>/data</code>'ya JSON ack döner. İlk bayt <code>0x01–0x1F</code> ise binary, <code>{</code> ise JSON. Binary'de id sayıdır; JSON'daki string id binary'de yoktur.</li>
+      </ul>
+    </section>
+
+    <section id="cozucu" aria-labelledby="cozucu-h">
+      <h2 id="cozucu-h">Paket çözücü</h2>
+      <p>Kendi implementasyonunuzu karşılaştırmak için: hex'i yapıştırın, sayfa CRC'yi doğrulayıp alanları gösterir. Örnek paketler referans codec'ten üretildi.</p>
+      <div class="decoder">
+        <div class="examples" role="group" aria-label="Örnek paketler">
+          <button type="button" data-hex="01 01 08 A0 01 A1 07 00 A2 00 A3 19 17 33">Dim komutu</button>
+          <button type="button" data-hex="01 01 08 A0 02 A1 08 00 A2 FF A4 16 A5 05 4D 45 56 45 4E EF DE">Efekt komutu</button>
+          <button type="button" data-hex="01 01 06 A0 02 A1 08 00 A6 F6 A7 03 A8 01 5C 74">Hata ack'i (-10)</button>
+          <button type="button" data-hex="01 01 01 02 02 03 01 10 00 11 FF 12 00 13 00 14 00 15 FE 16 55 17 64 20 00 C8 03">d4i_periodic, D4i'siz</button>
+          <button type="button" data-hex="01 01 02 02 03 10 04 11 FF 12 00 13 FF 14 C8 15 FE 16 55 17 55 46 55">dali_status</button>
+          <button type="button" data-hex="01 01 05 B0 80 51 01 00 B2 1A 00 01 C0 02 C2 C2 D0 00 5C D1 00 D2 C3 66 E8">Health parçası</button>
+        </div>
+        <label class="label" for="hex-input">Paket (hex)</label>
+        <textarea id="hex-input" spellcheck="false">01 01 08 A0 01 A1 07 00 A2 00 A3 19 17 33</textarea>
+        <p class="verdict" id="verdict" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Konum</th><th scope="col">Alan</th><th scope="col">Baytlar</th><th scope="col">Değer</th></tr></thead>
+            <tbody id="decoded"></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="note">Aynı işi komut satırında yapmak için: <code>python scripts/msg_codec.py decode 01 01 08 A0 01 …</code></p>
+    </section>
+
+    <section id="devreye" aria-labelledby="devreye-h">
+      <h2 id="devreye-h">Devreye alma ve uyumluluk</h2>
+      <ol class="tasks">
+        <li>Backend köprüyü çalıştırır (<code>+/bin</code> → JSON). Eski cihazlar etkilenmez.</li>
+        <li>Tek test cihazına yeni firmware yüklenir; dashboard'da verinin aynen göründüğü doğrulanır.</li>
+        <li>Filoya kademeli OTA.</li>
+        <li>İsteğe bağlı: dashboard/backend komutları binary göndermeye geçer.</li>
+        <li>Tüm filo yeni firmware'deyken cihazdaki JSON komut desteği kaldırılabilir (ayrı sürüm, önceden haber verilir).</li>
+      </ol>
+      <ul class="plain">
+        <li>Mevcut bir alan kodunun, boyunun veya anlamının değiştirilmesi yasak.</li>
+        <li>Yeni alan ilgili grubun boş koduna eklenir. Backend tablosu <strong>önce</strong> güncellenir, sonra firmware OTA'sı yapılır; aksi hâlde backend tanımsız alanı görüp paketi reddeder.</li>
+        <li>Biçim değişirse (boy kuralı, CRC, başlık) versiyon baytı artırılır.</li>
+        <li>Enum'lara yalnızca yeni değer eklenir; bilinmeyen enum değeri gelirse <code>"unknown"</code> yazılıp loglanır, paket reddedilmez.</li>
+      </ul>
+      <h3>Referans kod</h3>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><code>components/msg_codec/include/msg_fields.h</code></td><td>alan ve değer enum'ları (sözleşmenin kaynağı)</td></tr>
+            <tr><td><code>components/msg_codec/src/msg_fields.c</code></td><td>boy tablosu</td></tr>
+            <tr><td><code>components/msg_codec/include/msg_codec.h</code></td><td>C yazıcı/okuyucu API'si</td></tr>
+            <tr><td><code>scripts/msg_codec.py</code></td><td>Python encode/decode, CRC, hata metinleri, <code>selftest</code> ve <code>decode</code> komutları</td></tr>
+            <tr><td><code>scripts/mqtt_bridge.py</code></td><td>JSON köprüsü (yukarıdaki çevirme kuralları); <code>--watch</code> gelen paketleri okunur yazdırır (<code>--json</code> ile köprünün basacağı JSON'u), <code>--compare</code> doğrulama modu, <code>--selftest</code></td></tr>
+            <tr><td><code>docs/mqtt_binary_protocol.md</code></td><td>bu sayfanın repodaki hâli</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  const DATA = {"fields":{"1":{"n":"TYPE","s":1,"k":"u8"},"2":{"n":"ADDRESS","s":1,"k":"u8"},"3":{"n":"ONLINE","s":1,"k":"u8"},"4":{"n":"ERROR","s":1,"k":"u8"},"16":{"n":"STATUS","s":1,"k":"u8"},"17":{"n":"CONTROL_GEAR_PRESENT","s":1,"k":"u8"},"18":{"n":"LAMP_FAILURE","s":1,"k":"u8"},"19":{"n":"LAMP_POWER_ON","s":1,"k":"u8"},"20":{"n":"ACTUAL_LEVEL","s":1,"k":"u8"},"21":{"n":"MAX_LEVEL","s":1,"k":"u8"},"22":{"n":"PHYSICAL_MIN_LEVEL","s":1,"k":"u8"},"23":{"n":"MIN_LEVEL","s":1,"k":"u8"},"32":{"n":"D4I_SUPPORTED","s":1,"k":"u8"},"33":{"n":"BANK","s":1,"k":"u8"},"34":{"n":"BANK_OK","s":1,"k":"u8"},"35":{"n":"BANK_LENGTH","s":2,"k":"u16"},"36":{"n":"BANK_RAW","s":0,"k":"bayt"},"37":{"n":"LAST_BANK","s":1,"k":"u8"},"38":{"n":"DECODE_OK","s":1,"k":"u8"},"39":{"n":"DECODE_ERROR","s":1,"k":"u8"},"40":{"n":"READ_ERRORS","s":0,"k":"liste"},"41":{"n":"DECODE_ERRORS","s":0,"k":"liste"},"42":{"n":"SAMPLE_COHERENT","s":1,"k":"u8"},"43":{"n":"SAMPLE_STATE","s":1,"k":"u8"},"44":{"n":"SAMPLE_STATUS","s":1,"k":"u8"},"45":{"n":"BANK_206_LENGTH","s":2,"k":"u16"},"46":{"n":"BANK_206_VERSION","s":1,"k":"u8"},"48":{"n":"ENERGY_RAW_LOW","s":4,"k":"u32"},"49":{"n":"ENERGY_RAW_HIGH","s":2,"k":"u16"},"50":{"n":"ENERGY_SCALE","s":1,"k":"u8"},"51":{"n":"POWER_RAW","s":4,"k":"u32"},"52":{"n":"POWER_SCALE","s":1,"k":"u8"},"53":{"n":"LOAD_POWER_RAW","s":4,"k":"u32"},"54":{"n":"LOAD_POWER_SCALE","s":1,"k":"u8"},"55":{"n":"LOAD_POWER_CHECK","s":1,"k":"u8"},"64":{"n":"DRIVER_BANK_VERSION","s":1,"k":"u8"},"65":{"n":"DRIVER_OPERATING_TIME_S","s":4,"k":"u32"},"66":{"n":"DRIVER_STARTUP_COUNT","s":3,"k":"u24"},"67":{"n":"DRIVER_INPUT_VOLTAGE","s":2,"k":"u16"},"68":{"n":"DRIVER_MAINS_FREQUENCY","s":1,"k":"u8"},"69":{"n":"DRIVER_POWER_FACTOR","s":1,"k":"u8"},"70":{"n":"DRIVER_TEMPERATURE","s":1,"k":"u8"},"71":{"n":"DRIVER_OUTPUT_CURRENT_PERCENT","s":1,"k":"u8"},"72":{"n":"DRIVER_GENERAL_FAILURE","s":1,"k":"u8"},"73":{"n":"DRIVER_GENERAL_FAILURE_COUNT","s":1,"k":"u8"},"74":{"n":"DRIVER_UNDERVOLTAGE_FAILURE","s":1,"k":"u8"},"75":{"n":"DRIVER_UNDERVOLTAGE_FAILURE_COUNT","s":1,"k":"u8"},"76":{"n":"DRIVER_OVERVOLTAGE_FAILURE","s":1,"k":"u8"},"77":{"n":"DRIVER_OVERVOLTAGE_FAILURE_COUNT","s":1,"k":"u8"},"78":{"n":"DRIVER_POWER_LIMITATION","s":1,"k":"u8"},"79":{"n":"DRIVER_POWER_LIMITATION_COUNT","s":1,"k":"u8"},"80":{"n":"DRIVER_THERMAL_DERATING","s":1,"k":"u8"},"81":{"n":"DRIVER_THERMAL_DERATING_COUNT","s":1,"k":"u8"},"82":{"n":"DRIVER_THERMAL_SHUTDOWN","s":1,"k":"u8"},"83":{"n":"DRIVER_THERMAL_SHUTDOWN_COUNT","s":1,"k":"u8"},"96":{"n":"LED_BANK_VERSION","s":1,"k":"u8"},"97":{"n":"LED_STARTUP_COUNT","s":3,"k":"u24"},"98":{"n":"LED_OPERATING_TIME_S","s":4,"k":"u32"},"99":{"n":"LED_VOLTAGE","s":2,"k":"u16"},"100":{"n":"LED_CURRENT","s":2,"k":"u16"},"101":{"n":"LED_TEMPERATURE","s":1,"k":"u8"},"102":{"n":"LED_GENERAL_FAILURE","s":1,"k":"u8"},"103":{"n":"LED_GENERAL_FAILURE_COUNT","s":1,"k":"u8"},"104":{"n":"LED_SHORT_CIRCUIT","s":1,"k":"u8"},"105":{"n":"LED_SHORT_CIRCUIT_COUNT","s":1,"k":"u8"},"106":{"n":"LED_OPEN_CIRCUIT","s":1,"k":"u8"},"107":{"n":"LED_OPEN_CIRCUIT_COUNT","s":1,"k":"u8"},"108":{"n":"LED_THERMAL_DERATING","s":1,"k":"u8"},"109":{"n":"LED_THERMAL_DERATING_COUNT","s":1,"k":"u8"},"110":{"n":"LED_THERMAL_SHUTDOWN","s":1,"k":"u8"},"111":{"n":"LED_THERMAL_SHUTDOWN_COUNT","s":1,"k":"u8"},"112":{"n":"LED_MEASUREMENT_STATE","s":1,"k":"u8"},"113":{"n":"LED_MEASUREMENT_STATUS","s":1,"k":"u8"},"114":{"n":"LED_VOLTAGE_PLAUSIBILITY_CHECKED","s":1,"k":"u8"},"115":{"n":"LED_VOLTAGE_PLAUSIBLE","s":1,"k":"u8"},"116":{"n":"LED_VOLTAGE_CORRECTED","s":1,"k":"u8"},"117":{"n":"LED_VOLTAGE_ESTIMATED","s":2,"k":"u16"},"118":{"n":"LED_TEMPERATURE_PLAUSIBILITY_CHECKED","s":1,"k":"u8"},"119":{"n":"LED_TEMPERATURE_PLAUSIBLE","s":1,"k":"u8"},"120":{"n":"LED_TEMPERATURE_ESTIMATED","s":1,"k":"u8"},"144":{"n":"COMMISSION_TRIGGER","s":1,"k":"u8"},"145":{"n":"COMMISSION_COUNT","s":1,"k":"u8"},"146":{"n":"COMMISSION_ADDRESSES","s":0,"k":"liste"},"147":{"n":"COMMISSION_RECHECKED","s":0,"k":"liste"},"148":{"n":"COMMISSION_RX_IDLE_LEVEL","s":1,"k":"i8"},"149":{"n":"COMMISSION_RX_IDLE_CHANGED","s":1,"k":"u8"},"150":{"n":"COMMISSION_DURATION_MS","s":4,"k":"u32"},"160":{"n":"COMMAND_ACTION","s":1,"k":"u8"},"161":{"n":"COMMAND_ID","s":2,"k":"u16"},"162":{"n":"COMMAND_CHANNEL","s":1,"k":"u8"},"163":{"n":"COMMAND_VALUE","s":1,"k":"u8"},"164":{"n":"COMMAND_EFFECT_NUMBER","s":1,"k":"u8"},"165":{"n":"COMMAND_EFFECT_TEXT","s":0,"k":"metin"},"166":{"n":"COMMAND_RESULT","s":1,"k":"i8"},"167":{"n":"COMMAND_LAMPS_NEEDED","s":1,"k":"u8"},"168":{"n":"COMMAND_LAMPS_AVAILABLE","s":1,"k":"u8"},"176":{"n":"HEALTH_UPTIME_S","s":4,"k":"u32"},"177":{"n":"HEALTH_FREE_HEAP_BYTES","s":4,"k":"u32"},"178":{"n":"HEALTH_FIRMWARE_VERSION","s":3,"k":"u24"},"179":{"n":"HEALTH_IDF_VERSION","s":3,"k":"u24"},"180":{"n":"HEALTH_BUILD_TIMESTAMP","s":4,"k":"u32"},"182":{"n":"HEALTH_RESET_REASON","s":1,"k":"u8"},"183":{"n":"HEALTH_MQTT_CONNECTED","s":1,"k":"u8"},"184":{"n":"HEALTH_DROPPED_COMMANDS","s":4,"k":"u32"},"192":{"n":"THREAD_ROLE","s":1,"k":"u8"},"193":{"n":"THREAD_ATTACHED","s":1,"k":"u8"},"194":{"n":"THREAD_PARENT_RSSI_AVG","s":1,"k":"i8"},"195":{"n":"THREAD_PARENT_RSSI_LAST","s":1,"k":"i8"},"196":{"n":"THREAD_PARENT_LINK_QUALITY_IN","s":1,"k":"u8"},"197":{"n":"THREAD_PARENT_LINK_QUALITY_OUT","s":1,"k":"u8"},"198":{"n":"THREAD_RLOC16","s":2,"k":"u16"},"199":{"n":"THREAD_PARTITION_ID","s":4,"k":"u32"},"200":{"n":"THREAD_CHANNEL","s":1,"k":"u8"},"201":{"n":"THREAD_PAN_ID","s":2,"k":"u16"},"202":{"n":"THREAD_NETWORK_NAME","s":0,"k":"metin"},"203":{"n":"THREAD_PARENT_CHANGES","s":2,"k":"u16"},"204":{"n":"THREAD_PARTITION_ID_CHANGES","s":2,"k":"u16"},"205":{"n":"THREAD_ATTACH_ATTEMPTS","s":2,"k":"u16"},"208":{"n":"NEIGHBOR_RLOC16","s":2,"k":"u16"},"209":{"n":"NEIGHBOR_IS_CHILD","s":1,"k":"u8"},"210":{"n":"NEIGHBOR_RSSI_AVG","s":1,"k":"i8"},"211":{"n":"NEIGHBOR_RSSI_LAST","s":1,"k":"i8"},"212":{"n":"NEIGHBOR_LINK_MARGIN","s":1,"k":"u8"},"213":{"n":"NEIGHBOR_LINK_QUALITY_IN","s":1,"k":"u8"},"224":{"n":"OTA_STATE","s":1,"k":"u8"},"225":{"n":"OTA_LAST_RESULT","s":1,"k":"u8"},"226":{"n":"OTA_BUSY","s":1,"k":"u8"},"227":{"n":"OTA_CHECK_COUNT","s":4,"k":"u32"},"228":{"n":"OTA_LAST_CHECK_UPTIME_S","s":4,"k":"u32"},"229":{"n":"OTA_LAST_SUCCESS_UPTIME_S","s":4,"k":"u32"},"230":{"n":"OTA_LAST_TARGET_VERSION","s":3,"k":"u24"},"231":{"n":"OTA_MESSAGE","s":1,"k":"u8"},"232":{"n":"OTA_DOWNLOAD_PERCENT","s":1,"k":"u8"},"233":{"n":"OTA_DOWNLOAD_BYTES","s":4,"k":"u32"},"234":{"n":"OTA_DOWNLOAD_TOTAL_BYTES","s":4,"k":"u32"},"235":{"n":"OTA_LAST_ERROR","s":4,"k":"i32"}},"enums":{"TYPE":{"1":"D4I_PERIODIC","2":"DALI_STATUS","3":"D4I_BANK","4":"COMMISSION_RESULT","5":"HEALTH","6":"COMMAND_ACK","7":"HELLO","8":"COMMAND"},"ERROR":{"1":"no_response","2":"bank0_unreadable","3":"bank_not_implemented"},"DECODE_ERROR":{"1":"unsupported_bank_layout"},"SAMPLE_STATE":{"0":"unknown","1":"on","2":"off","3":"transitioning"},"SAMPLE_STATUS":{"1":"local_level_command_during_sample","2":"snapshot_query_failed","3":"operating_state_changed_during_sample","4":"fade_in_progress","5":"status_level_mismatch","6":"light_source_off","7":"operating_state_unknown","8":"plausibility_context_unavailable","9":"voltage_corrected_16bit_mv_wrap","10":"load_power_current_mismatch","11":"input_power_current_mismatch","12":"current_too_low_for_check","13":"power_reference_unavailable"},"LED_MEASUREMENT_STATE":{"0":"unknown","1":"on","2":"off","3":"transitioning"},"LED_MEASUREMENT_STATUS":{"1":"local_level_command_during_sample","2":"snapshot_query_failed","3":"operating_state_changed_during_sample","4":"fade_in_progress","5":"status_level_mismatch","6":"light_source_off","7":"operating_state_unknown","8":"plausibility_context_unavailable","9":"voltage_corrected_16bit_mv_wrap","10":"load_power_current_mismatch","11":"input_power_current_mismatch","12":"current_too_low_for_check","13":"power_reference_unavailable"},"LOAD_POWER_CHECK":{"0":"unchecked","1":"consistent","2":"inconsistent","3":"unresolved"},"COMMISSION_TRIGGER":{"1":"boot","2":"mqtt","3":"auto"},"COMMAND_ACTION":{"1":"dim","2":"efekt","3":"d4i_read","4":"commission","5":"ota_check"},"COMMAND_RESULT":{"0":"ok","-1":"invalid_json","-2":"no_action","-3":"dim_invalid","-4":"effect_invalid","-5":"unknown_action","-6":"d4i_read_invalid","-7":"channel_not_found","-8":"multi_lamp_channel","-9":"effect_start_failed","-10":"not_enough_lamps","-11":"commission_not_ready","-12":"ota_not_ready","-13":"d4i_report_not_ready","-14":"queue_full","-15":"crc_mismatch","-16":"unsupported_version","-17":"malformed_frame","-22":"action_not_string"},"HEALTH_RESET_REASON":{"0":"unknown","1":"power_on","2":"external_pin","3":"software","4":"panic","5":"int_wdt","6":"task_wdt","7":"wdt","8":"deep_sleep","9":"brownout","10":"sdio","11":"usb","12":"jtag","13":"efuse","14":"power_glitch","15":"cpu_lockup"},"THREAD_ROLE":{"0":"disabled","1":"detached","2":"child","3":"router","4":"leader"},"OTA_STATE":{"0":"idle","1":"waiting_network","2":"checking","3":"downloading","4":"verifying","5":"updated","6":"failed"},"OTA_LAST_RESULT":{"0":"up_to_date","1":"blocked","2":"updated","3":"failed"},"OTA_MESSAGE":{"0":"none","1":"verifying","2":"downloading","3":"waiting_network","4":"no_network","5":"default_url","6":"checking","7":"error","8":"updated","9":"blocked","10":"up_to_date"}}};
+  const KIND_SIGNED = "i8";
+
+  // Alan tablosu filtresi
+  const filter = document.getElementById("field-filter");
+  const rows = Array.from(document.querySelectorAll("#field-table tbody tr[data-search]"));
+  const groups = Array.from(document.querySelectorAll("#field-table tr.group-row"));
+  const count = document.getElementById("field-count");
+  function applyFilter() {
+    const query = filter.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(function (row) {
+      const match = !query || row.dataset.search.includes(query);
+      row.hidden = !match;
+      if (match) shown++;
+    });
+    groups.forEach(function (group) {
+      let next = group.nextElementSibling;
+      let any = false;
+      while (next && !next.classList.contains("group-row")) {
+        if (!next.hidden) any = true;
+        next = next.nextElementSibling;
+      }
+      group.hidden = !any;
+    });
+    count.textContent = shown + " alan";
+  }
+  filter.addEventListener("input", applyFilter);
+
+  // Kopyala dugmeleri
+  document.querySelectorAll(".copy").forEach(function (button) {
+    button.addEventListener("click", function () {
+      const code = button.parentElement.querySelector("pre");
+      const text = code.innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        button.textContent = "Kopyalandı";
+        setTimeout(function () { button.textContent = "Kopyala"; }, 1500);
+      }).catch(function () {
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        button.textContent = "Seçildi, Ctrl+C";
+      });
+    });
+  });
+
+  // Paket cozucu
+  function crc16(bytes) {
+    let crc = 0xffff;
+    for (const b of bytes) {
+      crc ^= b << 8;
+      for (let i = 0; i < 8; i++)
+        crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+  function hex2(n) { return n.toString(16).toUpperCase().padStart(2, "0"); }
+  function readLE(bytes, signed) {
+    let value = 0;
+    for (let i = bytes.length - 1; i >= 0; i--) value = value * 256 + bytes[i];
+    if (signed) {
+      const limit = Math.pow(2, 8 * bytes.length);
+      if (value >= limit / 2) value -= limit;
+    }
+    return value;
+  }
+  function decode(bytes) {
+    if (bytes.length < 5) return { error: "Çok kısa: en az 5 bayt gerekli (TOO_SHORT)." };
+    if (bytes[0] !== 0x01) return { error: "Versiyon 0x" + hex2(bytes[0]) + " desteklenmiyor (VERSION)." };
+    const end = bytes.length - 2;
+    const received = bytes[end] | (bytes[end + 1] << 8);
+    const computed = crc16(bytes.slice(0, end));
+    if (received !== computed)
+      return { error: "CRC uyuşmuyor: pakette 0x" + received.toString(16).toUpperCase().padStart(4, "0") +
+               ", hesaplanan 0x" + computed.toString(16).toUpperCase().padStart(4, "0") + " (CRC)." };
+    const fields = [];
+    let i = 1;
+    while (i < end) {
+      const start = i;
+      const code = bytes[i++];
+      const field = DATA.fields[code];
+      if (!field) return { error: "Tanımsız alan 0x" + hex2(code) + ", konum " + start + " (FIELD)." };
+      let size = field.s;
+      if (size === 0) {
+        if (i >= end) return { error: field.n + " uzunluk baytı yok (TRUNCATED)." };
+        size = bytes[i++];
+      }
+      if (i + size > end) return { error: field.n + " paketin dışına taşıyor (TRUNCATED)." };
+      const raw = bytes.slice(i, i + size);
+      i += size;
+      fields.push({ offset: start, code: code, field: field, raw: raw, rawAll: bytes.slice(start, i) });
+    }
+    if (!fields.length || fields[0].code !== 0x01) return { error: "İlk alan TYPE değil (NO_TYPE)." };
+    return { fields: fields, crc: received, length: bytes.length };
+  }
+  function describe(entry) {
+    const f = entry.field;
+    if (f.k === "metin") return JSON.stringify(new TextDecoder().decode(new Uint8Array(entry.raw)));
+    if (f.k === "liste") return "[" + entry.raw.join(", ") + "]";
+    if (f.k === "bayt") return entry.raw.map(hex2).join("");
+    const value = readLE(entry.raw, f.k === KIND_SIGNED || f.k === "i32");
+    const names = DATA.enums[f.n];
+    if (names) return value + "  (" + (names[value] !== undefined ? names[value] : "bilinmeyen") + ")";
+    if (f.n.endsWith("_VERSION") && f.s === 3)
+      return value + "  (" + (value >> 16) + "." + ((value >> 8) & 255) + "." + (value & 255) + ")";
+    if (f.n === "HEALTH_BUILD_TIMESTAMP")
+      return value + "  (" + new Date(value * 1000).toISOString().slice(0, 19).replace("T", " ") + ")";
+    return String(value);
+  }
+
+  const input = document.getElementById("hex-input");
+  const verdict = document.getElementById("verdict");
+  const output = document.getElementById("decoded");
+  function cell(text, cls) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (cls) td.className = cls;
+    return td;
+  }
+  function render() {
+    const clean = input.value.replace(/0x/gi, "").replace(/[^0-9a-f]/gi, "");
+    output.replaceChildren();
+    if (!clean.length) { verdict.textContent = "Bir paket yapıştırın."; verdict.className = "verdict"; return; }
+    if (clean.length % 2) { verdict.textContent = "Hex hane sayısı tek; bir hane eksik."; verdict.className = "verdict fail"; return; }
+    const bytes = [];
+    for (let i = 0; i < clean.length; i += 2) bytes.push(parseInt(clean.slice(i, i + 2), 16));
+    const result = decode(bytes);
+    if (result.error) { verdict.textContent = "Paket reddedildi. " + result.error; verdict.className = "verdict fail"; return; }
+    verdict.textContent = "Geçerli paket · " + result.length + " bayt · CRC 0x" +
+      result.crc.toString(16).toUpperCase().padStart(4, "0") + " doğru";
+    verdict.className = "verdict good";
+    result.fields.forEach(function (entry) {
+      const tr = document.createElement("tr");
+      tr.append(cell(String(entry.offset), "num"), cell("MSG_FIELD_" + entry.field.n, "name"),
+                cell(entry.rawAll.map(hex2).join(" "), "hex"), cell(describe(entry)));
+      output.append(tr);
+    });
+  }
+  input.addEventListener("input", render);
+  document.querySelectorAll(".examples button").forEach(function (button) {
+    button.addEventListener("click", function () { input.value = button.dataset.hex; render(); });
+  });
+  render();
+})();
+</script>
+
+</body></html>
