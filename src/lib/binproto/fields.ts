@@ -157,6 +157,10 @@ export const FIELD_DEFS: readonly FieldDef[] = [
   u8(0xb6, "HEALTH_RESET_REASON"),
   u8(0xb7, "HEALTH_MQTT_CONNECTED"),
   u32(0xb8, "HEALTH_DROPPED_COMMANDS"),
+  // Rapor aralıkları (saniye) — yalnızca ilk kayıtta (join) bir kez gelir;
+  // backend devices.*_interval_s'te kalıcı tutar (firmware ekibi, 06.11.2026).
+  u32(0xb9, "HEALTH_INTERVAL_S"),
+  u32(0xba, "HEALTH_REPORT_INTERVAL_S"),
   // Thread ve komşular
   u8(0xc0, "THREAD_ROLE"),
   u8(0xc1, "THREAD_ATTACHED"),

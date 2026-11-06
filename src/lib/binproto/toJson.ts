@@ -569,6 +569,9 @@ export function healthJson(
     reset_reason: enumName(RESET_REASONS, num(fields, "HEALTH_RESET_REASON"), ctx, "HEALTH_RESET_REASON"),
     mqtt_connected: flag(fields, "HEALTH_MQTT_CONNECTED"),
     dropped_commands: opt(fields, "HEALTH_DROPPED_COMMANDS"),
+    // Bir-kezlik (join) alanlar; önbelleğe alınmaz — backend DB sütununda tutar.
+    health_interval_s: opt(fields, "HEALTH_INTERVAL_S"),
+    report_interval_s: opt(fields, "HEALTH_REPORT_INTERVAL_S"),
     thread: {
       role: enumName(THREAD_ROLES, num(fields, "THREAD_ROLE"), ctx, "THREAD_ROLE"),
       attached: flag(fields, "THREAD_ATTACHED"),

@@ -9,7 +9,7 @@
  *    beklentiler birebir taşındı (enerji, sayaç/hata, LED, sürüm, OTA mesajı…).
  * Python'dan bilinçli sapmalar (eksik alan, load_power maskesi) ayrıca sınanır.
  */
-import { crc16, decodeFrame, encodeFrame, parseHex, type DecodedFrame } from "../src/lib/binproto/codec";
+import { crc16, decodeFrame, encodeFrame, parseHex, toHex, type DecodedFrame } from "../src/lib/binproto/codec";
 import {
   MissingFieldError,
   addCounter,
@@ -101,7 +101,7 @@ function withCrc(bytes: number[]): Uint8Array {
 }
 
 // ── Alan tablosu ─────────────────────────────────────────────
-check("alan tablosu 136 alan", FIELD_DEFS.length === 136, String(FIELD_DEFS.length));
+check("alan tablosu 138 alan", FIELD_DEFS.length === 138, String(FIELD_DEFS.length));
 check(
   "alan kodları benzersiz",
   new Set(FIELD_DEFS.map((f) => f.code)).size === FIELD_DEFS.length &&
@@ -666,6 +666,30 @@ check(
   "id'siz CRC ack'i → hata metni, id yok",
   ackCrc?.kind === "ack" && ackCrc.json.id === undefined && ackCrc.json.error === "crc hatali, paket islenmedi",
 );
+
+// ── Rapor aralıkları (0xB9 / 0xBA, yalnızca join'de) ─────────
+const rawJoin = encodeFrame("HEALTH", [
+  ["HEALTH_FIRMWARE_VERSION", 0x01001b],
+  ["HEALTH_INTERVAL_S", 120],
+  ["HEALTH_REPORT_INTERVAL_S", 600],
+]);
+check(
+  "0xB9/0xBA kodlaması (u32 LE)",
+  toHex(rawJoin).includes("B9 78 00 00 00 BA 58 02 00 00"),
+  toHex(rawJoin),
+);
+const joinHealth = jsonOf(rawJoin);
+check(
+  "join health: health_interval_s 120, report_interval_s 600",
+  joinHealth.health_interval_s === 120 && joinHealth.report_interval_s === 600,
+  JSON.stringify([joinHealth.health_interval_s, joinHealth.report_interval_s]),
+);
+const laterHealth = jsonOf(encodeFrame("HEALTH", [["HEALTH_FIRMWARE_VERSION", 0x01001b]]));
+check(
+  "sonraki health'te aralıklar null (önbelleğe alınmaz)",
+  laterHealth.health_interval_s === null && laterHealth.report_interval_s === null,
+);
+check("aralıklı health şemadan geçer", deviceHealthSchema.safeParse(joinHealth).success);
 
 console.log(failures ? `\n${failures} kontrol başarısız` : "\nHepsi geçti");
 process.exit(failures ? 1 : 0);
