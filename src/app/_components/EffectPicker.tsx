@@ -16,7 +16,8 @@ interface EffectPickerProps {
   /**
    * Hedefteki lamba sayısı — biliniyorsa (tek cihaz) asgari lamba isteyen
    * efektler baştan pasif gösterilir. Bölge/"tüm sistem" hedefinde bilinmez;
-   * o zaman efekt sunulur, yetersiz cihaz kendi hatasını döner.
+   * o zaman efekt sunulur, yetersiz cihaz efekti başlatmaz (toplu komuta
+   * cevap dönmediği için hatası panelde görünmez).
    */
   lampCount?: number;
 }

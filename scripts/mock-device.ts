@@ -17,6 +17,12 @@
  *   npm run mock:device A842E3123456 4               # 4 DALI kanalı (adres 0..3)
  *   npm run mock:device A842E3123456 2 ataturk-bulvari   # bölge topic'ini de dinle
  *   npm run mock:device A842E3123456 3 ataturk-bulvari --bin   # binary protokol v1
+ *   npm run mock:device A842E3123456 2 ataturk-bulvari --bin --interval 300 --health-interval 120
+ *
+ * `--interval <sn>` / `--health-interval <sn>`: D4i raporu ve health aralığı
+ * (varsayılan 30). Biri verilirse cihaz yeni firmware gibi aralıkları
+ * bağlantıdaki İLK health'te bildirir (`report_interval_s`,
+ * `health_interval_s`; binary 0xBA / 0xB9), sonrakilerde göndermez.
  *
  * `--bin`: yeni firmware gibi d4i_periodic, health ve HELLO'yu binary olarak
  * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). Komutlarda iki biçim
@@ -24,6 +30,9 @@
  * komut → binary COMMAND_ACK (/bin, u16 id aynen döner); `{` ise JSON komut →
  * JSON ack (/data). `--bin` olmadan eski firmware gibi davranır: binary komuta
  * "gecersiz json" döner.
+ *
+ * Toplu komuta (bölge topic'i, Meven:all/cmd) başarı cevabı verilmez, hata
+ * cevabı 0-3 sn gecikmeyle gider (firmware kararı + önerimiz).
  *
  * Not: adres 0 bilerek `d4i_supported:false` raporlar (sahadaki örnekle aynı) —
  * dashboard'un D4i'siz sürücüyü de doğru gösterdiğini test etmek için.
@@ -44,8 +53,20 @@ import {
   type EnumTable,
 } from "@/lib/binproto/fields";
 
-const ARGS = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-const BIN = process.argv.includes("--bin");
+const RAW_ARGS = process.argv.slice(2);
+/** Değer alan bayraklar — değerleri konumsal argüman sayılmaz. */
+const VALUE_FLAGS = new Set(["--interval", "--health-interval"]);
+const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
+const BIN = RAW_ARGS.includes("--bin");
+function flagSeconds(name: string): number | undefined {
+  const i = RAW_ARGS.indexOf(name);
+  const v = i >= 0 ? Number(RAW_ARGS[i + 1]) : NaN;
+  return Number.isInteger(v) && v >= 1 ? v : undefined;
+}
+const REPORT_INTERVAL_S = flagSeconds("--interval");
+const HEALTH_INTERVAL_S = flagSeconds("--health-interval");
+/** Aralıklar bildirilecek mi (yeni firmware gibi) — bayraklardan biri verildiyse. */
+const ANNOUNCE_INTERVALS = REPORT_INTERVAL_S !== undefined || HEALTH_INTERVAL_S !== undefined;
 const MAC = (ARGS[0] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
   .toUpperCase();
@@ -85,9 +106,27 @@ const MAX_COMMISSION_CH = 4;
 /**
  * Komutun action + id'si — yanıtta aynen geri gönderilir (firmware 1.0.9).
  * `binary`: komut binary geldiyse yanıt binary COMMAND_ACK olur (/bin).
- * `result`: binary pakette biçim hatası (yalnızca sonuç kodu döner).
  */
 let current: { action?: unknown; id?: unknown; binary?: boolean } = {};
+
+/**
+ * Komut toplu topic'ten mi geldi (bölge / Meven:all/cmd)? Firmware toplu
+ * komuta başarı cevabı DÖNMEZ (yüzlerce cihazın aynı anda cevabı ağı tıkar).
+ * Mock hata cevabını 0-3 sn rastgele gecikmeyle verir — firmware ekibine
+ * önerdiğimiz davranış; backend bunu id ile bölge komutuna bağlar.
+ */
+let bulkCmd = false;
+
+function deliver(isError: boolean, send: () => void): void {
+  if (!bulkCmd) return send();
+  if (!isError) {
+    console.log("  → toplu komut: cevap yok");
+    return;
+  }
+  const ms = Math.floor(Math.random() * 3000);
+  console.log(`  → toplu komut hatası, ${ms} ms sonra gönderilecek`);
+  setTimeout(send, ms);
+}
 
 const client = mqtt.connect({
   protocol: "mqtts",
@@ -117,13 +156,17 @@ function binaryAck(error?: string, onlyResult?: number) {
     onlyResult === undefined && typeof current.action === "string"
       ? Number(Object.entries(COMMAND_ACTIONS).find(([, n]) => n === current.action)?.[0] ?? 0) || undefined
       : undefined;
-  publishBin("COMMAND_ACK", [
-    ["COMMAND_ACTION", action],
-    ["COMMAND_ID", onlyResult === undefined && typeof current.id === "number" && current.id > 0 ? current.id : undefined],
-    ["COMMAND_RESULT", r.code],
-    ["COMMAND_LAMPS_NEEDED", r.needed],
-    ["COMMAND_LAMPS_AVAILABLE", r.available],
-  ]);
+  const id = onlyResult === undefined && typeof current.id === "number" && current.id > 0 ? current.id : undefined;
+  deliver(r.code !== 0, () =>
+    publishBin("COMMAND_ACK", [
+      ["COMMAND_ACTION", action],
+      ["COMMAND_ID", id],
+      ["COMMAND_RESULT", r.code],
+      ["COMMAND_LAMPS_NEEDED", r.needed],
+      ["COMMAND_LAMPS_AVAILABLE", r.available],
+    ]),
+  );
+  if (bulkCmd && r.code === 0) return;
   console.log(error || onlyResult ? `  → binary ack: HATA ${r.code}${error ? ` "${error}"` : ""}` : "  → binary ack: ok");
 }
 
@@ -134,7 +177,8 @@ function ack(error?: string) {
     ...(current.id !== undefined ? { id: current.id } : {}),
   };
   const payload = error ? { ...echo, status: "error", error } : { ...echo, status: "ok" };
-  client.publish(T_DATA, JSON.stringify(payload), { qos: 0 });
+  deliver(!!error, () => client.publish(T_DATA, JSON.stringify(payload), { qos: 0 }));
+  if (bulkCmd && !error) return;
   console.log(error ? `  → ack: HATA "${error}"` : "  → ack: ok");
 }
 
@@ -323,6 +367,15 @@ function d4iBinFields(address: number, s: ChannelState, supported: boolean): Bin
 
 /** Health: bir-kezlik alanlar (IDF, derleme zamanı, ağ adı) bağlantı başına bir kez. */
 let healthStaticSent = false;
+/** Rapor aralıkları yalnızca bağlantıdaki ilk health'te (firmware: join'de). */
+let intervalsSent = false;
+
+/** Bu health'e eklenecek aralıklar (ilk health'te bir kez), yoksa null. */
+function takeIntervals(): { health: number; report: number } | null {
+  if (!ANNOUNCE_INTERVALS || intervalsSent) return null;
+  intervalsSent = true;
+  return { health: HEALTH_INTERVAL_S ?? 30, report: REPORT_INTERVAL_S ?? 30 };
+}
 
 function healthBinFields(): BinFields {
   const otaMessage: Record<string, number> = { checking: 6, downloading: 2, verifying: 1, updated: 8 };
@@ -478,9 +531,15 @@ function validChannel(c: unknown): c is number | undefined {
 }
 
 function publishHealth() {
+  const intervals = takeIntervals();
+  const note = intervals ? ` aralık=${intervals.report}/${intervals.health} sn` : "";
   if (BIN) {
-    const size = publishBin("HEALTH", healthBinFields());
-    console.log(`  → [bin ${size} B] health fw=${firmwareVersion} ota=${ota.state}`);
+    const fields = healthBinFields();
+    if (intervals) {
+      fields.push(["HEALTH_INTERVAL_S", intervals.health], ["HEALTH_REPORT_INTERVAL_S", intervals.report]);
+    }
+    const size = publishBin("HEALTH", fields);
+    console.log(`  → [bin ${size} B] health fw=${firmwareVersion} ota=${ota.state}${note}`);
     return;
   }
   const payload = {
@@ -488,9 +547,10 @@ function publishHealth() {
     firmware_version: firmwareVersion,
     reset_reason: "ESP_RST_POWERON",
     ota: { ...ota },
+    ...(intervals ? { health_interval_s: intervals.health, report_interval_s: intervals.report } : {}),
   };
   client.publish(T_HEALTH, JSON.stringify(payload), { qos: 0 });
-  console.log(`  → health fw=${firmwareVersion} ota=${ota.state}`);
+  console.log(`  → health fw=${firmwareVersion} ota=${ota.state}${note}`);
 }
 
 /** OTA simülasyonu: yeni sürüm varmış gibi davranır, adım başına health yayınlar. */
@@ -518,6 +578,7 @@ function runOta() {
 client.on("connect", () => {
   console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)${BIN ? " · binary protokol v1" : ""}`);
   healthStaticSent = false; // yeni bağlantı: bir-kezlik health alanları tekrar gider
+  intervalsSent = false;
   client.subscribe(TOPICS, { qos: 1 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`  dinleniyor:\n    ${TOPICS.join("\n    ")}`);
@@ -529,6 +590,7 @@ client.on("connect", () => {
 });
 
 client.on("message", (topic, raw) => {
+  bulkCmd = topic !== T_CMD;
   let cmd: {
     action?: string;
     value?: number;
@@ -725,11 +787,11 @@ client.on("message", (topic, raw) => {
 
 client.on("error", (e) => console.error("MQTT hata:", e.message));
 
-// Periyodik rapor — her adres için sırayla.
+// Periyodik rapor — her adres için sırayla; health ayrı aralıkla.
 setInterval(() => {
   for (const ch of channels.keys()) publishD4i(ch);
-  publishHealth();
-}, 30000);
+}, (REPORT_INTERVAL_S ?? 30) * 1000);
+setInterval(publishHealth, (HEALTH_INTERVAL_S ?? 30) * 1000);
 
 process.on("SIGINT", () => {
   console.log("\nkapatılıyor…");
