@@ -10,6 +10,7 @@ import type { CustomerOverview } from "@/types/admin";
 import type { Action } from "@/types/lighting";
 import { CustomerForm, type CustomerFormValues } from "./CustomerForm";
 import { DiscoveredGateways } from "./DiscoveredGateways";
+import { BinaryProtocol } from "./BinaryProtocol";
 
 function formatPower(w: number | null): string {
   if (w === null) return "—";
@@ -260,6 +261,7 @@ export function AdminClient({ initialCustomers }: { initialCustomers: CustomerOv
           .sort((a, b) => a.name.localeCompare(b.name, "tr"))}
       />
 
+      <BinaryProtocol />
       {/* Global komut — tüm müşteriler (Meven:all/cmd) */}
       <section aria-label="Global komut" className="rounded-2xl border border-danger/30 bg-panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
