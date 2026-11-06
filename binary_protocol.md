@@ -15,7 +15,8 @@ dashboard o cihazı göremez.
 - Bu JSON mevcut `handleD4i` / `handleAck` / `handleHealth` yoluna verilir.
 
 Sonuç: ek Railway servisi yok, broker'da çift trafik yok, ayrı bir arıza noktası
-yok. Komutlar **şimdilik JSON** kalıyor; cihaz geçiş döneminde JSON komutu kabul
+yok. (Güncelleme, 2026-11-06: komutlar da binary'ye geçti — topic başına seçim,
+u16 kısa id; bkz. `firmware/BINARY-ENTEGRASYON.md` §Komutlar.) İlk fazda komutlar **JSON** kaldı; cihaz geçiş döneminde JSON komutu kabul
 ediyor ve JSON ack dönüyor. Arkadaşının `mqtt_bridge.py` dosyası, çevirme
 kurallarının **referans uygulaması** olarak birebir porte edilecek. Ayrıca
 canlı broker'da salt-okur `--watch --json` modunda karşılaştırma aracı olarak

@@ -175,8 +175,9 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 > **Binary protokol v1 (yeni firmware):** aşağıdaki mesajların hepsi JSON
 > yerine binary paket olarak `Meven:<MAC>/bin`'e gider; `/data` ve `/health`
 > kullanılmaz. Backend paketi çözüp bu bölümdeki JSON'un aynısına çevirir.
-> Fark: `d4i.bank_206_raw_hex` kaldırıldı. JSON komuta yanıt yine JSON ack'tir
-> (`/data`). Spesifikasyon `MQTT-BINARY-PROTOKOL.html`, backend tarafı
+> Fark: `d4i.bank_206_raw_hex` kaldırıldı. Komutlar da binary gidebilir (cihaz
+> binary gönderiyorsa); binary komuta binary ack (`/bin`), JSON komuta JSON ack
+> (`/data`) döner. Spesifikasyon `MQTT-BINARY-PROTOKOL.html`, backend tarafı
 > `BINARY-ENTEGRASYON.md`. **Firmware yeni alan eklerse backend alan tablosu
 > OTA'dan önce güncellenmeli.**
 

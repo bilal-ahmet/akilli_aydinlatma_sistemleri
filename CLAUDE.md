@@ -221,10 +221,25 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   atılır ve admin sayfasında kırmızı alarm çıkar (`GET /api/admin/binproto`,
   `admin/BinaryProtocol.tsx`). Firmware yeni alan eklerse önce tablo +
   `npm run check:binproto` + deploy, sonra OTA.
-- **Komutlar şimdilik JSON.** Cihaz JSON komuta JSON ack döner. **Binary
-  COMMAND_ACK işlenmez, yalnızca loglanır:** u16 id'si hiçbir komutumuza
-  eşlenmez ve `handleAck`'in "en son bekleyen komut" yedeği yanlış komutu
-  `failed` yapardı. Binary komutlar sonraki faz (u16 ↔ UUID eşlemesi).
+- **Komutlar topic başına binary ya da JSON** (`publishCommand`, bellek içi
+  karar, DB'siz — Kural #10). Cihaz iki biçimi de kabul eder; binary komuta
+  `/bin`'e binary ack, JSON komuta `/data`'ya JSON ack döner.
+  - Tek cihaz (`Meven:<MAC>/cmd`, bakım dahil): cihaz binary-yetenekliyse
+    binary (`binCommandCapable`: son 10 dk'da geçerli `/bin` gelmiş VE ondan
+    sonra JSON telemetri/health gelmemiş — OTA geri dönüşü JSON'a düşürür).
+  - Bölge ve müşteri "Tüm Sistem"i: bölgenin **kayıtlı** cihazlarının hepsi
+    binary-yetenekliyse binary (`tenancy.zoneMacs`), biri bile değilse JSON.
+    DB'de kaydı olmayan ama o slug'la flaşlanmış eski cihaz binary bölge
+    komutunu anlamaz (`gecersiz json`).
+  - `Meven:all/cmd` her zaman JSON (kayıtsız cihazlar da dinliyor).
+  - Kapatma anahtarı: `MQTT_BINARY_COMMANDS=off` → her şey JSON.
+- **Kısa komut id'si:** binary'de `COMMAND_ID` u16'dır, UUID kabloya çıkmaz.
+  Backend genelinde TEK dönen sayaç (`binproto/shortIds.ts`, rastgele başlangıç,
+  0 atlanır, 10 dk TTL) — cihaz başına değil, çünkü bölge komutu tek id ile çok
+  cihaza gider. Binary ack'in id'si UUID'ye çevrilip `handleAck`'e verilir;
+  DB/API/SSE/mobil UUID'yi görmeye devam eder. **Eşlenemeyen binary ack'te
+  "en son bekleyen komut" tahmini yapılmaz** (`guess: false`); hata yine
+  rozete ve arıza geçmişine yazılır.
 - **Çift işleme koruması:** son 10 dk'da geçerli `/bin` gönderen MAC'in JSON
   telemetrisi ve health'i atlanır (`binActive`), JSON ack işlenir. Python
   köprüsü canlı broker'da yalnızca `--watch` / `--compare` ile çalıştırılır.
@@ -291,6 +306,7 @@ sahada cihaz başına en fazla 5 lamba, kanal **0–4** kullanır (taramada atan
 `id`: komut kimliği = `commands.request_id`. `publishCommand` publish'ten ÖNCE
 üretir ve **her** komuta koyar; cihaz yanıtında aynen geri yollar (bkz. Komut
 yanıtı). Bölge/"Tüm Sistem" komutunda tek id, her cihaz onunla yanıtlar.
+Binary komutta kabloda UUID yerine u16 kısa id gider (bkz. Binary protokol v1).
 
 > **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
 > "Tüm cihaz"ı, bölge, "Tüm Sistem") payload'da `channel` **bulunmaz**; cihaz
@@ -1153,6 +1169,10 @@ NEXT_PUBLIC_SSE_URL=/api/events
 # Harita altlığı (opsiyonel; boşsa anahtarsız OpenFreeMap positron/dark)
 NEXT_PUBLIC_MAP_STYLE_URL=
 NEXT_PUBLIC_MAP_STYLE_URL_DARK=
+
+# Binary komut gönderimi (opsiyonel; varsayılan açık, yalnızca binary gönderen
+# cihazlara). Sahada sorun çıkarsa off → bütün komutlar JSON.
+MQTT_BINARY_COMMANDS=
 ```
 
 > Lokal geliştirme şablonu için `.env.example`. Gerçek değerler `.env.local`'a (gitignored) yazılır; canlıda Railway **Service Variables**'ta tutulur.
@@ -1185,7 +1205,7 @@ NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `routeUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
-19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Binary ack bu fazda işlenmez; JSON komut → JSON ack. Bkz. "Binary protokol v1".
+19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: dinleyenlerin hepsi binary gönderiyorsa binary (u16 kısa id), değilse JSON; `Meven:all/cmd` her zaman JSON. Bkz. "Binary protokol v1".
 
 ---
 
@@ -1218,7 +1238,7 @@ NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 │   │       └── events/route.ts           # SSE (/api/events)
 │   ├── lib/
 │   │   ├── mqtt.ts                       # MQTT singleton (TLS) + publishCommand
-│   │   ├── binproto/                     # binary protokol v1: fields (alan tablosu), codec, toJson (saf)
+│   │   ├── binproto/                     # binary protokol v1: fields (alan tablosu), codec, toJson, command, shortIds (saf)
 │   │   ├── binUplink.ts                  # /bin alımı: sayaçlar, alarm, health önbelleği, binActive
 │   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
 │   │   ├── faults.ts                     # arıza kodu kataloğu (saf; client de kullanır)

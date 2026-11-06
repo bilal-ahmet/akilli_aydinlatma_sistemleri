@@ -20,9 +20,39 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
 - Çözücü **backend'in içindedir** (TypeScript). Firmware ekibinin
   `scripts/mqtt_bridge.py` köprüsü ayrı servis olarak **çalıştırılmaz**;
   çevirme kuralları ondan birebir porte edildi (`src/lib/binproto/toJson.ts`).
-- Komutlar şimdilik **JSON**'dur. Cihaz JSON komuta JSON ack döner (`/data`).
-  Binary komut bu fazda yoktur. Binary ack gelirse loglanır ama işlenmez,
-  çünkü içindeki u16 id hiçbir komutumuza eşlenemez.
+- Komutlar **topic başına** binary ya da JSON gider. Cihaz iki biçimi de kabul
+  eder: binary komuta `/bin`'e binary ack, JSON komuta `/data`'ya JSON ack
+  döner (bkz. "Komutlar").
+
+## Komutlar (sunucu → cihaz)
+
+| Topic | Biçim |
+|---|---|
+| `Meven:<MAC>/cmd` (bakım dahil) | Cihaz binary-yetenekliyse binary, değilse JSON |
+| `Meven:<slug>/cmd` (bölge, müşteri "Tüm Sistem"i) | Bölgenin kayıtlı cihazlarının **hepsi** binary-yetenekliyse binary, değilse JSON |
+| `Meven:all/cmd` | Her zaman JSON (kayıtsız cihazlar da dinliyor) |
+
+- **Binary-yetenekli** (`binCommandCapable`): son 10 dk'da geçerli `/bin`
+  paketi gelmiş ve ondan sonra JSON telemetri/health gelmemiş. OTA ile eski
+  firmware'e dönen cihaz JSON basmaya başlar ve hemen JSON komuta düşer.
+  Backend yeniden başladığında ilk raporlar gelene kadar (~30 sn) JSON gider.
+- **Sınır:** bölge kararı DB'deki kayıtlara göre verilir. Panele eklenmemiş
+  ama o bölge slug'ıyla flaşlanmış eski firmware'li bir cihaz binary bölge
+  komutunu anlamaz (`gecersiz json`).
+- `on`/`off` kabloda `dim 100/0`'dır. Tüm lambalar için kanal alanı yazılmaz
+  (binary'de "broadcast"). Efekt durdurma kanalsız `dim` ile yapılır;
+  `number 0` kullanılmaz.
+- **Kısa id:** `COMMAND_ID` u16 (1–65535), UUID kabloya çıkmaz. Sayaç backend
+  genelinde tektir, cihaz başına değil: bölge komutu tek id ile çok cihaza
+  gider, cevaplar MAC topic'inden ayrılır. 1 bayt, 10 dk'lık eşleşme
+  penceresinde dönebileceği için 2 bayt seçildi. Başlangıç rastgele.
+  `src/lib/binproto/shortIds.ts`.
+- **Binary ack:** id UUID'ye çevrilir ve JSON ack ile aynı yoldan işlenir
+  (delivered/failed, rozet, arıza geçmişi, Bakım sekmesi). Eşlenemeyen ack
+  (restart sonrası, süresi geçmiş, id'siz -15/-16/-17) bir komutu tahminle
+  `failed` yapmaz; hata yine cihaz rozetine yazılır.
+- **Kapatma anahtarı:** `MQTT_BINARY_COMMANDS=off` → bütün komutlar JSON.
+- Admin kartı cihaz başına komut biçimini gösterir.
 
 ## Kod
 
@@ -32,8 +62,10 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
 | `src/lib/binproto/codec.ts` | CRC-16/CCITT-FALSE, `decodeFrame`, `encodeFrame` |
 | `src/lib/binproto/toJson.ts` | Python `to_legacy` portu (d4i, health, ack, commission…) |
 | `src/lib/binproto/espErr.ts` | OTA hata kodu → ESP-IDF adı |
+| `src/lib/binproto/command.ts` | `encodeCommand` (TYPE = COMMAND) |
+| `src/lib/binproto/shortIds.ts` | Kısa komut id'si ↔ UUID tablosu |
 | `src/lib/binUplink.ts` | Sunucu katmanı: sayaçlar, alarm, health önbelleği, çift işleme koruması |
-| `src/lib/mqtt.ts` | `+/bin` aboneliği (QoS 1), `handleBinUplink` → `routeUplink` |
+| `src/lib/mqtt.ts` | `+/bin` aboneliği (QoS 1), `handleBinUplink` → `routeUplink`; `publishCommand` biçim seçimi |
 | `GET /api/admin/binproto` + `src/app/admin/BinaryProtocol.tsx` | Admin kartı |
 
 ## Kurallar
@@ -77,7 +109,11 @@ Aşağıdaki maddeler firmware ekibine de iletildi:
   paket, Python `selftest` beklentileri, ret durumları, şema uyumu (`parseUplink`,
   `deviceHealthSchema`, `activeFaultCodes`).
 - `npm run mock:device <MAC> <kanal> <bölge> --bin`: sanal cihaz binary basar
-  (d4i_periodic, health, HELLO); JSON komuta JSON ack döner.
+  (d4i_periodic, health, HELLO). Binary komuta binary ack, JSON komuta JSON
+  ack döner. `--bin` olmadan eski firmware gibi binary komuta `gecersiz json`
+  der.
+- `npm run watch:cmd [MAC]`: backend'in bastığı komutları gösterir; binary
+  komutu hex + çözülmüş haliyle yazar.
 - `npm run mock:bin <MAC> <hex…>` / `--ornek d4i|dali|health|ack|crc|alan|lora`:
   yakalanan paketleri yeniden oynatır. Yerel olmayan broker'da `--canli`
   ister; canlıya basılan paket gerçek veri gibi işlenir.
@@ -89,15 +125,15 @@ Aşağıdaki maddeler firmware ekibine de iletildi:
    - `python mqtt_bridge.py --watch <MAC> --json` (salt-okur) ile referans
      JSON izlenir.
    - Panelde kontrol: lambalar, D4i paneli, güç/enerji özeti, arızalar,
-     Bakım sekmesi, JSON komut + ack.
+     Bakım sekmesi, komut + ack. `npm run watch:cmd <MAC>` ile komutun
+     binary gittiği görülür (cihazın ilk raporundan sonra).
    - Admin kartı ret göstermemeli.
 3. Filoya kademeli OTA, cihaz cihaz.
 
 ## Sonraki fazlar
 
-- **Binary komutlar:** bütün filo geçtikten sonra. Gerekenler: u16 id ↔ UUID
-  eşlemesi, binary ack'in işlenmesi, efekt durdurmada `number 0`. Bölge ve
-  `all` topic'leri ancak bütün filo yeni firmware'deyken binary'ye geçer.
+- **`Meven:all/cmd` binary:** bütün filo yeni firmware'deyken. Ardından
+  cihazdaki JSON komut desteği kaldırılabilir (firmware ekibiyle).
 - **LoRa gateway protokolü (0x02):** `lora_protocol.py` ve dokümanı bekleniyor.
 - Firmware ekibinden `msg_codec.py` ve `esp_err_names.py` gelirse, sahadan
   yakalanan paketlerle Python ↔ TS altın veri testi eklenir.
