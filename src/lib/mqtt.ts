@@ -13,11 +13,15 @@ import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import { isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { normalizeMac } from "@/lib/mac";
+import { binActive, decodeBinUplink, noteDuplicateJson } from "@/lib/binUplink";
+import { HELLO_TEXT } from "@/lib/binproto/toJson";
 import {
   cmdTopic,
   zoneCmdTopic,
   parseUplinkTopic,
+  parseBinTopic,
   ALL_CMD,
+  BIN_WILDCARD,
   DATA_WILDCARD,
   HEALTH_WILDCARD,
   type UplinkSuffix,
@@ -47,8 +51,11 @@ import {
  * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
  *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
  *  - subscribe "+/health"       → Meven:<MAC>/health (firmware sürümü, OTA durumu)
+ *  - subscribe "+/bin"          → Meven:<MAC>/bin: binary protokol v1 (yeni
+ *    firmware'in TÜM uplink'i). lib/binUplink.ts çözer, JSON karşılığı aşağıdaki
+ *    JSON yoluyla (routeUplink) aynen işlenir.
  *  Gateway'ler de AYNI topic'leri kullanır (Meven:<GW_ID>/data|health); ayrım
- *  payload'daki `type` ile yapılır (bkz. handleUplink, lib/gateways.ts).
+ *  payload'daki `type` ile yapılır (bkz. routeUplink, lib/gateways.ts).
  *  - publish   Meven:<MAC>/cmd  → tekil komut
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
  *  - publish   Meven:all/cmd    → toplu komut
@@ -74,18 +81,23 @@ export function getMqttClient(): MqttClient {
 
   client.on("connect", () => {
     console.log("[mqtt] connected (HiveMQ Cloud, TLS)");
-    client.subscribe([DATA_WILDCARD, HEALTH_WILDCARD], { qos: 0 }, (err) => {
-      if (err) console.error("[mqtt] subscribe error:", err.message);
-    });
+    // /bin QoS 1: cihaz health'i QoS 2 ile basıyor; bir-kezlik alanlar
+    // (idf_version, ağ adı) yalnızca bağlantı başına bir kez geliyor.
+    client.subscribe(
+      { [DATA_WILDCARD]: { qos: 0 }, [HEALTH_WILDCARD]: { qos: 0 }, [BIN_WILDCARD]: { qos: 1 } },
+      (err) => {
+        if (err) console.error("[mqtt] subscribe error:", err.message);
+      },
+    );
   });
 
   client.on("error", (err) => console.error("[mqtt] error:", err.message));
   client.on("reconnect", () => console.log("[mqtt] reconnecting…"));
 
   client.on("message", (topic, payload) => {
-    void handleUplink(topic, payload).catch((err) =>
-      console.error("[mqtt] message handler error:", err),
-    );
+    const binMac = parseBinTopic(topic);
+    const task = binMac ? handleBinUplink(binMac, payload) : handleUplink(topic, payload);
+    void task.catch((err) => console.error("[mqtt] message handler error:", err));
   });
 
   globalForMqtt.__fenerMqtt = client;
@@ -101,16 +113,46 @@ export function getMqttClient(): MqttClient {
  * İlk iki formatta payload'da MAC yok; kimlik topic'ten okunur.
  */
 async function handleUplink(topic: string, raw: Buffer): Promise<void> {
+  const text = raw.toString();
+  // HELLO: cihaz bağlanınca /data'ya JSON değil düz "data" metni basar.
+  if (text.trim() === HELLO_TEXT) return;
+
   let json: unknown;
   try {
-    json = JSON.parse(raw.toString());
+    json = JSON.parse(text);
   } catch {
     console.warn(`[mqtt] JSON çözülemedi (${topic})`);
     return;
   }
+  return routeUplink(topic, parseUplinkTopic(topic), json, "json");
+}
 
-  const parsedTopic = parseUplinkTopic(topic);
+/**
+ * Meven:<MAC>/bin: binary paketi çözüp JSON karşılığını, cihaz onu doğrudan
+ * JSON basmış gibi routeUplink'e verir. Ret/atlama lib/binUplink.ts'te sayılır.
+ *
+ * Binary komut yanıtı (COMMAND_ACK) bu fazda İŞLENMEZ: backend yalnızca JSON
+ * komut (UUID id) gönderiyor ve cihaz JSON komuta JSON ack dönüyor. Binary
+ * ack'teki u16 id hiçbir komutumuza eşlenemez; handleAck'in yedek yolu
+ * ("en son bekleyen komut") yanlış komutu `failed` yapardı.
+ */
+async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
+  const result = await decodeBinUplink(mac, payload);
+  if (result.kind === "json") {
+    return routeUplink(`Meven:${mac}/bin`, { mac, suffix: result.suffix }, result.json, "bin");
+  }
+  if (result.kind === "ack") {
+    console.log(`[mqtt] binary ack (${mac}, işlenmedi): ${JSON.stringify(result.json)}`);
+  }
+  // hello / skip: yapılacak bir şey yok.
+}
 
+async function routeUplink(
+  topic: string,
+  parsedTopic: { mac: string; suffix: UplinkSuffix } | null,
+  json: unknown,
+  source: "json" | "bin",
+): Promise<void> {
   // Gateway'ler cihazlarla aynı topic'lere basar. Ayrım payload'dan (`type`
   // gateway türü) ya da kimlik kayıtlı bir gateway'e aitse ondan yapılır —
   // ikincisi kontrata uymayan (type'sız) bir gateway mesajını cihaz yoluna
@@ -122,7 +164,12 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
     return handleGatewayUplink(parsedTopic.mac, parsedTopic.suffix, json);
   }
 
+  // Çift işleme koruması: binary gönderen cihazın JSON telemetrisi/health'i
+  // ikinci kopyadır (bkz. binActive). JSON ack'ler aşağıda ayrıca işlenir.
+  const duplicate = (mac: string) => source === "json" && binActive(mac);
+
   if (parsedTopic?.suffix === "health") {
+    if (duplicate(parsedTopic.mac)) return noteDuplicateJson(parsedTopic.mac);
     const h = deviceHealthSchema.safeParse(json);
     if (!h.success) {
       console.warn(`[mqtt] bilinmeyen health payload (${topic})`);
@@ -136,6 +183,7 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
     console.warn(`[mqtt] bilinmeyen payload (${topic})`);
     return;
   }
+  if (uplink.kind === "ignored") return;
 
   // Eski kontratta MAC payload'da, yenilerde yalnızca topic'te.
   const mac = uplink.kind === "legacy" ? uplink.data.deviceId : (parsedTopic?.mac ?? null);
@@ -143,6 +191,7 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
     console.warn(`[mqtt] MAC çözülemedi (${topic})`);
     return;
   }
+  if (uplink.kind !== "ack" && duplicate(mac)) return noteDuplicateJson(mac);
 
   if (uplink.kind === "d4i") return handleD4i(mac, uplink.data, json);
   if (uplink.kind === "ack") return handleAck(mac, uplink.data);

@@ -208,12 +208,24 @@ export type CommandAck = z.infer<typeof commandAckSchema>;
 export type Uplink =
   | { kind: "d4i"; data: D4iPeriodic }
   | { kind: "legacy"; data: DataPayload }
-  | { kind: "ack"; data: CommandAck };
+  | { kind: "ack"; data: CommandAck }
+  | { kind: "ignored"; type: string };
+
+/**
+ * Cihazın /data'ya bastığı ama backend'in (henüz) işlemediği tipler: tek
+ * sorgu cevapları (`dali_status`, `d4i` = d4i_read sonucu) ve tarama özeti
+ * (`commission_result`; lambalar zaten d4i_periodic ile gelir). Sessizce
+ * atlanır — "bilinmeyen payload" uyarısı yalnızca gerçekten tanınmayana.
+ */
+const IGNORED_UPLINK_TYPES: ReadonlySet<string> = new Set(["dali_status", "d4i", "commission_result"]);
 
 export function parseUplink(raw: unknown): Uplink | null {
   if (typeof raw !== "object" || raw === null) return null;
   const obj = raw as Record<string, unknown>;
 
+  if (typeof obj.type === "string" && IGNORED_UPLINK_TYPES.has(obj.type)) {
+    return { kind: "ignored", type: obj.type };
+  }
   if (obj.type === "d4i_periodic") {
     const p = d4iPeriodicSchema.safeParse(obj);
     return p.success ? { kind: "d4i", data: p.data } : null;
