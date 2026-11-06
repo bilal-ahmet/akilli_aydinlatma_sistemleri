@@ -26,6 +26,7 @@ ESP32 (PubSubClient + WiFiClientSecure)
 ```
 
 **Şu an:** ESP32 WiFi → HiveMQ Cloud (TLS/8883) → Backend (Railway) → Neon Postgres. Dashboard, MQTT status'larını SSE ile canlı alır.
+**Binary protokol v1:** yeni firmware uplink'ini JSON yerine binary pakete çevirir (`Meven:<MAC>/bin`); backend çözüp aynı JSON yoluna verir (`src/lib/binproto`, bkz. aşağıda "Binary protokol v1" ve `firmware/BINARY-ENTEGRASYON.md`).
 **İleride:** LoRaWAN mimarisine geçilecek → `ESP32+LoRa → Gateway → Chirpstack → MQTT → Backend`
 
 ---
@@ -175,6 +176,7 @@ Meven:<slug>/cmd   ← Backend publish, o bölgedeki ESP32'ler subscribe (bölge
 Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
 Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri + komut yanıtı)
 Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürümü, OTA durumu)
+Meven:<MAC>/bin    ← ESP32 (yeni firmware) publish, Backend subscribe (QoS 1): binary protokol v1, TÜM uplink
 ```
 
 - **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
@@ -199,6 +201,43 @@ Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürü
   flash'lanmış olmalı — flash'lanmamış cihaz bölge komutu almaz. (Geçiş
   döneminde geçici MAC fanout'u vardı; tüm cihazlar flash'landığı için
   kaldırıldı — flash'lı cihazlar komutu iki kez alıyordu.)
+
+### Binary protokol v1 (`Meven:<MAC>/bin`)
+
+Yeni firmware d4i_periodic, health, komut ack'i, commission sonucu ve HELLO'yu
+JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değer]…`
++ CRC-16/CCITT-FALSE. d4i_periodic 2137 B'tan ≤170 B'a iner. `/data` ve
+`/health`'e artık yazmaz. Spesifikasyon: `firmware/MQTT-BINARY-PROTOKOL.html`
+(firmware ekibi, rev 1.0). Entegrasyon notu: `firmware/BINARY-ENTEGRASYON.md`.
+
+- **Çözücü backend'in içinde** (`src/lib/binproto`, saf). Python köprüsü
+  (`mqtt_bridge.py`) ayrı servis olarak çalışmaz; çevirme kuralları ondan
+  birebir porte edildi (`toJson.ts`).
+- **Akış:** `lib/binUplink.ts → decodeBinUplink` (CRC, alan tablosu, JSON'a
+  çevirme) → `mqtt.ts → routeUplink`. Çıkan JSON, cihaz onu doğrudan basmış
+  gibi işlenir; aşağıdaki her şey değişmeden çalışır.
+- **Alan tablosu önce, OTA sonra.** `binproto/fields.ts`, firmware'deki
+  `msg_fields.h`'nin kopyasıdır. Tanımsız alan kodu taşıyan paket tamamen
+  atılır ve admin sayfasında kırmızı alarm çıkar (`GET /api/admin/binproto`,
+  `admin/BinaryProtocol.tsx`). Firmware yeni alan eklerse önce tablo +
+  `npm run check:binproto` + deploy, sonra OTA.
+- **Komutlar şimdilik JSON.** Cihaz JSON komuta JSON ack döner. **Binary
+  COMMAND_ACK işlenmez, yalnızca loglanır:** u16 id'si hiçbir komutumuza
+  eşlenmez ve `handleAck`'in "en son bekleyen komut" yedeği yanlış komutu
+  `failed` yapardı. Binary komutlar sonraki faz (u16 ↔ UUID eşlemesi).
+- **Çift işleme koruması:** son 10 dk'da geçerli `/bin` gönderen MAC'in JSON
+  telemetrisi ve health'i atlanır (`binActive`), JSON ack işlenir. Python
+  köprüsü canlı broker'da yalnızca `--watch` / `--compare` ile çalıştırılır.
+- **Bir-kezlik health alanları** (`idf_version`, derleme zamanı, Thread ağ adı)
+  bağlantı başına bir kez gelir; cihaz başına bellekte tutulur. Önbellek boşsa
+  `devices.health`'ten tohumlanır.
+- **Yok sayılanlar:** ilk bayt `0x02` LoRa gateway protokolüdür (henüz
+  desteklenmez, sayılır). HELLO JSON değildir, `/data`'ya düz `"data"` metni
+  olarak gelir. `dali_status`, `d4i` (tek bank) ve `commission_result` tipleri
+  sessizce atlanır (`parseUplink → kind:"ignored"`).
+- **Python'dan sapmalar:** eksik zorunlu alan paketi `MISSING_FIELD` ile
+  reddettirir (Python'da köprü çöküyor). Maskeli `load_power` `value: null`
+  olur (Python 4294967295 W yazıyor).
 
 ### Gateway'ler (ağ geçitleri)
 
@@ -452,6 +491,8 @@ Okuma sırası tek yerde: `src/lib/d4i.ts` → `readMeasurement(block, ad, birim
 doğrulanmamış ham `*` ile yazılır; ham değerler ve sebep kodları ana ızgarada
 değil, lamba kartının "Teknik detay" bölümünde durur (`bank_206_raw_hex`,
 ölçek üsleri, `*_available/plausible` alanları da oraya aittir).
+Binary protokolde `bank_206_raw_hex` **kaldırıldı**, panel yokluğunu tolere eder.
+Ham bank gerekirse `d4i_read` ile istenir.
 
 > **`d4i_telemetry.led_voltage_v / led_current_a / led_temperature_c` sütunları
 > yalnızca DOĞRULANMIŞ değeri taşır**, yani yeni firmware'de çoğunlukla NULL'dur.
@@ -1143,7 +1184,8 @@ NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts`, `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
-18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `handleUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
+18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `routeUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
+19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Binary ack bu fazda işlenmez; JSON komut → JSON ack. Bkz. "Binary protokol v1".
 
 ---
 
@@ -1176,6 +1218,8 @@ NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 │   │       └── events/route.ts           # SSE (/api/events)
 │   ├── lib/
 │   │   ├── mqtt.ts                       # MQTT singleton (TLS) + publishCommand
+│   │   ├── binproto/                     # binary protokol v1: fields (alan tablosu), codec, toJson (saf)
+│   │   ├── binUplink.ts                  # /bin alımı: sayaçlar, alarm, health önbelleği, binActive
 │   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
 │   │   ├── faults.ts                     # arıza kodu kataloğu (saf; client de kullanır)
 │   │   ├── faultLog.ts                   # fault_events senkronu (yalnız değişimde yazar)

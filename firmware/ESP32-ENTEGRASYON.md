@@ -172,6 +172,14 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 
 ## 5) Veri payload (giden, data)
 
+> **Binary protokol v1 (yeni firmware):** aşağıdaki mesajların hepsi JSON
+> yerine binary paket olarak `Meven:<MAC>/bin`'e gider; `/data` ve `/health`
+> kullanılmaz. Backend paketi çözüp bu bölümdeki JSON'un aynısına çevirir.
+> Fark: `d4i.bank_206_raw_hex` kaldırıldı. JSON komuta yanıt yine JSON ack'tir
+> (`/data`). Spesifikasyon `MQTT-BINARY-PROTOKOL.html`, backend tarafı
+> `BINARY-ENTEGRASYON.md`. **Firmware yeni alan eklerse backend alan tablosu
+> OTA'dan önce güncellenmeli.**
+
 `Meven:<MAC>/data` üzerinde **üç ayrı mesaj tipi** akar. Yeni tiplerde payload'da
 `deviceId` **yoktur** — backend MAC'i topic'ten okur (`macFromDataTopic`).
 
@@ -204,6 +212,11 @@ Eski firmware'ler / geçersiz JSON yanıtı `action` ve `id` taşımaz:
 | `efekt baslatilamadi (bos slot yok veya bellek yetersiz)` | 4 kanal efekt sınırı doldu | `effect-slots-full` |
 | `commissioning servisi henuz hazir degil` | Cihaz yeni açıldı, tarama servisi hazır değil (birkaç sn sonra tekrar dene) | `commission-not-ready` |
 | `ota servisi henuz hazir degil` | Cihaz ağa yeni bağlanıyor | `ota-not-ready` |
+| `d4i rapor servisi henuz hazir degil` | D4i rapor servisi henüz başlamadı | `d4i-report-not-ready` |
+| `cihaz mesgul, komut kuyrugu dolu` | Komut kuyruğu dolu | `queue-full` |
+| `crc hatali, paket islenmedi` | Binary komutun CRC'si tutmadı | `bin-crc` |
+| `desteklenmeyen protokol versiyonu` | Binary komutun versiyon baytı tanınmıyor | `bin-version` |
+| `paket bicimi bozuk` | Binary komut çözülemedi | `bin-malformed` |
 
 Kod sütunu `src/lib/deviceErrors.ts` kataloğundan gelir: her metin okunur bir
 başlık + sebebe çevrilir, dashboard bunu gösterir. **Tanınmayan metin
