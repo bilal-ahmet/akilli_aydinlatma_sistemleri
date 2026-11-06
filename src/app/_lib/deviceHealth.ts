@@ -3,8 +3,9 @@ import { formatKw } from "./format";
 import { lampOn } from "./selection";
 
 /**
- * Cihazın "çevrimiçi" sayıldığı pencere. ESP kanal başına ~30 sn'de bir rapor
- * yayınlar; birkaç kaçan rapora (yeniden bağlanma) tolerans bırakılır.
+ * Aralık bildirmeyen cihazın "çevrimiçi" penceresi (eski firmware ~30 sn'de
+ * bir yayınlar). Aralığını bildiren cihazda pencere sunucudan gelir
+ * (`DeviceView.onlineWindowMs`, lib/deviceWindows.ts).
  */
 export const ONLINE_WINDOW_MS = 3 * 60_000;
 
@@ -31,7 +32,7 @@ export const TONE_DOT: Record<HealthTone, string> = {
 
 export function isOnline(d: DeviceView, now: number | null): boolean {
   if (!d.lastSeen || now === null) return false;
-  return now - new Date(d.lastSeen).getTime() < ONLINE_WINDOW_MS;
+  return now - new Date(d.lastSeen).getTime() < (d.onlineWindowMs ?? ONLINE_WINDOW_MS);
 }
 
 export interface LampCounts {

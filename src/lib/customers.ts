@@ -1,14 +1,16 @@
 import "server-only";
-import { count, eq, gt, inArray } from "drizzle-orm";
+import { count, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { computeSummary, FRESH_MS } from "@/lib/summary";
+import { computeSummary } from "@/lib/summary";
+import { onlineWindowMs } from "@/lib/deviceWindows";
 import { getTenancy } from "@/lib/tenancy";
 import type { CustomerOverview } from "@/types/admin";
 
 /**
  * Admin müşteri listesi: her müşteri için sayılar + ölçülmüş özet.
- * Bölge/cihaz sayıları tenancy index'inden, çevrimiçi cihaz ve kullanıcı
- * sayıları tek gruplu sorgudan, güç/arıza özeti müşteri başına
+ * Bölge/cihaz sayıları tenancy index'inden, kullanıcı sayısı tek gruplu
+ * sorgudan; çevrimiçi cihaz panelle aynı kuralla (cihaz başına pencere,
+ * lib/deviceWindows.ts) sayılır. Güç/arıza özeti müşteri başına
  * `computeSummary` ile gelir (müşteri sayısı küçük; paralel çalışır).
  */
 export async function listCustomerOverviews(): Promise<CustomerOverview[]> {
@@ -16,21 +18,29 @@ export async function listCustomerOverviews(): Promise<CustomerOverview[]> {
   const rows = await db.select().from(schema.customers).orderBy(schema.customers.name);
   if (rows.length === 0) return [];
 
-  const cutoff = new Date(Date.now() - FRESH_MS);
-  const [online, userCounts] = await Promise.all([
+  const [seen, userCounts] = await Promise.all([
     db
-      .select({ customerId: schema.zones.customerId, n: count() })
+      .select({
+        customerId: schema.zones.customerId,
+        lastSeen: schema.devices.lastSeen,
+        healthIntervalS: schema.devices.healthIntervalS,
+        reportIntervalS: schema.devices.reportIntervalS,
+      })
       .from(schema.devices)
       .innerJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
-      .where(gt(schema.devices.lastSeen, cutoff))
-      .groupBy(schema.zones.customerId),
+      .where(isNotNull(schema.devices.lastSeen)),
     db
       .select({ customerId: schema.users.customerId, n: count() })
       .from(schema.users)
       .where(inArray(schema.users.customerId, rows.map((r) => r.id)))
       .groupBy(schema.users.customerId),
   ]);
-  const onlineBy = new Map(online.map((o) => [o.customerId, Number(o.n)]));
+  const now = Date.now();
+  const onlineBy = new Map<string, number>();
+  for (const d of seen) {
+    if (!d.lastSeen || now - d.lastSeen.getTime() >= onlineWindowMs(d)) continue;
+    onlineBy.set(d.customerId, (onlineBy.get(d.customerId) ?? 0) + 1);
+  }
   const usersBy = new Map(userCounts.map((u) => [u.customerId, Number(u.n)]));
 
   const summaries = await Promise.all(

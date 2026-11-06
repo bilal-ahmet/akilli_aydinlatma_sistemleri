@@ -232,15 +232,18 @@ export function binActive(mac: string, now = Date.now()): boolean {
 }
 
 /**
- * Bu MAC'e komut binary gönderilebilir mi? Son 10 dk'da geçerli binary paket
- * gelmiş VE ondan sonra JSON telemetri/health gelmemiş olmalı. İkinci şart
- * OTA geri dönüşünü yakalar (eski firmware'e dönen cihaz JSON basar, binary
- * komutu anlamaz); köprü yanlışlıkla köprü modunda çalışırsa da güvenli yöne
- * (JSON) kayar. Cihaz geçiş döneminde JSON komutu da kabul eder.
+ * Bu MAC'e komut binary gönderilebilir mi? Geçerli binary paket görülmüş VE
+ * ondan sonra JSON telemetri/health gelmemiş olmalı. Süre sınırı yok: sahadaki
+ * cihazlar dakikalarca sessiz kalabiliyor (rapor aralığı firmware'de, bkz.
+ * lib/deviceWindows.ts); sessizlik firmware'in değiştiği anlamına gelmez.
+ * İkinci şart OTA geri dönüşünü yakalar (eski firmware'e dönen cihaz JSON
+ * basar, binary komutu anlamaz); köprü yanlışlıkla köprü modunda çalışırsa da
+ * güvenli yöne (JSON) kayar. Bellek içidir: backend yeniden başlayınca cihazın
+ * ilk binary paketine kadar JSON gider (cihaz ikisini de kabul eder).
  */
-export function binCommandCapable(mac: string, now = Date.now()): boolean {
+export function binCommandCapable(mac: string): boolean {
   const d = store.devices.get(mac);
-  if (!d || d.lastValidAt == null || now - d.lastValidAt >= BIN_ACTIVE_MS) return false;
+  if (!d || d.lastValidAt == null) return false;
   return d.lastJsonAt == null || d.lastJsonAt < d.lastValidAt;
 }
 
@@ -330,7 +333,7 @@ export function binProtoSnapshot(
         lastReject: d.lastReject
           ? { at: iso(d.lastReject.at), outcome: d.lastReject.outcome, detail: d.lastReject.detail }
           : null,
-        commandFormat: binaryCommands && binCommandCapable(mac, now) ? "binary" : "json",
+        commandFormat: binaryCommands && binCommandCapable(mac) ? "binary" : "json",
       })),
     binaryCommands,
     recent: store.recent.map((r) => ({

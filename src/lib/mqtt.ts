@@ -13,6 +13,7 @@ import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import { isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { normalizeMac } from "@/lib/mac";
+import { intervalSeconds } from "@/lib/deviceWindows";
 import {
   binActive,
   binCommandCapable,
@@ -237,7 +238,14 @@ async function touchDevice(
   patch?: Partial<
     Pick<
       typeof schema.devices.$inferInsert,
-      "lastError" | "lastErrorAt" | "firmwareVersion" | "health" | "healthAt" | "gatewayId"
+      | "lastError"
+      | "lastErrorAt"
+      | "firmwareVersion"
+      | "health"
+      | "healthAt"
+      | "gatewayId"
+      | "healthIntervalS"
+      | "reportIntervalS"
     >
   >,
 ) {
@@ -575,12 +583,18 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   // Cihaz bağlı olduğu gateway'i kendisi bildirebilir (gateway `nodes`
   // listesi veremiyorsa). Alan gelmezse mevcut bağ korunur.
   const gatewayId = h.gateway ? normalizeMac(h.gateway) : null;
+  // Rapor aralıkları yalnızca ilk kayıtta (join) gelir; gelmediği mesajda
+  // sütun ezilmez (bkz. lib/deviceWindows.ts).
+  const healthIntervalS = intervalSeconds((h as Record<string, unknown>).health_interval_s);
+  const reportIntervalS = intervalSeconds((h as Record<string, unknown>).report_interval_s);
   noteHealth(mac, { firmwareVersion, ota }, now.getTime());
 
   await touchDevice(mac, now, {
     // Sürüm alanı gelmediyse eski değer ezilmez.
     ...(firmwareVersion ? { firmwareVersion } : {}),
     ...(gatewayId ? { gatewayId } : {}),
+    ...(healthIntervalS !== undefined ? { healthIntervalS } : {}),
+    ...(reportIntervalS !== undefined ? { reportIntervalS } : {}),
     health: h as Record<string, unknown>,
     healthAt: now,
   });

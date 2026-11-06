@@ -49,6 +49,14 @@ export interface DeviceView {
   resetReason: string | null;
   ota: OtaStatus | null;
   healthAt: string | null;
+  /**
+   * Firmware'in ilk kayıtta bildirdiği aralıklar (saniye); bildirmediyse null.
+   * `onlineWindowMs` bunlardan sunucuda hesaplanır (lib/deviceWindows.ts):
+   * cihaz bu süre sessiz kalırsa "bağlantı yok" sayılır.
+   */
+  healthIntervalS: number | null;
+  reportIntervalS: number | null;
+  onlineWindowMs: number;
   /** Bağlı olduğu gateway (GW_ID); gateway raporundan ya da cihaz health'inden. */
   gatewayId: string | null;
   /** Takılı olduğu direk (`poles.id`) ve direğin numarası; bağlı değilse null. */

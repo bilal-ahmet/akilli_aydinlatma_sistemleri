@@ -209,6 +209,11 @@ export const devices = pgTable("devices", {
   firmwareVersion: varchar("firmware_version", { length: 32 }),
   health: jsonb("health").$type<Record<string, unknown>>(),
   healthAt: timestamp("health_at", { withTimezone: true }),
+  // Firmware'in bildirdiği aralıklar (saniye). Yalnızca ilk kayıtta (join)
+  // health'te gelir; gelmediği mesajlarda ezilmez. NULL = bildirilmedi →
+  // varsayılan pencereler (lib/deviceWindows.ts).
+  healthIntervalS: integer("health_interval_s"),
+  reportIntervalS: integer("report_interval_s"),
   // Cihazın bağlı olduğu gateway (gateways.gateway_id'ye mantıksal ref). Gateway
   // raporundaki `nodes` listesinden ya da cihaz health'indeki `gateway`
   // alanından dolar; gateway silinince NULL'lanır.

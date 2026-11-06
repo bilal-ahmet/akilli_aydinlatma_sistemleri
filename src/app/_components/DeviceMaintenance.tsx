@@ -369,6 +369,25 @@ export function DeviceMaintenance({
                   ? "—"
                   : `${formatDuration(healthAge)} önce`}
             </dd>
+
+            {/* Firmware ilk kayıtta bildirir; "bağlantı yok" penceresi buna göre. */}
+            <dt className="text-muted">Rapor aralığı</dt>
+            <dd className="text-ink-2">
+              {device.reportIntervalS === null && device.healthIntervalS === null ? (
+                <>
+                  Bildirilmedi
+                  <span className="ml-2 text-xs text-muted">(~30 sn varsayılıyor)</span>
+                </>
+              ) : (
+                <>
+                  Ölçüm {device.reportIntervalS === null ? "—" : formatDuration(device.reportIntervalS * 1000)}
+                  {" · "}Sağlık {device.healthIntervalS === null ? "—" : formatDuration(device.healthIntervalS * 1000)}
+                </>
+              )}
+              <span className="ml-2 text-xs text-muted">
+                {formatDuration(device.onlineWindowMs)} sessizlikte bağlantı yok sayılır
+              </span>
+            </dd>
           </dl>
         </section>
       ) : null}

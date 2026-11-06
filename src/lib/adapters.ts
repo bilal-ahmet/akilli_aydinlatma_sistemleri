@@ -11,6 +11,7 @@ import { gatewayTypeLabel, summarizeGateway } from "@/lib/gateways";
 import type { CustomerUser } from "@/types/admin";
 import { deviceHealthSchema } from "@/types/lighting";
 import type { CustomerRole } from "@/lib/auth/roles";
+import { onlineWindowMs } from "@/lib/deviceWindows";
 import type {
   Zone,
   ZoneStatus,
@@ -59,6 +60,8 @@ export function toDeviceView(row: {
   firmwareVersion?: string | null;
   health?: Record<string, unknown> | null;
   healthAt?: Date | null;
+  healthIntervalS?: number | null;
+  reportIntervalS?: number | null;
   gatewayId?: string | null;
   poleId?: string | null;
   poleCode?: string | null;
@@ -87,6 +90,12 @@ export function toDeviceView(row: {
     resetReason: h?.reset_reason ?? null,
     ota: h?.ota ?? null,
     healthAt: row.healthAt ? row.healthAt.toISOString() : null,
+    healthIntervalS: row.healthIntervalS ?? null,
+    reportIntervalS: row.reportIntervalS ?? null,
+    onlineWindowMs: onlineWindowMs({
+      healthIntervalS: row.healthIntervalS ?? null,
+      reportIntervalS: row.reportIntervalS ?? null,
+    }),
     gatewayId: row.gatewayId ?? null,
     poleId: row.poleId ?? null,
     poleCode: row.poleCode ?? null,

@@ -2,14 +2,26 @@ import "server-only";
 import { and, asc, desc, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { readMeasurement, type D4iBlock } from "@/lib/d4i";
+import { DEFAULT_FRESH_MS, freshMs } from "@/lib/deviceWindows";
 import type { D4iRaw, DeviceMeasure, LiveSummary } from "@/app/_lib/types";
 
 /**
- * Ölçümün "güncel" sayıldığı pencere. Cihaz kanal başına ~30 sn'de bir rapor
- * yayınlar; 10 dakika kısa kesintileri (deploy, yeniden bağlanma) tolere ederken
- * susmuş bir lambanın gücünü toplama sokmayacak kadar dar.
+ * Ölçümün "güncel" sayıldığı pencere — CİHAZ BAŞINA: firmware'in bildirdiği
+ * rapor aralığının 2,5 katı, en az 10 dk (lib/deviceWindows.ts → freshMs).
+ * Aralık bildirmeyen (eski, ~30 sn'de bir gönderen) cihazda 10 dk: kısa
+ * kesintileri tolere ederken susmuş bir lambanın gücünü toplama sokmayacak
+ * kadar dar.
  */
-export const FRESH_MS = 10 * 60_000;
+export const FRESH_MS = DEFAULT_FRESH_MS;
+
+/** Cihaz başına tazelik penceresi (ms); aralığı bildirilmemiş cihaz listede yok. */
+async function freshWindows(macs: string[]): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ mac: schema.devices.deviceId, reportIntervalS: schema.devices.reportIntervalS })
+    .from(schema.devices)
+    .where(and(inArray(schema.devices.deviceId, macs), isNotNull(schema.devices.reportIntervalS)));
+  return new Map(rows.map((r) => [r.mac, freshMs(r)]));
+}
 
 const EMPTY: LiveSummary = {
   powerW: null,
@@ -36,7 +48,11 @@ const EMPTY: LiveSummary = {
  */
 export async function computeSummary(macs: string[]): Promise<LiveSummary> {
   if (macs.length === 0) return { ...EMPTY, devices: {} };
-  const cutoff = new Date(Date.now() - FRESH_MS);
+  // SQL kesimi en geniş pencere; her satır aşağıda kendi cihazının
+  // penceresine göre süzülür.
+  const windows = await freshWindows(macs);
+  const now = Date.now();
+  const cutoff = new Date(now - Math.max(FRESH_MS, ...windows.values()));
 
   const rows = await db
     .selectDistinctOn([schema.d4iTelemetry.deviceId, schema.d4iTelemetry.channel])
@@ -82,6 +98,8 @@ export async function computeSummary(macs: string[]): Promise<LiveSummary> {
   };
 
   for (const row of rows) {
+    const window = windows.get(row.deviceId) ?? FRESH_MS;
+    if (!row.recordedAt || now - row.recordedAt.getTime() > window) continue;
     const d4i = (row.raw as D4iRaw | null)?.d4i;
     const dev = deviceOf(row.deviceId);
     dev.lamps += 1;

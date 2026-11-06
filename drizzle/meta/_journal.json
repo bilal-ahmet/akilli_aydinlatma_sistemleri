@@ -85,6 +85,13 @@
       "when": 1792935839870,
       "tag": "0011_poles",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793972275502,
+      "tag": "0012_device_intervals",
+      "breakpoints": true
     }
   ]
 }

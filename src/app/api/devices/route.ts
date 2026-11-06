@@ -21,6 +21,8 @@ const selectShape = {
   firmwareVersion: schema.devices.firmwareVersion,
   health: schema.devices.health,
   healthAt: schema.devices.healthAt,
+  healthIntervalS: schema.devices.healthIntervalS,
+  reportIntervalS: schema.devices.reportIntervalS,
   gatewayId: schema.devices.gatewayId,
   poleId: schema.devices.poleId,
   poleCode: schema.poles.code,
