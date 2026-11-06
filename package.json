@@ -17,10 +17,12 @@
     "db:seed": "tsx src/lib/db/seed.ts",
     "mock:device": "tsx scripts/mock-device.ts",
     "mock:gateway": "tsx scripts/mock-gateway.ts",
+    "mock:bin": "tsx scripts/publish-bin.ts",
     "watch:cmd": "tsx scripts/watch-commands.ts",
     "auth:create-admin": "tsx scripts/create-admin.ts",
     "check:tenancy": "tsx scripts/tenant-check.ts",
-    "check:schedule": "tsx scripts/check-schedule.ts"
+    "check:schedule": "tsx scripts/check-schedule.ts",
+    "check:binproto": "tsx scripts/check-binproto.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

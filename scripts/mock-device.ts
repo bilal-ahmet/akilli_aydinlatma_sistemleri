@@ -16,6 +16,11 @@
  *   npm run mock:device A8:42:E3:12:34:56            # iki noktalı da olur
  *   npm run mock:device A842E3123456 4               # 4 DALI kanalı (adres 0..3)
  *   npm run mock:device A842E3123456 2 ataturk-bulvari   # bölge topic'ini de dinle
+ *   npm run mock:device A842E3123456 3 ataturk-bulvari --bin   # binary protokol v1
+ *
+ * `--bin`: yeni firmware gibi d4i_periodic, health ve HELLO'yu binary olarak
+ * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). JSON komuta yanıt yine
+ * JSON ack'tir (/data) — firmware geçiş döneminde de böyle davranır.
  *
  * Not: adres 0 bilerek `d4i_supported:false` raporlar (sahadaki örnekle aynı) —
  * dashboard'un D4i'siz sürücüyü de doğru gösterdiğini test etmek için.
@@ -25,17 +30,22 @@ config({ path: ".env.local" });
 import mqtt from "mqtt";
 import { effectByNumber, EFFECT_MAX_NUMBER, MORSE_TEXT_MAX } from "@/lib/effects";
 import { MAX_ARC_LEVEL, MAX_CHANNEL } from "@/types/lighting";
+import { encodeFrame, type FieldValue } from "@/lib/binproto/codec";
+import { OTA_RESULTS, OTA_STATES, type EnumTable } from "@/lib/binproto/fields";
 
-const MAC = (process.argv[2] ?? "A842E3123456")
+const ARGS = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const BIN = process.argv.includes("--bin");
+const MAC = (ARGS[0] ?? "A842E3123456")
   .replace(/[^0-9a-fA-F]/g, "")
   .toUpperCase();
-const CH_COUNT = Math.max(1, Math.min(64, Number(process.argv[3] ?? 2) || 2));
-const ZONE_SLUG = process.argv[4];
+const CH_COUNT = Math.max(1, Math.min(64, Number(ARGS[1] ?? 2) || 2));
+const ZONE_SLUG = ARGS[2];
 
 const T_CMD = `Meven:${MAC}/cmd`;
 const T_ALL = "Meven:all/cmd";
 const T_DATA = `Meven:${MAC}/data`;
 const T_HEALTH = `Meven:${MAC}/health`;
+const T_BIN = `Meven:${MAC}/bin`;
 const TOPICS = [T_CMD, T_ALL, ...(ZONE_SLUG ? [`Meven:${ZONE_SLUG}/cmd`] : [])];
 
 /** Kanal durumu — firmware gibi 0-254 DALI arc level tutulur. */
@@ -160,11 +170,167 @@ function ledBlock(address: number, on: boolean): Record<string, unknown> {
   };
 }
 
+// ── Binary protokol v1 (--bin) ───────────────────────────────
+
+type BinFields = Array<[string, FieldValue | undefined]>;
+
+function publishBin(type: Parameters<typeof encodeFrame>[0], fields: BinFields): number {
+  const frame = encodeFrame(type, fields);
+  client.publish(T_BIN, Buffer.from(frame), { qos: type === "HEALTH" ? 2 : 0 });
+  return frame.length;
+}
+
+const codeOf = (table: EnumTable, name: string | null | undefined) =>
+  Number(Object.entries(table).find(([, v]) => v === name)?.[0] ?? 0);
+
+/** "1.0.9" → 0x010009 */
+const versionCode = (v: string | null) => {
+  const [a, b, c] = (v ?? "").split(".").map(Number);
+  return v ? (a << 16) | (b << 8) | c : undefined;
+};
+
+/**
+ * JSON senaryosunun binary karşılığı: ham değerler (ölçek/maske kuralları
+ * backend'de uygulanır). TEK adres doğrulanamayan ölçüm, ÇİFT adres
+ * doğrulanmış ölçüm (bkz. ledBlock).
+ */
+function d4iBinFields(address: number, s: ChannelState, supported: boolean): BinFields {
+  const fields: BinFields = [
+    ["ADDRESS", address],
+    ["ONLINE", 1],
+    ["STATUS", s.on ? 4 : 0],
+    ["CONTROL_GEAR_PRESENT", 255],
+    // LAMP_FAILURE yazılmaz → JSON'da null (sürücü yanıtlamadı)
+    ["LAMP_POWER_ON", s.on ? 255 : 0],
+    ["ACTUAL_LEVEL", s.on ? s.level : 0],
+    ["MAX_LEVEL", MAX_ARC_LEVEL],
+    ["PHYSICAL_MIN_LEVEL", 157],
+    ["MIN_LEVEL", 157],
+    ["D4I_SUPPORTED", supported ? 1 : 0],
+  ];
+  if (!supported) return fields;
+
+  const ratio = s.on ? s.level / MAX_ARC_LEVEL : 0;
+  const verified = address % 2 === 0;
+  fields.push(
+    ["SAMPLE_COHERENT", 1],
+    ["SAMPLE_STATE", s.on ? 1 : 2],
+    ["BANK_206_LENGTH", 33],
+    ["BANK_206_VERSION", 1],
+    ["ENERGY_RAW_LOW", 9971068],
+    ["ENERGY_RAW_HIGH", 0],
+    ["ENERGY_SCALE", 0xfd], // 10^-3 → 9971.068 Wh
+    ["POWER_RAW", Math.round(ratio * 473)],
+    ["POWER_SCALE", 0xff], // 10^-1
+    ["LOAD_POWER_RAW", Math.round(ratio * 39)],
+    ["LOAD_POWER_SCALE", 0],
+    ["LOAD_POWER_CHECK", 1],
+    ["DRIVER_BANK_VERSION", 1],
+    ["DRIVER_OPERATING_TIME_S", 1712344],
+    ["DRIVER_STARTUP_COUNT", 87],
+    ["DRIVER_INPUT_VOLTAGE", (229 + Math.floor(Math.random() * 4)) * 10],
+    ["DRIVER_MAINS_FREQUENCY", 49],
+    ["DRIVER_POWER_FACTOR", 100],
+    ["DRIVER_TEMPERATURE", 50 + Math.floor(Math.random() * 6) + 60],
+    ["DRIVER_OUTPUT_CURRENT_PERCENT", Math.round(ratio * 100)],
+    ["DRIVER_GENERAL_FAILURE", 0],
+    ["DRIVER_GENERAL_FAILURE_COUNT", 5],
+    ["DRIVER_UNDERVOLTAGE_FAILURE", 0],
+    ["DRIVER_UNDERVOLTAGE_FAILURE_COUNT", 4],
+    ["DRIVER_OVERVOLTAGE_FAILURE", 0],
+    ["DRIVER_OVERVOLTAGE_FAILURE_COUNT", 1],
+    ["DRIVER_POWER_LIMITATION", 0],
+    ["DRIVER_POWER_LIMITATION_COUNT", 0],
+    ["DRIVER_THERMAL_DERATING", 0],
+    ["DRIVER_THERMAL_DERATING_COUNT", 0],
+    ["DRIVER_THERMAL_SHUTDOWN", 0],
+    ["DRIVER_THERMAL_SHUTDOWN_COUNT", 0],
+    ["LED_BANK_VERSION", 1],
+    ["LED_STARTUP_COUNT", 21998],
+    ["LED_OPERATING_TIME_S", 762771],
+    ["LED_VOLTAGE", verified ? 633 : 18], // 63.3 V / 1.8 V (yanıltıcı ham)
+    ["LED_CURRENT", 592],
+    ["LED_TEMPERATURE", verified ? 100 + Math.floor(Math.random() * 10) : 53],
+    ["LED_GENERAL_FAILURE", 0],
+    ["LED_GENERAL_FAILURE_COUNT", verified ? 5 : 0xfd],
+    ["LED_SHORT_CIRCUIT", 0],
+    ["LED_SHORT_CIRCUIT_COUNT", 10],
+    ["LED_OPEN_CIRCUIT", 0],
+    ["LED_OPEN_CIRCUIT_COUNT", verified ? 12 : 0xfd],
+    ["LED_THERMAL_DERATING", 0],
+    ["LED_THERMAL_DERATING_COUNT", 1],
+    ["LED_THERMAL_SHUTDOWN", 0],
+    ["LED_THERMAL_SHUTDOWN_COUNT", 5],
+    ["LED_MEASUREMENT_STATE", s.on ? 1 : 2],
+    ["LED_VOLTAGE_PLAUSIBILITY_CHECKED", 1],
+    ["LED_VOLTAGE_PLAUSIBLE", verified ? 1 : 0],
+    ["LED_TEMPERATURE_PLAUSIBILITY_CHECKED", 1],
+    ["LED_TEMPERATURE_PLAUSIBLE", verified ? 1 : 0],
+  );
+  if (!verified) {
+    fields.push(
+      ["LED_MEASUREMENT_STATUS", 10], // load_power_current_mismatch
+      ["LED_VOLTAGE_ESTIMATED", 659],
+      ["LED_TEMPERATURE_ESTIMATED", 53],
+    );
+  }
+  return fields;
+}
+
+/** Health: bir-kezlik alanlar (IDF, derleme zamanı, ağ adı) bağlantı başına bir kez. */
+let healthStaticSent = false;
+
+function healthBinFields(): BinFields {
+  const otaMessage: Record<string, number> = { checking: 6, downloading: 2, verifying: 1, updated: 8 };
+  const fields: BinFields = [
+    ["HEALTH_UPTIME_S", Math.round((Date.now() - bootAt) / 1000)],
+    ["HEALTH_FREE_HEAP_BYTES", 182_000 + Math.floor(Math.random() * 4000)],
+    ["HEALTH_FIRMWARE_VERSION", versionCode(firmwareVersion)],
+    ["HEALTH_RESET_REASON", 1], // power_on
+    ["HEALTH_MQTT_CONNECTED", 1],
+    ["HEALTH_DROPPED_COMMANDS", 0],
+    ["THREAD_ROLE", 2], // child
+    ["THREAD_ATTACHED", 1],
+    ["THREAD_PARENT_RSSI_AVG", -62],
+    ["THREAD_PARENT_RSSI_LAST", -60],
+    ["THREAD_RLOC16", 0x5c01],
+    ["THREAD_PARTITION_ID", 0x1a2b3c4d],
+    ["THREAD_CHANNEL", 15],
+    ["THREAD_PAN_ID", 0x1234],
+    ["OTA_STATE", codeOf(OTA_STATES, ota.state)],
+    ["OTA_LAST_RESULT", codeOf(OTA_RESULTS, ota.last_result)],
+    ["OTA_BUSY", ota.busy ? 1 : 0],
+    ["OTA_LAST_TARGET_VERSION", versionCode(ota.last_target_version)],
+    ["OTA_MESSAGE", otaMessage[ota.state] ?? 0],
+    ["OTA_DOWNLOAD_PERCENT", ota.state === "downloading" ? 50 : undefined],
+    ["NEIGHBOR_RLOC16", 0x5c00],
+    ["NEIGHBOR_IS_CHILD", 0],
+    ["NEIGHBOR_RSSI_AVG", -61],
+  ];
+  if (!healthStaticSent) {
+    healthStaticSent = true;
+    fields.push(
+      ["HEALTH_IDF_VERSION", 0x050300], // v5.3
+      ["HEALTH_BUILD_TIMESTAMP", Math.floor(Date.UTC(2026, 10, 2, 16, 25, 51) / 1000)],
+      ["THREAD_NETWORK_NAME", "fener-1"],
+    );
+  }
+  return fields;
+}
+
 /** Sürücü/LED sayaçlarıyla birlikte tek adresin D4i raporu. */
 function publishD4i(address: number) {
   const s = channels.get(address);
   if (!s) return;
   const supported = address !== 0; // adres 0 → D4i'siz sürücü senaryosu
+
+  if (BIN) {
+    const size = publishBin("D4I_PERIODIC", d4iBinFields(address, s, supported));
+    console.log(
+      `  → [bin ${size} B] d4i_periodic ch${address}: ${s.on ? "açık" : "kapalı"} level=${s.on ? s.level : 0}${supported ? "" : " (D4i yok)"}`,
+    );
+    return;
+  }
 
   const payload: Record<string, unknown> = {
     type: "d4i_periodic",
@@ -268,6 +434,11 @@ function validChannel(c: unknown): c is number | undefined {
 }
 
 function publishHealth() {
+  if (BIN) {
+    const size = publishBin("HEALTH", healthBinFields());
+    console.log(`  → [bin ${size} B] health fw=${firmwareVersion} ota=${ota.state}`);
+    return;
+  }
   const payload = {
     type: "health",
     firmware_version: firmwareVersion,
@@ -301,11 +472,13 @@ function runOta() {
 }
 
 client.on("connect", () => {
-  console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)`);
+  console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)${BIN ? " · binary protokol v1" : ""}`);
+  healthStaticSent = false; // yeni bağlantı: bir-kezlik health alanları tekrar gider
   client.subscribe(TOPICS, { qos: 1 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`  dinleniyor:\n    ${TOPICS.join("\n    ")}`);
     console.log("\nDashboard'dan komut gönder → burada görünecek, yanıtı dashboard'a dönecek.\n");
+    if (BIN) publishBin("HELLO", []);
     for (const ch of channels.keys()) publishD4i(ch);
     publishHealth();
   });
