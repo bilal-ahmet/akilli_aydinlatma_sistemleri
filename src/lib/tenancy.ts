@@ -41,6 +41,7 @@ export type TenancyIndex = {
   zoneOwner: Map<string, string>; // zone slug → customer id
   deviceOwner: Map<string, string>; // MAC → customer id
   deviceZone: Map<string, string>; // MAC → zone slug (OTA'nın bölge bazlı sıralanması için)
+  zoneMacs: Map<string, string[]>; // zone slug → kayıtlı MAC'ler (bölge komutunun biçimi için)
   gatewayOwner: Map<string, string>; // GW_ID → customer id
   users: Map<string, UserState>;
   loadedAt: number;
@@ -104,11 +105,16 @@ async function load(): Promise<TenancyIndex> {
 
   const deviceOwner = new Map<string, string>();
   const deviceZone = new Map<string, string>();
+  const zoneMacs = new Map<string, string[]>();
   for (const d of deviceRows) {
     const cid = d.zoneId ? zoneCustomerById.get(d.zoneId) : undefined;
     if (!cid) continue;
+    const slug = zoneSlugById.get(d.zoneId!)!;
     deviceOwner.set(d.mac, cid);
-    deviceZone.set(d.mac, zoneSlugById.get(d.zoneId!)!);
+    deviceZone.set(d.mac, slug);
+    const list = zoneMacs.get(slug);
+    if (list) list.push(d.mac);
+    else zoneMacs.set(slug, [d.mac]);
     customersById.get(cid)?.macs.push(d.mac);
   }
 
@@ -124,6 +130,7 @@ async function load(): Promise<TenancyIndex> {
     zoneOwner,
     deviceOwner,
     deviceZone,
+    zoneMacs,
     gatewayOwner,
     users,
     loadedAt: Date.now(),

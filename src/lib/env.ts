@@ -30,3 +30,15 @@ export function getEnv(): Env {
   cached = parsed.data;
   return cached;
 }
+
+/**
+ * Binary komut gönderimi (protokol v1, downlink). Varsayılan AÇIK: yalnızca
+ * binary gönderdiği görülen cihazlara binary gider (lib/binUplink.ts →
+ * binCommandCapable). `MQTT_BINARY_COMMANDS=off` (ya da 0/false) → bütün
+ * komutlar JSON — sahada sorun çıkarsa kapatma anahtarı. Opsiyonel olduğu için
+ * şemada değil: yanlış yazım MQTT'yi düşürmesin.
+ */
+export function binaryCommandsEnabled(): boolean {
+  const v = process.env.MQTT_BINARY_COMMANDS?.trim().toLowerCase();
+  return !(v === "off" || v === "0" || v === "false" || v === "no");
+}

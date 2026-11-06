@@ -22,7 +22,8 @@ import {
  *    önbellek boşsa `devices.health`'teki son değerle tohumlanır.
  *  - Sayaçlar ve son retler → admin kartı (GET /api/admin/binproto). Doküman
  *    "tanımsız alan gelirse paketi atın ve alarm üretin" diyor; alarm budur.
- *  - Cihaz başına son geçerli binary zamanı → çift işleme koruması (binActive).
+ *  - Cihaz başına son geçerli binary zamanı → çift işleme koruması (binActive)
+ *    ve komut biçimi seçimi (binCommandCapable).
  */
 
 /** Binary paketin akıbeti: kabul ya da ret/atlama nedeni. */
@@ -57,6 +58,8 @@ type DeviceBinState = {
   firstAt: number;
   lastAt: number;
   lastValidAt: number | null;
+  /** Bu MAC'ten son JSON telemetri/health (ack hariç) — firmware geri dönüşü. */
+  lastJsonAt: number | null;
   frames: number;
   lastType: string | null;
   lastReject: RejectInfo | null;
@@ -96,7 +99,7 @@ function logOnce(key: string, level: "warn" | "error", message: string, now: num
 function touch(mac: string, now: number): DeviceBinState {
   let d = store.devices.get(mac);
   if (!d) {
-    d = { firstAt: now, lastAt: now, lastValidAt: null, frames: 0, lastType: null, lastReject: null };
+    d = { firstAt: now, lastAt: now, lastValidAt: null, lastJsonAt: null, frames: 0, lastType: null, lastReject: null };
     store.devices.set(mac, d);
   }
   d.lastAt = now;
@@ -228,6 +231,28 @@ export function binActive(mac: string, now = Date.now()): boolean {
   return at != null && now - at < BIN_ACTIVE_MS;
 }
 
+/**
+ * Bu MAC'e komut binary gönderilebilir mi? Son 10 dk'da geçerli binary paket
+ * gelmiş VE ondan sonra JSON telemetri/health gelmemiş olmalı. İkinci şart
+ * OTA geri dönüşünü yakalar (eski firmware'e dönen cihaz JSON basar, binary
+ * komutu anlamaz); köprü yanlışlıkla köprü modunda çalışırsa da güvenli yöne
+ * (JSON) kayar. Cihaz geçiş döneminde JSON komutu da kabul eder.
+ */
+export function binCommandCapable(mac: string, now = Date.now()): boolean {
+  const d = store.devices.get(mac);
+  if (!d || d.lastValidAt == null || now - d.lastValidAt >= BIN_ACTIVE_MS) return false;
+  return d.lastJsonAt == null || d.lastJsonAt < d.lastValidAt;
+}
+
+/**
+ * Bu MAC'ten JSON telemetri/health geldi (ack değil). Yalnızca binary görülmüş
+ * cihazlar için tutulur — eski firmware'li filo belleği büyütmez.
+ */
+export function noteJsonUplink(mac: string, now = Date.now()): void {
+  const d = store.devices.get(mac);
+  if (d) d.lastJsonAt = now;
+}
+
 export function noteDuplicateJson(mac: string): void {
   store.duplicateJson += 1;
   logOnce(
@@ -256,7 +281,11 @@ export type BinProtoSnapshot = {
     frames: number;
     lastType: string | null;
     lastReject: { at: string; outcome: BinOutcome; detail: string } | null;
+    /** Şu an komutlar bu cihaza hangi biçimde gider (tek cihaz komutu). */
+    commandFormat: "binary" | "json";
   }>;
+  /** MQTT_BINARY_COMMANDS=off ise false: bütün komutlar JSON. */
+  binaryCommands: boolean;
   recent: Array<{ mac: string; label: string | null; at: string; outcome: BinOutcome; detail: string; hex: string }>;
 };
 
@@ -266,7 +295,11 @@ function labelFor(idx: TenancyIndex | undefined, mac: string): string | null {
   return cid ? (idx?.customersById.get(cid)?.name ?? null) : null;
 }
 
-export function binProtoSnapshot(idx: TenancyIndex | undefined, now = Date.now()): BinProtoSnapshot {
+export function binProtoSnapshot(
+  idx: TenancyIndex | undefined,
+  binaryCommands: boolean,
+  now = Date.now(),
+): BinProtoSnapshot {
   const iso = (t: number) => new Date(t).toISOString();
   const alarm =
     store.lastAlarm && now - store.lastAlarm.at < ALARM_WINDOW_MS
@@ -297,7 +330,9 @@ export function binProtoSnapshot(idx: TenancyIndex | undefined, now = Date.now()
         lastReject: d.lastReject
           ? { at: iso(d.lastReject.at), outcome: d.lastReject.outcome, detail: d.lastReject.detail }
           : null,
+        commandFormat: binaryCommands && binCommandCapable(mac, now) ? "binary" : "json",
       })),
+    binaryCommands,
     recent: store.recent.map((r) => ({
       mac: r.mac,
       label: labelFor(idx, r.mac),
