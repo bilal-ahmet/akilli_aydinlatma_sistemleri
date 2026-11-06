@@ -48,6 +48,7 @@ export function BinaryProtocol() {
   const accepted = snap.counts.accepted ?? 0;
   const problems = Object.entries(snap.counts).filter(([k, n]) => k !== "accepted" && (n ?? 0) > 0);
   const binDevices = snap.devices.filter((d) => d.lastValidAt !== null);
+  const binCmdDevices = snap.devices.filter((d) => d.commandFormat === "binary").length;
 
   return (
     <section aria-label="Binary protokol" className="rounded-2xl border border-border bg-panel p-5">
@@ -55,7 +56,9 @@ export function BinaryProtocol() {
       <p className="mt-1 max-w-2xl text-xs text-muted">
         Yeni firmware&apos;li cihazlar verilerini <code className="font-mono">Meven:&lt;MAC&gt;/bin</code>
         &apos;e binary basar; sunucu çözüp JSON ile aynı yoldan işler. Sayaçlar sunucunun son
-        açılışından beri ({formatAgo(snap.since, now)}).
+        açılışından beri ({formatAgo(snap.since, now)}). Komutlar, dinleyen cihazların hepsi binary
+        gönderiyorsa binary gider; aksi halde (ve <code className="font-mono">Meven:all/cmd</code>
+        &apos;de her zaman) JSON.
       </p>
 
       {snap.alarm ? (
@@ -79,6 +82,9 @@ export function BinaryProtocol() {
           ? ` · ${problems.map(([k, n]) => `${OUTCOME_LABEL[k] ?? k}: ${n}`).join(", ")}`
           : " · ret yok"}
         {snap.duplicateJson > 0 ? ` · atlanan JSON kopyası: ${snap.duplicateJson}` : ""}
+        {snap.binaryCommands
+          ? ` · ${binCmdDevices} cihaza komut binary gidiyor`
+          : " · binary komut kapalı (MQTT_BINARY_COMMANDS=off), komutlar JSON"}
       </p>
 
       <details className="mt-3 text-xs">
@@ -89,7 +95,8 @@ export function BinaryProtocol() {
               <span className="font-mono text-text">{formatMac(d.mac)}</span>
               <span className="text-muted">{d.label ?? "kayıtsız"}</span>
               <span className="text-muted">
-                son paket {formatAgo(d.lastAt, now)} · {d.lastType ?? "—"} · {d.frames} paket
+                son paket {formatAgo(d.lastAt, now)} · {d.lastType ?? "—"} · {d.frames} paket · komut{" "}
+                {d.commandFormat === "binary" ? "binary" : "JSON"}
               </span>
               {d.lastReject ? (
                 <span className="text-danger">
