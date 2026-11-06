@@ -50,6 +50,40 @@ const OTA_RESULT_LABEL: Record<string, string> = {
   failed: "Başarısız",
 };
 
+/**
+ * Son yeniden başlama sebebi. Binary protokol enum adını (`power_on`), eski
+ * JSON firmware ESP-IDF adını (`ESP_RST_POWERON`) gönderir; ikisi de karşılanır.
+ * Tanınmayan değer ham gösterilir.
+ */
+const RESET_REASON_LABEL: Record<string, string> = {
+  unknown: "Bilinmiyor",
+  power_on: "Güç verildi",
+  external_pin: "Harici reset pini",
+  software: "Yazılımla yeniden başlatıldı",
+  panic: "Yazılım hatası (panic)",
+  int_wdt: "Kesme watchdog'u",
+  task_wdt: "Görev watchdog'u",
+  wdt: "Watchdog",
+  deep_sleep: "Derin uykudan uyandı",
+  brownout: "Düşük besleme gerilimi (brownout)",
+  sdio: "SDIO reset",
+  usb: "USB reset",
+  jtag: "JTAG reset",
+  efuse: "eFuse hatası",
+  power_glitch: "Güç dalgalanması",
+  cpu_lockup: "CPU kilitlendi",
+  ESP_RST_UNKNOWN: "Bilinmiyor",
+  ESP_RST_POWERON: "Güç verildi",
+  ESP_RST_EXT: "Harici reset pini",
+  ESP_RST_SW: "Yazılımla yeniden başlatıldı",
+  ESP_RST_PANIC: "Yazılım hatası (panic)",
+  ESP_RST_INT_WDT: "Kesme watchdog'u",
+  ESP_RST_TASK_WDT: "Görev watchdog'u",
+  ESP_RST_WDT: "Watchdog",
+  ESP_RST_DEEPSLEEP: "Derin uykudan uyandı",
+  ESP_RST_BROWNOUT: "Düşük besleme gerilimi (brownout)",
+};
+
 function stateTone(state: string | null | undefined): string {
   if (state === "updated" || state === "up_to_date") return "bg-ok-soft text-ok";
   if (state === "failed" || state === "blocked") return "bg-danger-soft text-danger";
@@ -318,7 +352,12 @@ export function DeviceMaintenance({
             {health.resetReason ? (
               <>
                 <dt className="text-muted">Son yeniden başlama</dt>
-                <dd className="font-mono text-xs text-ink-2">{health.resetReason}</dd>
+                <dd className="text-ink-2">
+                  {RESET_REASON_LABEL[health.resetReason] ?? health.resetReason}
+                  {RESET_REASON_LABEL[health.resetReason] ? (
+                    <span className="ml-2 font-mono text-xs text-muted">{health.resetReason}</span>
+                  ) : null}
+                </dd>
               </>
             ) : null}
 

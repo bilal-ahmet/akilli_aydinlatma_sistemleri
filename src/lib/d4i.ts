@@ -131,6 +131,22 @@ const REASONS: Record<string, string> = {
   load_power_current_mismatch: "Yük gücü ile akım ölçümü birbirini tutmuyor",
   gear_temperature_mismatch: "Sürücü sıcaklığıyla uyuşmuyor",
   suspected_missing_plus_60_offset: "Sürücü +60 °C ofsetini uygulamamış görünüyor",
+  // Binary protokol v1: yük gücü kontrolü (LOAD_POWER_CHECK = 2)
+  led_voltage_current_mismatch: "LED gerilimi ile akımı yük gücünü tutmuyor",
+  // Binary protokol v1: ölçüm durumu kodları (msg_measurement_status_t). Ölçüm
+  // doğrulanamadığında `*_implausibility_reason` olarak da gelir.
+  local_level_command_during_sample: "Ölçüm sırasında seviye komutu geldi",
+  snapshot_query_failed: "Anlık durum sorgusu başarısız",
+  operating_state_changed_during_sample: "Ölçüm sırasında çalışma durumu değişti",
+  fade_in_progress: "Geçiş (fade) sürerken ölçüldü",
+  status_level_mismatch: "Durum baytı ile seviye uyuşmuyor",
+  light_source_off: "Lamba kapalıyken ölçüldü",
+  operating_state_unknown: "Çalışma durumu bilinmiyor",
+  plausibility_context_unavailable: "Doğrulama için bağlam yok",
+  voltage_corrected_16bit_mv_wrap: "16 bit mV taşması düzeltildi",
+  input_power_current_mismatch: "Giriş gücü ile akım uyuşmuyor",
+  current_too_low_for_check: "Akım doğrulama için çok düşük",
+  power_reference_unavailable: "Güç referansı yok",
 };
 
 export function reasonLabel(code: string): string {

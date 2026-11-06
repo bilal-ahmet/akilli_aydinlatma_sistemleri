@@ -129,6 +129,43 @@ const EXACT: Record<string, Entry> = {
       cause: "Bir cihazda aynı anda en fazla 4 lambada efekt çalışabilir.",
     },
   },
+  // Binary protokol v1 ile gelen firmware metinleri (COMMAND_RESULT -13…-17).
+  "d4i rapor servisi henuz hazir degil": {
+    code: "d4i-report-not-ready",
+    title: "D4i rapor servisi hazır değil",
+    cause: "Cihazın D4i rapor servisi henüz başlamadı (cihaz yeni açılmış olabilir).",
+    plain: {
+      title: "Cihaz henüz hazır değil",
+      cause: "Cihaz yeni açılmış olabilir; biraz sonra tekrar deneyin.",
+    },
+  },
+  "cihaz mesgul, komut kuyrugu dolu": {
+    code: "queue-full",
+    title: "Komut kuyruğu dolu",
+    cause: "Cihaz kısa sürede çok sayıda komut aldı; kuyruğu dolduğu için bu komutu almadı.",
+    plain: {
+      title: "Cihaz meşgul",
+      cause: "Cihaz aynı anda çok fazla komut aldı; biraz sonra tekrar deneyin.",
+    },
+  },
+  "crc hatali, paket islenmedi": {
+    code: "bin-crc",
+    title: "Binary komut bozuk (CRC)",
+    cause: "Cihaz binary komut paketinin CRC'sini doğrulayamadı; komut uygulanmadı.",
+    plain: PLAIN_PROTOCOL,
+  },
+  "desteklenmeyen protokol versiyonu": {
+    code: "bin-version",
+    title: "Desteklenmeyen protokol versiyonu",
+    cause: "Binary komut paketinin versiyon baytını cihaz tanımıyor.",
+    plain: PLAIN_PROTOCOL,
+  },
+  "paket bicimi bozuk": {
+    code: "bin-malformed",
+    title: "Binary komut biçimi bozuk",
+    cause: "Binary komut paketi çözülemedi (tanımsız alan, taşma ya da tipi COMMAND değil).",
+    plain: PLAIN_PROTOCOL,
+  },
 };
 
 /** Değişken içeren (sayı taşıyan) metinler. */
