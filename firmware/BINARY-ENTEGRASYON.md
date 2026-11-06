@@ -116,6 +116,23 @@ Aşağıdaki maddeler firmware ekibine de iletildi:
   `value: null` + `status` yazar, panel özetindeki toplam bozulmaz.
 - **Adressiz d4i_periodic** reddedilir; zaten hiçbir lambaya bağlanamazdı.
 
+## JSON aynası (izleme)
+
+Railway'de `MQTT_JSON_MIRROR=all` (ya da `MQTT_JSON_MIRROR=D40592FFFEA8,…`)
+verilirse backend çözdüğü her paketin JSON'unu yeniden basar. Python
+köprüsünün `--watch --json` çıktısıyla aynıdır:
+
+| Topic | İçerik |
+|---|---|
+| `Meven:<MAC>/json/health` | health JSON'u |
+| `Meven:<MAC>/json/data` | d4i_periodic, komut ack'i (u16 id), HELLO (`data` metni) |
+| `Meven:<MAC>/json/reject` | `{reason, detail, hex}`: CRC, tanımsız alan, eksik alan… |
+
+İzlemek için `+/json/#` ya da `Meven:<MAC>/json/#`. Varsayılan kapalıdır
+(broker trafiği). Topic bilerek `/data` ve `/health` değil: backend bunları
+dinler ve kendi aynasını cihaz mesajı sanıp ikinci kez işlerdi. Köprüyü
+köprü modunda çalıştırmakla aynı sorun olurdu.
+
 ## Test
 
 - `npm run check:binproto`: dokümandaki CRC kontrol değerleri ve 6 örnek

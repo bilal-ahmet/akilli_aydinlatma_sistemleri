@@ -252,6 +252,13 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   saniye) yalnızca **ilk kayıtta (join)** gelir. Önbelleğe değil
   `devices.health_interval_s / report_interval_s` sütunlarına yazılır
   (`handleHealth`; gelmediği mesajda ezilmez). Bkz. "Cihaz başına pencereler".
+- **JSON aynası (izleme):** `MQTT_JSON_MIRROR=all` (ya da virgüllü MAC
+  listesi) verilirse çözülen her paketin JSON karşılığı (Python köprüsü
+  çıktısının aynısı; ack'te u16 id) `Meven:<MAC>/json/data|health`'e,
+  reddedilen paketin nedeni + hex'i `Meven:<MAC>/json/reject`'e basılır.
+  İzlemek için `+/json/#`. Varsayılan kapalı. Topic bilerek `/data`,
+  `/health` değil: backend kendi aynasını cihaz mesajı sanıp ikinci kez
+  işlerdi (komut biçimi JSON'a düşer, ack yanlış komuta bağlanırdı).
 - **Yok sayılanlar:** ilk bayt `0x02` LoRa gateway protokolüdür (henüz
   desteklenmez, sayılır). HELLO JSON değildir, `/data`'ya düz `"data"` metni
   olarak gelir. `dali_status`, `d4i` (tek bank) ve `commission_result` tipleri
@@ -1205,6 +1212,10 @@ NEXT_PUBLIC_MAP_STYLE_URL_DARK=
 # Binary komut gönderimi (opsiyonel; varsayılan açık, yalnızca binary gönderen
 # cihazlara). Sahada sorun çıkarsa off → bütün komutlar JSON.
 MQTT_BINARY_COMMANDS=
+
+# Binary uplink'in JSON aynası (opsiyonel, izleme): all | MAC1,MAC2 | boş=kapalı.
+# Meven:<MAC>/json/data|health|reject topic'lerine basar.
+MQTT_JSON_MIRROR=
 ```
 
 > Lokal geliştirme şablonu için `.env.example`. Gerçek değerler `.env.local`'a (gitignored) yazılır; canlıda Railway **Service Variables**'ta tutulur.
