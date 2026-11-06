@@ -1,7 +1,7 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
-import { binaryCommandsEnabled, getEnv } from "@/lib/env";
+import { binaryCommandsEnabled, getEnv, jsonMirrorEnabled } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
 import { effectByNumber } from "@/lib/effects";
@@ -18,6 +18,7 @@ import {
   binActive,
   binCommandCapable,
   decodeBinUplink,
+  type BinUplinkResult,
   noteDuplicateJson,
   noteJsonUplink,
 } from "@/lib/binUplink";
@@ -29,6 +30,7 @@ import {
   zoneCmdTopic,
   parseUplinkTopic,
   parseBinTopic,
+  jsonMirrorTopic,
   ALL_CMD,
   BIN_WILDCARD,
   DATA_WILDCARD,
@@ -151,6 +153,7 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
  */
 async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   const result = await decodeBinUplink(mac, payload);
+  mirrorJson(mac, result);
   if (result.kind === "json") {
     return routeUplink(`Meven:${mac}/bin`, { mac, suffix: result.suffix }, result.json, "bin");
   }
@@ -168,6 +171,24 @@ async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
     return handleAck(mac, { ...ack, id: requestId }, { guess: false });
   }
   // hello / skip: yapılacak bir şey yok.
+}
+
+/**
+ * İzleme aynası (`MQTT_JSON_MIRROR`, varsayılan kapalı): çözülen paketin JSON
+ * karşılığı — Python köprüsünün çıktısının aynısı — `Meven:<MAC>/json/<data|
+ * health>`'e, reddedilen paketin nedeni `/json/reject`'e basılır. Ack'teki id
+ * cihazın gördüğü u16'dır. Yalnızca firmware ekibinin gözü içindir; backend bu
+ * topic'leri dinlemez.
+ */
+function mirrorJson(mac: string, r: BinUplinkResult): void {
+  if (!jsonMirrorEnabled(mac)) return;
+  const [suffix, body]: ["data" | "health" | "reject", string] =
+    r.kind === "skip"
+      ? ["reject", JSON.stringify({ reason: r.outcome, detail: r.detail, hex: r.hex })]
+      : r.kind === "hello"
+        ? ["data", HELLO_TEXT]
+        : [r.suffix, JSON.stringify(r.json)];
+  getMqttClient().publish(jsonMirrorTopic(mac, suffix), body, { qos: 0 });
 }
 
 async function routeUplink(

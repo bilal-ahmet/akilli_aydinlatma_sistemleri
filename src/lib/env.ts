@@ -42,3 +42,21 @@ export function binaryCommandsEnabled(): boolean {
   const v = process.env.MQTT_BINARY_COMMANDS?.trim().toLowerCase();
   return !(v === "off" || v === "0" || v === "false" || v === "no");
 }
+
+/**
+ * JSON aynası (firmware ekibinin izlemesi için): çözülen binary uplink'in
+ * JSON karşılığı `Meven:<MAC>/json/<data|health|reject>`'e de basılır.
+ * Varsayılan KAPALI (broker trafiği). `MQTT_JSON_MIRROR=all` → bütün cihazlar;
+ * virgüllü MAC listesi → yalnızca onlar (iki noktalı/noktasız). Topic bilerek
+ * `/data` ve `/health` DEĞİL: backend `+/data`, `+/health` dinler, kendi
+ * aynasını cihaz mesajı sanıp ikinci kez işlerdi.
+ */
+export function jsonMirrorEnabled(mac: string): boolean {
+  const v = process.env.MQTT_JSON_MIRROR?.trim();
+  if (!v || /^(off|0|false|no)$/i.test(v)) return false;
+  if (/^(all|on|1|true|yes)$/i.test(v)) return true;
+  return v
+    .split(",")
+    .map((m) => m.replace(/[^0-9a-fA-F]/g, "").toUpperCase())
+    .includes(mac);
+}

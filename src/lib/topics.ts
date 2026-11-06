@@ -39,6 +39,15 @@ export function parseBinTopic(topic: string): string | null {
 }
 
 /**
+ * JSON aynası (yalnızca izleme): çözülmüş binary uplink buraya da basılır
+ * (`MQTT_JSON_MIRROR`). Üç seviyeli olduğu için backend'in `+/data`,
+ * `+/health` aboneliklerine takılmaz. İzlemek için: `+/json/#`.
+ */
+export function jsonMirrorTopic(mac: string, suffix: "data" | "health" | "reject"): string {
+  return `Meven:${mac}/json/${suffix}`;
+}
+
+/**
  * "Meven:A842E3123456/data" → { mac: "A842E3123456", suffix: "data" }.
  * Cihazın yayınladığı yeni payload'larda (d4i_periodic, komut yanıtı, health)
  * `deviceId` alanı yok; kimlik yalnızca topic'te taşınıyor. Eşleşmezse null.

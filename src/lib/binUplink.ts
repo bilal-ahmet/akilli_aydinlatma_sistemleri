@@ -118,7 +118,7 @@ function reject(
   detail: string,
   payload: Uint8Array,
   now: number,
-): { kind: "skip" } {
+): BinSkip {
   count(outcome);
   const info: RejectInfo = { mac, at: now, outcome, detail, hex: toHex(payload.subarray(0, 64)) };
   if (outcome !== "LORA" && outcome !== "GATEWAY") {
@@ -140,7 +140,7 @@ function reject(
   } else {
     logOnce(`${mac}:${outcome}`, "warn", `[bin] ${mac}: paket reddedildi (${outcome}: ${detail}) ${info.hex}`, now);
   }
-  return { kind: "skip" };
+  return { kind: "skip", outcome, detail, hex: info.hex };
 }
 
 /** Cihazın bir-kezlik health alanları; önbellekte yoksa son kayıtlı health'ten. */
@@ -174,7 +174,9 @@ async function buildInfoFor(mac: string): Promise<BuildInfo> {
   return info;
 }
 
-export type BinUplinkResult = LegacyMessage | { kind: "skip" };
+/** Atlanan/reddedilen paket: neden + ilk 64 baytın hex'i (JSON aynası için). */
+export type BinSkip = { kind: "skip"; outcome: BinOutcome; detail: string; hex: string };
+export type BinUplinkResult = LegacyMessage | BinSkip;
 
 /**
  * Bir `/bin` paketini işler. Dönen JSON, cihaz onu doğrudan JSON olarak
