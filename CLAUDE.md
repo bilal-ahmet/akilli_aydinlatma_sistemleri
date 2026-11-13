@@ -93,6 +93,12 @@ canlandırma (Normal gece, Kaza, Sis, Yağmur, Gece tasarrufu). **Yalnızca
 animasyon, hiçbir komut göndermez.** Tüm rollere açık. Simülasyon tek bir
 `requestAnimationFrame` döngüsünde DOM'a doğrudan yazar; React yalnızca durum
 satırını alır. Komut satırı admin'de teknik (efekt no, dim), müşteride sade.
+Her senaryoda katalogdan efekt seçilir (`lib/effects.ts`; Kaza varsayılanı
+Blink, diğerleri sabit ışık); efekt senaryonun olay anında çalışır (Normal
+hemen, Kaza kaza süresince, Sis/Yağmur hava sürerken, Gece tasarrufu araç
+yaklaşan direkte). Eğriler `_lib/scenarioFx.ts` — firmware kodundan değil
+katalog açıklamalarından çıkarılmış yaklaşık görselleştirme; çok lambalı
+efektler direkler arasında gösterilir (gerçekte cihazın kendi lambaları arası).
 
 **Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
 
