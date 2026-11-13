@@ -318,6 +318,25 @@ body {
     no-repeat;
 }
 
+/* Senaryolar sahnesi: yağmur çizgileri (ScenariosView). */
+.scenario-rain {
+  background-image: repeating-linear-gradient(
+    105deg,
+    transparent 0 9px,
+    rgba(133, 183, 235, 0.55) 9px 10px
+  );
+  background-size: 40px 40px;
+  animation: scenario-rain 0.35s linear infinite;
+}
+@keyframes scenario-rain {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -10px 40px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

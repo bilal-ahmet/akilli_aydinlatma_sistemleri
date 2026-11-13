@@ -90,6 +90,7 @@ function SidebarContent({
     { href: `${base}/arizalar`, label: "Arızalar", badge: alertCount, alert: alertCount > 0 },
     { href: `${base}/efektler`, label: "Efektler" },
     { href: `${base}/zamanlamalar`, label: "Zamanlamalar" },
+    { href: `${base}/senaryolar`, label: "Senaryolar" },
   ];
   if (role === "admin" || role === "manager") {
     nav.push({ href: `${base}/kullanicilar`, label: "Kullanıcılar" });
