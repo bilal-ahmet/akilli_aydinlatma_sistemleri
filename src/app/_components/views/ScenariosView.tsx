@@ -2,12 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTechnical } from "@/app/_lib/panel";
+import { fxLevel } from "@/app/_lib/scenarioFx";
+import { EFFECTS, MORSE_TEXT_MAX, effectByNumber, normalizeMorseText, type Effect } from "@/lib/effects";
 import { PageHeader } from "../PanelUi";
 
 /**
  * Senaryolar: sahada müşteriye sistemin farklı durumlarda (kaza, sis, yağmur,
  * gece tasarrufu) nasıl davrandığını anlatan canlandırma. YALNIZCA ANİMASYON —
  * hiçbir komut gönderilmez, API/MQTT'ye dokunulmaz.
+ *
+ * Her senaryoda katalogdaki efektlerden biri seçilebilir (`lib/effects.ts`);
+ * efekt senaryonun "olay" anında çalışır: Normal gece hemen, Kaza kaza
+ * süresince, Sis/Yağmur hava olayı sürerken, Gece tasarrufu araç yaklaşan
+ * direklerde. Efekt eğrileri `_lib/scenarioFx.ts` (yaklaşık görselleştirme).
  *
  * Simülasyon (araç takibi, kaza kuyruğu, sis/yağmur, direk başına parlaklık)
  * tek bir `requestAnimationFrame` döngüsünde çalışır; araçlar ve direkler React
@@ -19,8 +26,6 @@ type ScenKey = "normal" | "kaza" | "sis" | "yagmur" | "tasarruf";
 
 interface Scenario {
   name: string;
-  desc: (t: Words) => string;
-  cmd: (t: Words, lv: number) => string;
   /** Senaryonun panel komutuyla ayarladığı seviye (%). Yoksa normal gece seviyesi. */
   level?: number;
   speed: number;
@@ -32,49 +37,25 @@ interface Scenario {
   pre?: string;
   post?: string;
   stopping?: string;
-}
-
-/** Admin teknik terimleri görür, müşteri sade dil (CLAUDE.md "Dil"). */
-interface Words {
-  technical: boolean;
-  fx: string; // "Blink" | "yanıp sönme"
+  /** Efekt seçicisinin etiketi: efektin senaryonun hangi anında çalıştığı. */
+  fxLabel: string;
+  /** Varsayılan efekt (null = sabit ışık). */
+  fxDefault: number | null;
 }
 
 const SCEN: Record<ScenKey, Scenario> = {
-  normal: {
-    name: "Normal gece",
-    desc: () => "Lambalar gece seviyesinde sabit yanar, trafik normal akar.",
-    cmd: (t, lv) => (t.technical ? `Panel: dim %${lv}, tüm cihazlar` : `Panel komutu: şiddet %${lv}, tüm lambalar`),
-    speed: 1,
-    spawn: 1,
-    fog: false,
-    rain: false,
-  },
+  normal: { name: "Normal gece", speed: 1, spawn: 1, fog: false, rain: false, fxLabel: "Efekt", fxDefault: null },
   kaza: {
     name: "Kaza",
-    desc: (t) =>
-      `"Kaza yap"a basınca kaza olur, tüm direkler aynı anda ${
-        t.technical ? "Blink efektiyle yanıp söner" : "yanıp söner"
-      }. Arkadaki trafik kuyruk olur, karşı şerit yavaşlar. "Kazayı düzelt"e basınca kazalı araçlar kalkar; trafik açılınca ${
-        t.technical ? "Blink" : "yanıp sönme"
-      } durur ve lambalar eski seviyeye döner.`,
-    cmd: (t, lv) =>
-      t.technical
-        ? `Panel: efekt 2 (Blink), tüm cihazlar  →  bitince: efekti durdur (dim %${lv})`
-        : `Panel komutu: yanıp sönme efekti, tüm lambalar  →  bitince: lambalar %${lv} şiddete döner`,
     speed: 1,
     spawn: 1,
     fog: false,
     rain: false,
+    fxLabel: "Kaza anında efekt",
+    fxDefault: 2,
   },
   sis: {
     name: "Sis",
-    desc: () =>
-      '"Sis başlat"a basınca sis basar, yol ve araçlar zor görünür. Panel komutuyla lambalar anında tam parlaklığa çıkar ve sabit kalır (yanıp sönme yok). "Sis durdur"a basınca sis dağılır, açılınca lambalar eski seviyeye döner.',
-    cmd: (t, lv) =>
-      t.technical
-        ? `Panel: dim %100, tüm cihazlar  →  bitince: dim %${lv}`
-        : `Panel komutu: şiddet %100, tüm lambalar  →  bitince: şiddet %${lv}`,
     level: 100,
     speed: 0.5,
     spawn: 1.3,
@@ -84,15 +65,11 @@ const SCEN: Record<ScenKey, Scenario> = {
     pre: "Sis bastırıyor, görüş düşük",
     post: "Lambalar %100, yol yeniden görünüyor",
     stopping: "Sis dağılıyor",
+    fxLabel: "Sis sırasında efekt",
+    fxDefault: null,
   },
   yagmur: {
     name: "Yağmur",
-    desc: () =>
-      '"Yağmur başlat"a basınca yağmur başlar, ıslak yolda görüş azalır. Panel komutuyla lambalar %80 seviyesine çıkar, araçlar biraz yavaşlar. "Yağmur durdur"a basınca yağmur diner, lambalar eski seviyeye döner.',
-    cmd: (t, lv) =>
-      t.technical
-        ? `Panel: dim %80, tüm cihazlar  →  bitince: dim %${lv}`
-        : `Panel komutu: şiddet %80, tüm lambalar  →  bitince: şiddet %${lv}`,
     level: 80,
     speed: 0.7,
     spawn: 1.1,
@@ -102,22 +79,88 @@ const SCEN: Record<ScenKey, Scenario> = {
     pre: "Yağmur başladı",
     post: "Lambalar %80",
     stopping: "Yağmur diniyor",
+    fxLabel: "Yağmur sırasında efekt",
+    fxDefault: null,
   },
   tasarruf: {
     name: "Gece tasarrufu",
-    desc: () =>
-      "Gece yarısından sonra lambalar %20 seviyesinde bekler. Araç yaklaşınca o direkler hızla %100 olur, araç geçince yavaşça tekrar %20'ye iner. (Her direkte araç algılayan sensör olduğu varsayıldı.)",
-    cmd: () => "Bekleme: %20  →  araç algılanınca: o direk %100  →  araç geçince: yavaşça %20",
     level: 20,
     speed: 1,
     spawn: 2.2,
     fog: false,
     rain: false,
     pre: "Saat 00:00, trafik azalıyor",
+    fxLabel: "Araç geçerken efekt",
+    fxDefault: null,
   },
 };
 
 const SCEN_KEYS = Object.keys(SCEN) as ScenKey[];
+const SINGLE_LAMP_FX = EFFECTS.filter((fx) => !fx.allLamps);
+const ALL_LAMP_FX = EFFECTS.filter((fx) => fx.allLamps);
+
+/** Admin teknik terimleri görür, müşteri sade dil (CLAUDE.md "Dil"). */
+interface Words {
+  technical: boolean;
+  /** Bu senaryoda seçili efekt; null = sabit ışık. */
+  fx: Effect | null;
+}
+
+/** Komut satırındaki efekt: admin'e numarasıyla, müşteriye adıyla. */
+const fxCmd = (w: Words) =>
+  w.fx ? (w.technical ? `efekt ${w.fx.number} (${w.fx.label})` : `${w.fx.label} efekti`) : "";
+const lvCmd = (w: Words, v: number) => (w.technical ? `dim %${v}` : `şiddet %${v}`);
+const everyone = (w: Words) => (w.technical ? "tüm cihazlar" : "tüm lambalar");
+const panel = (w: Words) => (w.technical ? "Panel" : "Panel komutu");
+
+function describe(k: ScenKey, w: Words): string {
+  const fx = w.fx;
+  switch (k) {
+    case "normal":
+      return fx
+        ? `Lambalar gece seviyesinde yanarken panelden ${fx.label} efekti başlatılır: ${fx.desc.toLocaleLowerCase("tr-TR")}.`
+        : "Lambalar gece seviyesinde sabit yanar, trafik normal akar.";
+    case "kaza":
+      return `"Kaza yap"a basınca kaza olur, ${
+        fx ? `tüm direkler aynı anda ${fx.label} efektine geçer` : "tüm direkler tam parlaklığa çıkar"
+      }. Arkadaki trafik kuyruk olur, karşı şerit yavaşlar. "Kazayı düzelt"e basınca kazalı araçlar kalkar; trafik açılınca ${
+        fx ? "efekt durur ve " : ""
+      }lambalar eski seviyeye döner.`;
+    case "sis":
+      return `"Sis başlat"a basınca sis basar, yol ve araçlar zor görünür. Panel komutuyla ${
+        fx ? `lambalarda ${fx.label} efekti başlar` : "lambalar anında tam parlaklığa çıkar ve sabit kalır"
+      }. "Sis durdur"a basınca sis dağılır, açılınca lambalar eski seviyeye döner.`;
+    case "yagmur":
+      return `"Yağmur başlat"a basınca yağmur başlar, ıslak yolda görüş azalır. Panel komutuyla ${
+        fx ? `lambalarda ${fx.label} efekti başlar` : "lambalar %80 seviyesine çıkar"
+      }, araçlar biraz yavaşlar. "Yağmur durdur"a basınca yağmur diner, lambalar eski seviyeye döner.`;
+    case "tasarruf":
+      return `Gece yarısından sonra lambalar %20 seviyesinde bekler. Araç yaklaşınca o direkler ${
+        fx ? `${fx.label} efektine geçer` : "hızla %100 olur"
+      }, araç geçince yavaşça tekrar %20'ye iner. (Her direkte araç algılayan sensör olduğu varsayıldı.)`;
+  }
+}
+
+function command(k: ScenKey, w: Words, lv: number): string {
+  const back = w.fx
+    ? w.technical
+      ? `efekti durdur (dim %${lv})`
+      : `lambalar %${lv} şiddete döner`
+    : lvCmd(w, lv);
+  switch (k) {
+    case "normal":
+      return w.fx
+        ? `${panel(w)}: ${fxCmd(w)}, ${everyone(w)}  →  durdurunca: ${back}`
+        : `${panel(w)}: ${lvCmd(w, lv)}, ${everyone(w)}`;
+    case "kaza":
+      return `${panel(w)}: ${w.fx ? fxCmd(w) : lvCmd(w, 100)}, ${everyone(w)}  →  bitince: ${back}`;
+    case "sis":
+    case "yagmur":
+      return `${panel(w)}: ${w.fx ? fxCmd(w) : lvCmd(w, SCEN[k].level!)}, ${everyone(w)}  →  bitince: ${back}`;
+    case "tasarruf":
+      return `Bekleme: %20  →  araç algılanınca: o direk ${w.fx ? fxCmd(w) : "%100"}  →  araç geçince: yavaşça %20`;
+  }
+}
 
 const N = 9;
 const POLE_INDEXES = Array.from({ length: N }, (_, i) => i);
@@ -160,6 +203,15 @@ interface PoleEls {
  */
 const RISE = 18;
 const FALL = 7;
+/** Efekt çalışırken daha keskin: flaş/Mors gibi kısa darbeler kaybolmasın. */
+const RISE_FX = 34;
+const FALL_FX = 16;
+
+/** Motorun okuduğu efekt seçimi (ref üzerinden). */
+interface FxSel {
+  n: number | null;
+  text: string;
+}
 
 const chip = (active: boolean) =>
   `inline-flex h-9 shrink-0 cursor-pointer items-center rounded-full px-3.5 text-[13px] transition-colors duration-150 ${
@@ -170,14 +222,24 @@ const chip = (active: boolean) =>
 
 export function ScenariosView() {
   const technical = useTechnical();
-  const words: Words = { technical, fx: technical ? "Blink" : "yanıp sönme" };
 
   const [scen, setScenState] = useState<ScenKey>("normal");
   const [level, setLevelState] = useState(40);
   const [status, setStatus] = useState("");
+  const [fxByScen, setFxByScen] = useState<Record<ScenKey, number | null>>(() => {
+    const init = {} as Record<ScenKey, number | null>;
+    for (const k of SCEN_KEYS) init[k] = SCEN[k].fxDefault;
+    return init;
+  });
+  const [morseText, setMorseText] = useState("MERHABA");
+
+  const fxNumber = fxByScen[scen];
+  const fx = effectByNumber(fxNumber) ?? null;
+  const words: Words = { technical, fx };
 
   const levelRef = useRef(40);
   const wordsRef = useRef<Words>(words);
+  const fxRef = useRef<FxSel>({ n: fxNumber, text: morseText });
   const engineRef = useRef<Engine | null>(null);
   const roadRef = useRef<HTMLDivElement>(null);
   const boomRef = useRef<HTMLDivElement>(null);
@@ -187,9 +249,11 @@ export function ScenariosView() {
     Array.from({ length: N }, () => ({ root: null, halo: null, glow: null, lens: null, beam: null, pool: null })),
   );
 
+  // Motor seçimi ref'ten okur; render sırasında ref'e yazılmaz (React Compiler).
   useEffect(() => {
-    wordsRef.current = { technical, fx: technical ? "Blink" : "yanıp sönme" };
-  }, [technical]);
+    wordsRef.current = { technical, fx };
+    fxRef.current = { n: fxNumber, text: morseText };
+  }, [technical, fx, fxNumber, morseText]);
 
   useEffect(() => {
     const road = roadRef.current;
@@ -223,6 +287,9 @@ export function ScenariosView() {
       poleB: new Array<number>(N).fill(0.4),
       /** Ekrandaki (yumuşatılmış) parlaklık. */
       disp: new Array<number>(N).fill(0.4),
+      /** Efektin başladığı an ve onu belirleyen anahtar (değişince sıfırlanır). */
+      fxT: 0,
+      fxKey: "",
     };
     let last = performance.now();
     let lastStatus = "";
@@ -292,25 +359,26 @@ export function ScenariosView() {
 
     function statusText(now: number, S: Scenario, b: number, cmdSent: boolean): string {
       const w = wordsRef.current;
+      const fxName = w.fx?.label;
       const L = lv();
       if (s.scen === "kaza") {
         if (s.crashActive) {
           const q = s.cars.filter((c) => c.lane === 0 && !c.crashed && c.v < 8).length;
-          return `Kaza: tüm direkler aynı anda ${w.technical ? "Blink" : "yanıp sönüyor"}, kuyrukta ${q} araç`;
+          return `Kaza: tüm direkler ${fxName ? `aynı anda ${fxName}` : "%100"}, kuyrukta ${q} araç`;
         }
         if (s.clearing) {
           const q = s.cars.filter((c) => c.lane === 0 && c.v < 60).length;
           return `Kazalı araçlar kaldırıldı, trafik açılıyor (${q} araç hâlâ yavaş). Lambalar hâlâ ${
-            w.technical ? "Blink'te" : "yanıp sönüyor"
+            fxName ? `${fxName} efektinde` : "%100"
           }`;
         }
         if (s.crashPending) return "Kaza bekleniyor…";
-        if (s.crashedOnce) return `Trafik açıldı: ${w.fx} durdu, lambalar eski seviyede (%${L})`;
+        if (s.crashedOnce) return `Trafik açıldı: ${fxName ? "efekt durdu, " : ""}lambalar eski seviyede (%${L})`;
         return `Trafik normal, lambalar %${L}. "Kaza yap"a basın.`;
       }
       if (S.wx) {
         if (s.wxOn && !cmdSent) return `${S.pre} (lambalar hâlâ %${L})`;
-        if (s.wxOn) return S.post ?? "";
+        if (s.wxOn) return fxName ? `${S.wx} sürüyor, lambalarda ${fxName} efekti` : (S.post ?? "");
         if (s.wxStopping) return `${S.stopping}, lambalar hâlâ %${Math.round(b * 100)}`;
         if (s.wxStarted) return `Hava açıldı: lambalar eski seviyede (%${L})`;
         return `Hava açık, lambalar %${L}. "${S.wx} başlat"a basın.`;
@@ -318,9 +386,12 @@ export function ScenariosView() {
       if (S.level !== undefined && !cmdSent) return `${S.pre} (lambalar hâlâ %${Math.round(b * 100)})`;
       if (s.scen === "tasarruf") {
         const k = s.poleB.filter((x) => x > 0.6).length;
-        return k ? `Araç geçiyor: ${k} direk açık, diğerleri %20` : "Yol boş, tüm lambalar %20";
+        return k
+          ? `Araç geçiyor: ${k} direk ${fxName ? `${fxName} efektinde` : "açık"}, diğerleri %20`
+          : "Yol boş, tüm lambalar %20";
       }
       if (now - s.restoreT < 2500 && s.prevName) return `${s.prevName} bitti, lambalar eski seviyeye (%${L}) dönüyor`;
+      if (fxName) return `Lambalar ${fxName} efektinde`;
       return `Lambalar %${Math.round(b * 100)}`;
     }
 
@@ -390,10 +461,30 @@ export function ScenariosView() {
         s.wxCmdDone = false;
       }
 
-      // Genel parlaklık
+      // Senaryonun "olay" anı: seçili efekt bu sırada çalışır.
+      const sel = fxRef.current;
+      const inEvent =
+        s.scen === "kaza"
+          ? s.crashActive || s.clearing
+          : S.wx
+            ? cmdSent || (s.wxStopping && s.wxCmdDone)
+            : s.scen === "normal" || (s.scen === "tasarruf" && cmdSent);
+      const clockOn = inEvent && sel.n != null;
+      // Gece tasarrufunda efekt yalnızca araç yaklaşan direkte görünür (aşağıda).
+      const fxOn = clockOn && s.scen !== "tasarruf";
+      // Efekt değişince (ya da yeniden başlayınca) eğri baştan çalar.
+      const key = clockOn ? `${s.scen}:${sel.n}:${sel.text}` : "";
+      if (key !== s.fxKey) {
+        s.fxKey = key;
+        s.fxT = now;
+      }
+      const fxT = (now - s.fxT) / 1000;
+      const fxAt = (i: number) => fxLevel(sel.n!, fxT, i, N, sel.text);
+
+      // Genel parlaklık (efekt yoksa tüm direkler aynı)
       let b: number;
-      if (s.scen === "kaza" && (s.crashActive || s.clearing)) b = Math.floor((now - s.crashT) / 450) % 2 === 0 ? 1 : 0;
-      else if (S.wx) b = ((cmdSent || (s.wxStopping && s.wxCmdDone) ? S.level! : lv()) / 100);
+      if (s.scen === "kaza" && inEvent) b = 1;
+      else if (S.wx) b = (inEvent ? S.level! : lv()) / 100;
       else b = (cmdSent && S.level !== undefined ? S.level : lv()) / 100;
 
       // Sis / yağmur katmanları
@@ -406,9 +497,11 @@ export function ScenariosView() {
 
       // Direkler
       const rr = s.scen === "tasarruf" && cmdSent ? road!.getBoundingClientRect() : null;
+      const tasarrufFx = rr !== null && clockOn;
       for (let i = 0; i < N; i++) {
         const p = poles[i];
         let pb = b;
+        let sharp = fxOn;
         if (rr && p.root) {
           const r = p.root.getBoundingClientRect();
           const px = r.left + r.width / 2 - rr.left;
@@ -416,13 +509,23 @@ export function ScenariosView() {
             const carX = c.lane === 0 ? c.s + LEN / 2 : w - c.s - LEN / 2;
             return Math.abs(carX - px) < r.width * 1.3;
           });
-          const goal = near ? 1 : S.level! / 100;
+          // poleB = aracın direğe yakınlığı (zarf): hızlı yükselir, yavaş iner.
+          const base = S.level! / 100;
+          const goal = near ? 1 : base;
           s.poleB[i] += (goal - s.poleB[i]) * Math.min(1, dt * (goal > s.poleB[i] ? 4 : 0.5));
-          pb = s.poleB[i];
-        } else s.poleB[i] = pb;
+          if (tasarrufFx) {
+            const presence = (s.poleB[i] - base) / (1 - base);
+            pb = (1 - presence) * base + presence * fxAt(i);
+            sharp = presence > 0.05;
+          } else pb = s.poleB[i];
+        } else {
+          if (fxOn) pb = fxAt(i);
+          s.poleB[i] = pb;
+        }
 
         const d = s.disp[i];
-        s.disp[i] = d + (pb - d) * Math.min(1, dt * (pb > d ? RISE : FALL));
+        const up = pb > d;
+        s.disp[i] = d + (pb - d) * Math.min(1, dt * (sharp ? (up ? RISE_FX : FALL_FX) : up ? RISE : FALL));
         const v = s.disp[i];
         if (p.beam) p.beam.style.opacity = (0.02 + 0.98 * Math.pow(v, 0.85)).toFixed(3);
         if (p.pool) p.pool.style.opacity = (0.9 * Math.pow(v, 0.9)).toFixed(3);
@@ -501,6 +604,13 @@ export function ScenariosView() {
     engineRef.current?.setScen(k);
   }
 
+  function changeFx(value: string) {
+    setFxByScen((m) => ({ ...m, [scen]: value === "" ? null : Number(value) }));
+  }
+
+  // Efektler sayfasıyla aynı: numara yalnızca admin'e (müşteriye bir şey anlatmaz).
+  const fxOption = (f: Effect) => `${technical ? `${f.number} · ` : ""}${f.label}`;
+
   function changeLevel(v: number) {
     const next = Math.min(100, Math.max(10, v));
     levelRef.current = next;
@@ -524,8 +634,58 @@ export function ScenariosView() {
         </div>
 
         <div className="flex flex-col gap-1.5 rounded-xl bg-panel-2 px-4 py-3">
-          <p className="text-sm leading-relaxed text-text">{S.desc(words)}</p>
-          <p className="font-mono text-[12.5px] leading-snug text-muted">{S.cmd(words, level)}</p>
+          <p className="text-sm leading-relaxed text-text">{describe(scen, words)}</p>
+          <p className="font-mono text-[12.5px] leading-snug text-muted">{command(scen, words, level)}</p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="flex flex-wrap items-center gap-3 text-[13px] text-ink-2">
+            <span className="shrink-0">{S.fxLabel}</span>
+            <select
+              value={fxNumber ?? ""}
+              onChange={(e) => changeFx(e.target.value)}
+              className="field !h-9 !w-auto min-w-[220px] cursor-pointer !py-0 text-[13.5px]"
+            >
+              <option value="">Sabit ışık (efekt yok)</option>
+              <optgroup label="Tek lamba · her lamba kendi başına çalar">
+                {SINGLE_LAMP_FX.map((f) => (
+                  <option key={f.number} value={f.number}>
+                    {fxOption(f)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Tüm lambalar · lambalar birlikte çalar">
+                {ALL_LAMP_FX.map((f) => (
+                  <option key={f.number} value={f.number}>
+                    {fxOption(f)}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+            {fx?.needsText ? (
+              <span className="flex items-center gap-2">
+                <span className="text-[13px] text-ink-2">Metin</span>
+                <input
+                  value={morseText}
+                  maxLength={MORSE_TEXT_MAX}
+                  onChange={(e) => setMorseText(normalizeMorseText(e.target.value))}
+                  placeholder="MERHABA"
+                  aria-label="Mors metni"
+                  className="field !h-9 !w-40 font-mono tracking-wider"
+                />
+              </span>
+            ) : null}
+          </label>
+          {fx ? (
+            <p className="text-[12.5px] leading-snug text-muted">
+              {fx.desc}.
+              {fx.allLamps
+                ? technical
+                  ? ` Çok lambalı efekt: gerçekte cihazın kendi lambaları (DALI hattı) arasında çalışır, direkler arasında senkron yoktur; canlandırmada direkler arasında gösteriliyor.`
+                  : " Bu efekt gerçekte aynı direkteki lambalar arasında çalışır; burada anlaşılır olsun diye direkler arasında gösteriliyor."
+                : ""}
+            </p>
+          ) : null}
         </div>
 
         <label className="flex flex-wrap items-center gap-3 text-[13px] text-ink-2">
