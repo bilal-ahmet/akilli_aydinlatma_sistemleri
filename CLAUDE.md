@@ -86,7 +86,13 @@ Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
 `/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
 detay) · `/c/<slug>/harita[?bolge=&direk=]` (direk haritası) · `/c/<slug>/cihazlar` ·
 `/c/<slug>/arizalar[?bolge=]` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
-`/c/<slug>/kullanicilar` (manager/admin).
+`/c/<slug>/senaryolar` · `/c/<slug>/kullanicilar` (manager/admin).
+
+**Senaryolar** (`views/ScenariosView.tsx`): sahada müşteriye anlatım için
+canlandırma (Normal gece, Kaza, Sis, Yağmur, Gece tasarrufu). **Yalnızca
+animasyon, hiçbir komut göndermez.** Tüm rollere açık. Simülasyon tek bir
+`requestAnimationFrame` döngüsünde DOM'a doğrudan yazar; React yalnızca durum
+satırını alır. Komut satırı admin'de teknik (efekt no, dim), müşteride sade.
 
 **Auth altyapısı (kütüphanesiz, Next.js 16 deseni):**
 
