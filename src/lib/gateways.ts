@@ -55,7 +55,7 @@ interface TypeInfo {
 export const GATEWAY_TYPE_INFO: Record<GatewayType, TypeInfo> = {
   thread_br: {
     label: "Thread Border Router",
-    plainLabel: "Lamba ağı geçidi",
+    plainLabel: "Armatür ağı geçidi (Thread)",
     block: "thread",
     fields: [
       {
@@ -85,7 +85,7 @@ export const GATEWAY_TYPE_INFO: Record<GatewayType, TypeInfo> = {
     fields: [
       { key: "operator", label: "Operatör", plainLabel: "Operatör" },
       { key: "network", label: "Şebeke tipi" },
-      { key: "rssi", label: "RSSI", plainLabel: "Sinyal", format: "dbm" },
+      { key: "rssi", label: "RSSI", plainLabel: "Sinyal gücü", format: "dbm" },
       { key: "rsrp", label: "RSRP", format: "dbm" },
       { key: "iccid", label: "SIM ICCID" },
     ],
@@ -96,13 +96,13 @@ export const GATEWAY_TYPE_INFO: Record<GatewayType, TypeInfo> = {
     block: "wifi",
     fields: [
       { key: "ssid", label: "SSID", plainLabel: "Ağ adı" },
-      { key: "rssi", label: "RSSI", plainLabel: "Sinyal", format: "dbm" },
+      { key: "rssi", label: "RSSI", plainLabel: "Sinyal gücü", format: "dbm" },
       { key: "clients", label: "Bağlı istemci", format: "int" },
     ],
   },
   lorawan: {
     label: "LoRaWAN gateway",
-    plainLabel: "Uzun menzilli ağ geçidi",
+    plainLabel: "Uzun menzilli ağ geçidi (LoRaWAN)",
     block: "lorawan",
     fields: [
       { key: "gateway_eui", label: "Gateway EUI" },
@@ -194,7 +194,7 @@ export function summarizeGateway(
     const kind = typeof uplink.kind === "string" ? uplink.kind : null;
     if (kind) push("İnternet bağlantısı", UPLINK_KINDS[kind] ?? kind);
     if (typeof uplink.rssi === "number") {
-      push(technical ? "Uplink RSSI" : "Sinyal", `${uplink.rssi} dBm`);
+      push(technical ? "Uplink RSSI" : "Sinyal gücü", `${uplink.rssi} dBm`);
     }
     if (technical) push("IP", formatValue(uplink.ip));
   }

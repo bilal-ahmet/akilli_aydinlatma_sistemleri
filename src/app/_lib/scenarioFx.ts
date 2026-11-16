@@ -178,7 +178,7 @@ export function fxLevel(n: number, t: number, i: number, count: number, text = "
     }
     case 27: // Doldur
       return i < Math.floor(t / 0.3) % (count + 4) ? 1 : LOW;
-    case 28: // Rastgele lamba
+    case 28: // Rastgele armatür
       return i === Math.floor(hash(55, Math.floor(t / 0.45)) * count) ? 1 : LOW;
     default:
       return 1;

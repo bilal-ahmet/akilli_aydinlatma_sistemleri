@@ -43,14 +43,14 @@ type Entry = Omit<DeviceErrorInfo, "raw" | "known"> & { plain: Plain };
  * kullanıcının yapabileceği bir şey yok, destek ekibine iletilmeli.
  */
 const PLAIN_PROTOCOL: Plain = {
-  title: "Cihaz komutu işleyemedi",
-  cause: "Cihaz, gönderilen komutu anlayamadı.",
+  title: "Komut işlenemedi",
+  cause: "Cihaz, gönderilen komutun biçimini doğrulayamadı.",
 };
 
 /** Katalogda karşılığı olmayan hata — müşteriye ham metin yerine bu. */
 const PLAIN_UNKNOWN: Plain = {
-  title: "Cihaz komutu uygulayamadı",
-  cause: "Cihaz komutu yerine getiremediğini bildirdi.",
+  title: "Komut uygulanamadı",
+  cause: "Cihaz komutu uygulayamadığını bildirdi.",
 };
 
 /** Birebir eşleşen metinler. */
@@ -78,8 +78,8 @@ const EXACT: Record<string, Entry> = {
     title: "Bilinmeyen komut",
     cause: "Cihaz bu `action` değerini tanımıyor.",
     plain: {
-      title: "Cihaz bu komutu desteklemiyor",
-      cause: "Cihazın yazılımı bu komutu tanımıyor.",
+      title: "Komut desteklenmiyor",
+      cause: "Cihazın yazılım sürümü bu komutu desteklemiyor.",
     },
   },
   "bu channel dali hattinda bulunamadi": {
@@ -87,8 +87,8 @@ const EXACT: Record<string, Entry> = {
     title: "Kanal DALI hattında yok",
     cause: "Komutun hedeflediği DALI adresinde bir sürücü bulunamadı.",
     plain: {
-      title: "Lamba yanıt vermiyor",
-      cause: "Komut gönderilen lamba cihazda bulunamadı.",
+      title: "Armatür yanıt vermiyor",
+      cause: "Komut gönderilen armatür cihazda tanımlı değil.",
     },
   },
   "chase efekti tum lambalari surer, channel gondermeyin": {
@@ -96,19 +96,19 @@ const EXACT: Record<string, Entry> = {
     title: "Bu efekt tek lambaya verilemez",
     cause: "Çok lambalı efekte kanal gönderildi; efekt tüm hattı birlikte sürer.",
     plain: {
-      title: "Bu efekt tek lambaya verilemez",
-      cause: "Bu efekt cihazdaki tüm lambalarla birlikte çalışır.",
+      title: "Bu efekt tek armatüre uygulanamaz",
+      cause: "Bu efekt cihazdaki tüm armatürlerde birlikte çalışır.",
     },
   },
   // Bakım komutları (firmware 1.0.9+). Cihaz yeni açıldığında servisler
   // birkaç saniye hazır olmaz; geçici, tekrar denenebilir.
   "commissioning servisi henuz hazir degil": {
     code: "commission-not-ready",
-    title: "Lamba taraması başlatılamadı",
+    title: "Armatür taraması başlatılamadı",
     cause: "Cihazın DALI commissioning servisi henüz hazır değil (cihaz yeni açılmış olabilir).",
     plain: {
-      title: "Lamba taraması başlatılamadı",
-      cause: "Cihaz henüz hazır değil; yeni açılmış olabilir.",
+      title: "Armatür taraması başlatılamadı",
+      cause: "Cihaz henüz hazır değil; yeniden başlatılmış olabilir.",
     },
   },
   "ota servisi henuz hazir degil": {
@@ -117,7 +117,7 @@ const EXACT: Record<string, Entry> = {
     cause: "Cihazın OTA servisi henüz hazır değil; cihaz ağa yeni bağlanıyor.",
     plain: {
       title: "Güncelleme kontrolü başlatılamadı",
-      cause: "Cihaz ağa yeni bağlanıyor.",
+      cause: "Cihazın ağ bağlantısı henüz tamamlanmadı.",
     },
   },
   "efekt baslatilamadi (bos slot yok veya bellek yetersiz)": {
@@ -126,7 +126,7 @@ const EXACT: Record<string, Entry> = {
     cause: "Cihazda boş efekt slotu kalmadı (aynı anda en fazla 4 kanal).",
     plain: {
       title: "Efekt başlatılamadı",
-      cause: "Bir cihazda aynı anda en fazla 4 lambada efekt çalışabilir.",
+      cause: "Bir cihazda aynı anda en fazla 4 armatürde efekt çalışabilir.",
     },
   },
   // Binary protokol v1 ile gelen firmware metinleri (COMMAND_RESULT -13…-17).
@@ -136,7 +136,7 @@ const EXACT: Record<string, Entry> = {
     cause: "Cihazın D4i rapor servisi henüz başlamadı (cihaz yeni açılmış olabilir).",
     plain: {
       title: "Cihaz henüz hazır değil",
-      cause: "Cihaz yeni açılmış olabilir; biraz sonra tekrar deneyin.",
+      cause: "Cihaz yeniden başlatılmış olabilir; kısa süre sonra yeniden deneyin.",
     },
   },
   "cihaz mesgul, komut kuyrugu dolu": {
@@ -144,8 +144,8 @@ const EXACT: Record<string, Entry> = {
     title: "Komut kuyruğu dolu",
     cause: "Cihaz kısa sürede çok sayıda komut aldı; kuyruğu dolduğu için bu komutu almadı.",
     plain: {
-      title: "Cihaz meşgul",
-      cause: "Cihaz aynı anda çok fazla komut aldı; biraz sonra tekrar deneyin.",
+      title: "Cihaz meşgul: komut kuyruğu dolu",
+      cause: "Cihaz kısa sürede çok sayıda komut aldı; kısa süre sonra yeniden deneyin.",
     },
   },
   "crc hatali, paket islenmedi": {
@@ -189,7 +189,7 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => Entry }> = [
       cause: `\`number\` (0-${m[1]}) eksik ya da \`channel\` aralık dışı (0-63).`,
       plain: {
         title: "Efekt başlatılamadı",
-        cause: "Cihaz bu efekti desteklemiyor olabilir.",
+        cause: "Efekt, cihazın yazılım sürümünde desteklenmiyor olabilir.",
       },
     }),
   },
@@ -209,8 +209,8 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => Entry }> = [
       title: "Efekt için yeterli lamba yok",
       cause: `Efekt en az ${m[1]} lamba istiyor, hatta ${m[2]} lamba var.`,
       plain: {
-        title: "Efekt için yeterli lamba yok",
-        cause: `Bu efekt en az ${m[1]} lamba ister, cihazda ${m[2]} lamba var.`,
+        title: "Efekt için yeterli armatür yok",
+        cause: `Bu efekt en az ${m[1]} armatür gerektirir, cihazda ${m[2]} armatür var.`,
       },
     }),
   },

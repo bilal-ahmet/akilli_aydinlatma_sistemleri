@@ -27,7 +27,7 @@ export function poleState(
 
 /** Durumun okunur adı (müşteri ve admin için aynı; teknik terim yok). */
 export const POLE_STATE_LABELS: Record<PoleState, string> = {
-  no_device: "Cihaz takılı değil",
+  no_device: "Cihaz atanmamış",
   offline: "Bağlantı yok",
   fault: "Arıza",
   on: "Yanıyor",

@@ -74,9 +74,9 @@ export function deviceHealth(
   opts: { faults?: OpenFault[]; measure?: DeviceMeasure; now: number | null },
 ): DeviceHealth {
   const faultyLamps = new Set((opts.faults ?? []).map((f) => f.channel)).size;
-  if (faultyLamps > 0) return { label: `Arıza · ${faultyLamps} lamba`, tone: "bad" };
+  if (faultyLamps > 0) return { label: `Arıza · ${faultyLamps} armatür`, tone: "bad" };
   if (d.lastError) return { label: "Komut uygulanamadı", tone: "bad" };
-  if (!d.lastSeen) return { label: "Hiç bağlanmadı", tone: "idle" };
+  if (!d.lastSeen) return { label: "Henüz bağlanmadı", tone: "idle" };
   // Saat henüz yoksa (ilk render) yargıya varma.
   if (opts.now === null) return { label: "…", tone: "idle" };
   if (!isOnline(d, opts.now)) return { label: "Bağlantı yok", tone: "bad" };
@@ -164,7 +164,7 @@ export function zoneMeta(
     zone.district,
     `${counts.poles ?? zone.poleCount} direk`,
     `${counts.devices} cihaz`,
-    counts.lamps !== undefined ? `${counts.lamps} lamba` : null,
+    counts.lamps !== undefined ? `${counts.lamps} armatür` : null,
   ];
   return parts.filter(Boolean).join(" · ");
 }

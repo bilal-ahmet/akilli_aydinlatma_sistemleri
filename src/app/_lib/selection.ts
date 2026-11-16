@@ -126,7 +126,7 @@ export function countSelection(sel: Selection): SelectionCount {
 export function selectionText({ devices, lamps }: SelectionCount): string {
   const parts: string[] = [];
   if (devices) parts.push(`${devices} cihaz`);
-  if (lamps) parts.push(`${lamps} lamba`);
+  if (lamps) parts.push(`${lamps} armatür`);
   return parts.join(" ve ");
 }
 
@@ -180,7 +180,7 @@ export function runsGroupEffect(d: DeviceView): boolean {
 
 /** Lambanın görünen adı: verilmiş isim, yoksa "Lamba <kanal>". */
 export function lampName(l: LampView): string {
-  return l.name?.trim() || `Lamba ${l.channel}`;
+  return l.name?.trim() || `Armatür ${l.channel}`;
 }
 
 // ── Komut planı ───────────────────────────────────────────────

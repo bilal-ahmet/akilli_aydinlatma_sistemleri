@@ -46,7 +46,7 @@ export function faultKeyNote(f: FaultKey, technical: boolean): string | undefine
 const GENERAL_NOTE =
   "Sürücünün kendi genel arıza sayacı — yandaki arızaların toplamı değildir.";
 const GENERAL_NOTE_PLAIN =
-  "Güç ünitesinin kendi tuttuğu genel arıza sayısı — yandaki arızaların toplamı değildir.";
+  "Sürücü ünitesinin kendi tuttuğu genel arıza sayısı — yandaki arızaların toplamı değildir.";
 
 const GENERAL = {
   key: "general_failure",
@@ -54,14 +54,14 @@ const GENERAL = {
   note: GENERAL_NOTE,
   plainNote: GENERAL_NOTE_PLAIN,
 };
-const DERATING = { key: "thermal_derating", label: "Termal kısma", plainLabel: "Aşırı ısınma (ışık kısıldı)" };
-const SHUTDOWN = { key: "thermal_shutdown", label: "Termal kapanma", plainLabel: "Aşırı ısınma (kapandı)" };
+const DERATING = { key: "thermal_derating", label: "Termal kısma", plainLabel: "Aşırı ısınma: güç azaltıldı" };
+const SHUTDOWN = { key: "thermal_shutdown", label: "Termal kapanma", plainLabel: "Aşırı ısınma: armatür kapandı" };
 
 export const DRIVER_FAULTS: FaultKey[] = [
   GENERAL,
   { key: "undervoltage_failure", label: "Düşük gerilim", plainLabel: "Şebeke gerilimi düşük" },
   { key: "overvoltage_failure", label: "Aşırı gerilim", plainLabel: "Şebeke gerilimi yüksek" },
-  { key: "power_limitation", label: "Güç sınırlama", plainLabel: "Işık güç sınırı nedeniyle kısıldı" },
+  { key: "power_limitation", label: "Güç sınırlama", plainLabel: "Güç sınırlaması: ışık kısıldı" },
   DERATING,
   SHUTDOWN,
 ];
@@ -69,7 +69,7 @@ export const DRIVER_FAULTS: FaultKey[] = [
 export const LED_FAULTS: FaultKey[] = [
   GENERAL,
   { key: "short_circuit", label: "Kısa devre", plainLabel: "Kısa devre" },
-  { key: "open_circuit", label: "Açık devre", plainLabel: "Bağlantı kopuk" },
+  { key: "open_circuit", label: "Açık devre", plainLabel: "Açık devre (bağlantı kopuk)" },
   DERATING,
   SHUTDOWN,
 ];
@@ -83,19 +83,19 @@ const LABELS: Record<string, string> = {
   ...Object.fromEntries(LED_FAULTS.map((f) => [`led.${f.key}`, `LED · ${f.label}`])),
 };
 
-/** Müşteriye sade başlıklar: "Sürücü" yerine "Güç ünitesi", termal yerine ısınma. */
+/** Müşteri başlıkları (ara seviye): "Sürücü ünitesi", "Armatür", termal yerine ısınma. */
 const PLAIN_LABELS: Record<string, string> = {
   offline: "Bağlantı yok",
-  lamp_failure: "Lamba arızası",
-  gear_failure: "Güç ünitesi arızası",
+  lamp_failure: "Armatür arızası",
+  gear_failure: "Sürücü ünitesi arızası",
   ...Object.fromEntries(
-    DRIVER_FAULTS.map((f) => [`driver.${f.key}`, `Güç ünitesi · ${f.plainLabel ?? f.label}`]),
+    DRIVER_FAULTS.map((f) => [`driver.${f.key}`, `Sürücü ünitesi · ${f.plainLabel ?? f.label}`]),
   ),
-  "led.general_failure": "LED arızası",
-  "led.short_circuit": "LED arızası (kısa devre)",
-  "led.open_circuit": "LED arızası (bağlantı kopuk)",
-  "led.thermal_derating": "LED aşırı ısındı (ışık kısıldı)",
-  "led.thermal_shutdown": "LED aşırı ısındı (kapandı)",
+  "led.general_failure": "LED modülü arızası",
+  "led.short_circuit": "LED modülü · Kısa devre",
+  "led.open_circuit": "LED modülü · Açık devre (bağlantı kopuk)",
+  "led.thermal_derating": "LED modülü · Aşırı ısınma: güç azaltıldı",
+  "led.thermal_shutdown": "LED modülü · Aşırı ısınma: kapandı",
 };
 
 /**
@@ -115,9 +115,9 @@ export type FaultCategory = "connection" | "lamp" | "driver" | "led" | "command"
 
 const CATEGORY_LABELS: Record<FaultCategory, { technical: string; plain: string }> = {
   connection: { technical: "DALI bağlantısı", plain: "Bağlantı" },
-  lamp: { technical: "Lamba", plain: "Lamba" },
-  driver: { technical: "Sürücü", plain: "Güç ünitesi" },
-  led: { technical: "LED modülü", plain: "LED" },
+  lamp: { technical: "Lamba", plain: "Armatür" },
+  driver: { technical: "Sürücü", plain: "Sürücü ünitesi" },
+  led: { technical: "LED modülü", plain: "LED modülü" },
   command: { technical: "Komut", plain: "Komut" },
 };
 
@@ -148,63 +148,64 @@ interface FaultText {
   what: string;
 }
 
-/** Kod → durum açıklaması. Teknik metin admin'e; `plain` müşteriye (kısa, günlük dil). */
+/** Kod → durum açıklaması. Teknik metin admin'e; `plain` müşteriye (kısa, durum bildiren,
+ * gündelik ifadesiz; DALI/D4i gibi protokol terimleri yok). */
 const DESCRIPTIONS: Record<string, { technical: FaultText; plain: FaultText }> = {
   offline: {
     technical: { what: "ESP bu DALI adresindeki sürücüden yanıt alamıyor (online: false)." },
-    plain: { what: "Lamba cihaza bağlı görünmüyor." },
+    plain: { what: "Armatürden yanıt alınamıyor." },
   },
   lamp_failure: {
     technical: { what: "Sürücü lamba arızası bildiriyor (lamp_failure / durum baytı 0x02)." },
-    plain: { what: "Lamba yanmıyor." },
+    plain: { what: "Armatür ışık vermiyor." },
   },
   gear_failure: {
     technical: { what: "DALI durum baytında sürücü (control gear) arıza biti aktif (0x01)." },
-    plain: { what: "Lambanın güç ünitesinde sorun var." },
+    plain: { what: "Armatürün sürücü ünitesinde arıza algılandı." },
   },
   "driver.general_failure": {
     technical: { what: "Sürücünün D4i genel arıza bayrağı aktif." },
-    plain: { what: "Lambanın güç ünitesi bir sorun bildirdi." },
+    plain: { what: "Sürücü ünitesi arıza bildirdi." },
   },
   "driver.undervoltage_failure": {
     technical: { what: "Sürücü girişindeki şebeke gerilimi alt sınırın altında." },
-    plain: { what: "Lambaya gelen elektrik düşük." },
+    plain: { what: "Armatüre gelen şebeke gerilimi düşük." },
   },
   "driver.overvoltage_failure": {
     technical: { what: "Sürücü girişindeki şebeke gerilimi üst sınırın üstünde." },
-    plain: { what: "Lambaya gelen elektrik yüksek." },
+    plain: { what: "Armatüre gelen şebeke gerilimi yüksek." },
   },
   "driver.power_limitation": {
     technical: { what: "Sürücü çıkış gücünü sınırlıyor; ışık istenen seviyenin altında olabilir." },
-    plain: { what: "Lamba kendini korumak için ışığını azalttı." },
+    plain: { what: "Güç sınırlaması devrede; ışık seviyesi istenenin altında olabilir." },
   },
   "driver.thermal_derating": {
     technical: { what: "Sürücü sıcaklık sınırına yaklaştığı için çıkışı kısıyor." },
-    plain: { what: "Lamba ısındığı için ışığını azalttı." },
+    plain: { what: "Aşırı ısınma nedeniyle armatürün gücü azaltıldı." },
   },
   "driver.thermal_shutdown": {
     technical: { what: "Sürücü aşırı sıcaklık nedeniyle çıkışı kapattı." },
-    plain: { what: "Lamba aşırı ısındığı için kapandı." },
+    plain: { what: "Aşırı ısınma nedeniyle armatür kapandı." },
   },
   "led.general_failure": {
     technical: { what: "LED modülünün D4i genel arıza bayrağı aktif." },
-    plain: { what: "Lamba bir sorun bildirdi." },
+    plain: { what: "LED modülü arıza bildirdi." },
   },
   "led.short_circuit": {
     technical: { what: "LED çıkışında kısa devre algılandı." },
-    plain: { what: "Lambada kısa devre var." },
+    plain: { what: "Armatürde kısa devre algılandı." },
   },
   "led.open_circuit": {
     technical: { what: "LED çıkışında açık devre: yük bağlı değil ya da kablo kopuk." },
-    plain: { what: "Lambanın kablo bağlantısı kopuk." },
+    plain: { what: "Armatürde açık devre: LED bağlantısı kopuk." },
   },
   "led.thermal_derating": {
     technical: { what: "LED modülü sıcaklık sınırına yaklaştığı için akım kısılıyor." },
-    plain: { what: "Lamba ısındığı için ışığını azalttı." },
+    plain: { what: "Aşırı ısınma nedeniyle armatürün gücü azaltıldı." },
   },
   "led.thermal_shutdown": {
     technical: { what: "LED modülü aşırı sıcaklık nedeniyle kapatıldı." },
-    plain: { what: "Lamba aşırı ısındığı için kapandı." },
+    plain: { what: "Aşırı ısınma nedeniyle armatür kapandı." },
   },
 };
 

@@ -490,7 +490,7 @@ export const scheduleTargetSchema = z.union([
         .default([]),
     })
     .refine((t) => t.zones.length + t.devices.length + t.lamps.length > 0, {
-      message: "En az bir bölge, cihaz ya da lamba seçilmeli",
+      message: "En az bir bölge, cihaz ya da armatür seçilmeli",
     })
     .refine((t) => t.zones.length + t.devices.length + t.lamps.length <= SCHEDULE_TARGET_MAX, {
       message: `En fazla ${SCHEDULE_TARGET_MAX} hedef seçilebilir`,
