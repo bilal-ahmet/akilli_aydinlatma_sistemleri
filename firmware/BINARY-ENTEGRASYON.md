@@ -29,8 +29,13 @@ ESP32 (yeni firmware) ──binary──▶ Meven:<MAC>/bin ──▶ backend (+
 | Topic | Biçim |
 |---|---|
 | `Meven:<MAC>/cmd` (bakım dahil) | Cihaz binary-yetenekliyse binary, değilse JSON |
-| `Meven:<slug>/cmd` (bölge, müşteri "Tüm Sistem"i) | Bölgenin kayıtlı cihazlarının **hepsi** binary-yetenekliyse binary, değilse JSON |
-| `Meven:all/cmd` | Her zaman JSON (kayıtsız cihazlar da dinliyor) |
+| `Meven:<slug>/cmd` (bölge, müşteri "Tüm Sistem"i) | Bölgenin kayıtlı cihazlarından en az biri binary-yetenekli ve hiçbiri JSON gönderen eski firmware değilse binary, değilse JSON |
+| `Meven:all/cmd` | Aynı kural, bütün kayıtlı cihazlar üzerinden |
+
+Hiç bağlanmamış ya da sessiz kayıtlar toplu kararı etkilemez (16.11.2026
+düzeltmesi: eskiden tek bir ölü kayıt bölgeyi JSON'a çekiyordu, yeni firmware
+JSON toplu komutu çözemiyordu). Karar bilgisi açılışta veritabanından geri
+yüklenir; deploy sonrası cihazın ilk raporu beklenmez.
 
 - **Binary-yetenekli** (`binCommandCapable`): geçerli `/bin` paketi görülmüş
   ve ondan sonra JSON telemetri/health gelmemiş. Süre sınırı yok (cihaz

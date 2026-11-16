@@ -239,13 +239,22 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   - Tek cihaz (`Meven:<MAC>/cmd`, bakım dahil): cihaz binary-yetenekliyse
     binary (`binCommandCapable`: geçerli `/bin` görülmüş VE ondan sonra JSON
     telemetri/health gelmemiş — süre sınırı yok, seyrek rapor veren cihaz da
-    binary alır; OTA geri dönüşü JSON'a düşürür; bellek içi, restart sonrası
-    ilk `/bin`'e kadar JSON).
-  - Bölge ve müşteri "Tüm Sistem"i: bölgenin **kayıtlı** cihazlarının hepsi
-    binary-yetenekliyse binary (`tenancy.zoneMacs`), biri bile değilse JSON.
-    DB'de kaydı olmayan ama o slug'la flaşlanmış eski cihaz binary bölge
-    komutunu anlamaz (`gecersiz json`).
-  - `Meven:all/cmd` her zaman JSON (kayıtsız cihazlar da dinliyor).
+    binary alır; OTA geri dönüşü JSON'a düşürür; bellek içi, restart'ta
+    DB'den tohumlanır).
+  - Toplu topic'ler (bölge, müşteri "Tüm Sistem"i bölge başına, `Meven:all/cmd`
+    bütün kayıtlı cihazlar üzerinden): dinleyen **kayıtlı** cihazlardan en az
+    biri binary-yetenekli VE hiçbiri JSON'cu (son uplink'i JSON telemetri/
+    health, `knownJsonDevice`) değilse binary; aksi halde JSON
+    (`groupTakesBinary`). **Hiç bağlanmamış / sessiz kayıt kararı etkilemez** —
+    eskiden "hepsi binary-yetenekli" şartı vardı, tek bir ölü kayıt bölgeyi
+    JSON'a çekiyordu ve yeni firmware JSON toplu komutu çözemiyordu.
+    Gerçekten karışık bölgede (canlı eski firmware + yeni) JSON gider.
+    Kayıtsız ama o slug'la flaşlanmış eski cihaz binary komutu anlamaz.
+  - **Açılışta DB'den tohumlanır** (`seedBinStateFromDb`, instrumentation):
+    binary işareti = `devices.health`'te `health_interval_s` anahtarı (bizim
+    çeviricimiz her zaman yazar) ya da bildirilmiş aralık; JSON işareti =
+    anahtarsız health + son 24 saatte görülmüş. Yoksa her deploy'dan sonra
+    cihazların ilk raporuna (15 dk) kadar komutlar JSON giderdi.
   - Kapatma anahtarı: `MQTT_BINARY_COMMANDS=off` → her şey JSON.
 - **Kısa komut id'si:** binary'de `COMMAND_ID` u16'dır, UUID kabloya çıkmaz.
   Backend genelinde TEK dönen sayaç (`binproto/shortIds.ts`, rastgele başlangıç,
@@ -1260,7 +1269,7 @@ MQTT_JSON_MIRROR=
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `routeUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
-19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: dinleyenlerin hepsi binary gönderiyorsa binary (u16 kısa id), değilse JSON; `Meven:all/cmd` her zaman JSON. Bkz. "Binary protokol v1".
+19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: toplu topic'te (bölge, `all`) kayıtlı dinleyenlerden en az biri binary gönderiyor ve hiçbiri JSON'cu değilse binary (u16 kısa id), değilse JSON; sessiz kayıtlar kararı etkilemez. Bkz. "Binary protokol v1".
 
 ---
 
