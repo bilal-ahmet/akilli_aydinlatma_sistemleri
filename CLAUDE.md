@@ -62,21 +62,28 @@ aittir** (`zones.customer_id`); cihazın müşterisi bölgesinden türetilir.
 Arayüzdeki adlar (`ROLE_LABELS`): admin **"Sistem yöneticisi"**, manager
 **"Yönetici"**, viewer **"İzleyici"**.
 
-**Dil: admin teknik, müşteri sade.** Admin her şeyi teknik terimlerle görür
-(kanal/ch3, DALI, MAC, D4i, sürücü, ham firmware hata metni, Teknik detay).
-Müşteri kullanıcıları (manager/viewer) sade dil görür: "Lamba 3 / Lamba
-numarası", "Cihaz kodu", "Ölçümler", "Güç ünitesi"; Teknik detay ve arc seviyeleri gizli.
+**Dil: admin teknik, müşteri endüstriyel (ara seviye).** Admin her şeyi teknik
+terimlerle görür (kanal/ch3, DALI, MAC, D4i, sürücü, ham firmware hata metni,
+Teknik detay). Müşteri kullanıcıları (manager/viewer) iş hayatının endüstriyel
+dilini görür — mühendislik kadar teknik değil, günlük de değil: "Armatür 3 /
+Armatür numarası", "Cihaz kodu", "Ölçümler", "Sürücü ünitesi", "Şebeke
+gerilimi", "Enerjilendirme sayısı", "Açık devre (bağlantı kopuk)", "Aşırı
+ısınma: güç azaltıldı", "Cihaz meşgul: komut kuyruğu dolu". Kalıp: tanıdık kısa
+başlık + gerekiyorsa endüstriyel ayrıntı. "Lamba" kelimesi UI'da **armatür**
+olarak geçer (tüm rollerde; admin'in teknik kataloglarında DALI terimi "lamba
+arızası" kalır). Teknik detay ve arc seviyeleri müşteriden gizli.
 İstemcide `useTechnical()` (`_lib/panel.tsx`, `PanelInfo.technical = role === "admin"`),
 kataloglarda `describeDeviceError(raw, { technical })` ve `faultLabel(code, technical)`
 (teknik metin varsayılan; sunucu ve mobil kontratı değişmez), API hata
 metinlerinde `msg(user, teknik, sade)` (`lib/api/respond.ts`). Yeni metin eklerken
 müşteriye görünecekse bu ayrımı koru.
 
-Müşteri metni ölçütü: belediye çalışanı açıklama istemeden anlamalı. İç kurallar
+Müşteri metni ölçütü: belediyenin teknik/işletme personeli açıklama istemeden
+anlamalı; gündelik ifade ("hiç", "kutu", "takılı lamba") kullanılmaz. İç kurallar
 (0-63 aralığı, bağlantı numarası, toplu komut/topic), yer tutucular (`<numara>`)
 ve efekt sıra numaraları müşteriye gösterilmez. Ölçümler sekmesinde müşteri
 önce sade özeti (seviye, güç, enerji, sıcaklık, çalışma süresi, Durum) görür;
-güç ünitesi/LED ayrıntıları ve arıza sayaçları kapalı "Ayrıntılar"dadır.
+sürücü ünitesi/LED ayrıntıları ve arıza sayaçları kapalı "Ayrıntılar"dadır.
 
 **Sayfalar:** `/login` · `/` (role göre yönlendirir) · `/admin` (müşteri kartları,
 global acil komut) · `/admin/customers/<slug>` (bilgiler, pasifleştirme,
