@@ -239,7 +239,7 @@ export function PoleDialog({
             Cihaz <span className="font-normal text-muted">(isteğe bağlı)</span>
           </label>
           <select id="pl-device" className="field" value={mac} onChange={(e) => setDeviceMac(e.target.value)}>
-            <option value="">Cihaz atanmamış</option>
+            <option value="">Cihaz atanmamış / cihaz eşleşmesi yok</option>
             {candidates.map((d) => (
               <option key={d.deviceId} value={d.deviceId}>
                 {deviceName(d, technical)}

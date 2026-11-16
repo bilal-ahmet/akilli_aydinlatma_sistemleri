@@ -133,7 +133,7 @@ function PolePanel({
             </>
           ) : (
             <p className="text-sm text-muted">
-              Bu direğe cihaz atanmamış.
+              Bu direğe cihaz atanmamış / cihaz eşleşmesi yok.
               {canWrite ? (
                 <>
                   {" "}

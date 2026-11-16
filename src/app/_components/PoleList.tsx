@@ -121,7 +121,7 @@ export function PoleList({ zone }: { zone: Zone }) {
                         </span>
                       </button>
                     ) : (
-                      <span className="text-muted">Cihaz atanmamış</span>
+                      <span className="text-muted">Cihaz atanmamış / cihaz eşleşmesi yok</span>
                     )}
                   </span>
                   <span className="hidden text-[13px] sm:block">
