@@ -239,7 +239,7 @@ export function ScheduleDialog({
       onClose={pickerOpen ? () => {} : onClose}
       size="lg"
       title={schedule ? "Zamanlamayı düzenle" : "Yeni zamanlama"}
-      subtitle="Seçtiğiniz saatte lambalar kendiliğinden açılır, kapanır ya da efekt başlar."
+      subtitle="Seçtiğiniz saatte armatürler kendiliğinden açılır, kapanır ya da efekt başlar."
       onSubmit={handleSubmit}
       footer={
         <>
@@ -302,7 +302,7 @@ export function ScheduleDialog({
           {action === "dim" ? (
             <div className="mt-3">
               <BrightnessSlider value={value} onChange={setValue} label="Işık şiddeti" />
-              {value === 0 ? <p className="mt-1.5 text-[12.5px] text-muted">%0 lambaları kapatır.</p> : null}
+              {value === 0 ? <p className="mt-1.5 text-[12.5px] text-muted">%0 armatürleri kapatır.</p> : null}
             </div>
           ) : null}
 
@@ -314,18 +314,18 @@ export function ScheduleDialog({
                 aria-label="Efekt"
                 className="field cursor-pointer"
               >
-                <optgroup label="Tek lamba · her lamba kendi başına çalar">
+                <optgroup label="Tek armatür · her armatür kendi başına çalar">
                   {SINGLE_LAMP_FX.map((f) => (
                     <option key={f.number} value={f.number}>
                       {f.label}
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Tüm lambalar · cihazdaki lambalar birlikte çalar">
+                <optgroup label="Tüm armatürler · cihazdaki armatürler birlikte çalar">
                   {ALL_LAMP_FX.map((f) => (
                     <option key={f.number} value={f.number}>
                       {f.label}
-                      {f.minLamps ? ` (en az ${f.minLamps} lamba)` : ""}
+                      {f.minLamps ? ` (en az ${f.minLamps} armatür)` : ""}
                     </option>
                   ))}
                 </optgroup>
@@ -352,7 +352,7 @@ export function ScheduleDialog({
 
           {action === "stop_fx" ? (
             <p className="mt-2.5 text-[12.5px] leading-snug text-muted">
-              Çalışan efekt durur, lambalar son şiddetine döner. Efekt çalışmayan lambalara dokunulmaz.
+              Çalışan efekt durur, armatürler son şiddetine döner. Efekt çalışmayan armatürlere dokunulmaz.
             </p>
           ) : null}
         </section>
@@ -364,7 +364,7 @@ export function ScheduleDialog({
             <span className="text-[13px] text-muted">
               {emptyTarget
                 ? plan.skipped.length
-                  ? `Seçili cihazların lambası bu efekt için yetmiyor (en az ${fx?.minLamps}).`
+                  ? `Seçili cihazların armatürü bu efekt için yetmiyor (en az ${fx?.minLamps}).`
                   : "Seçim yok"
                 : planText(plan, zones, allChosen)}
             </span>
@@ -384,7 +384,7 @@ export function ScheduleDialog({
           )}
           {!emptyTarget && plan.skipped.length > 0 ? (
             <p className="mt-2 text-[12.5px] text-warn">
-              {plan.skipped.length} cihaz atlanacak: bu efekt en az {fx?.minLamps} lamba ister.
+              {plan.skipped.length} cihaz atlanacak: bu efekt en az {fx?.minLamps} armatür ister.
             </p>
           ) : null}
         </section>

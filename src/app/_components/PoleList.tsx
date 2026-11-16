@@ -117,11 +117,11 @@ export function PoleList({ zone }: { zone: Zone }) {
                       >
                         {deviceName(device, technical)}
                         <span className="text-muted">
-                          {device.lamps.length > 0 ? ` · ${lit}/${device.lamps.length} lamba yanıyor` : ""}
+                          {device.lamps.length > 0 ? ` · ${lit}/${device.lamps.length} armatür yanıyor` : ""}
                         </span>
                       </button>
                     ) : (
-                      <span className="text-muted">Cihaz takılı değil</span>
+                      <span className="text-muted">Cihaz atanmamış</span>
                     )}
                   </span>
                   <span className="hidden text-[13px] sm:block">

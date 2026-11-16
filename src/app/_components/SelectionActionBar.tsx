@@ -99,14 +99,14 @@ export function SelectionActionBar({
     const p = planTargets(selection, devices, zones, fx);
     setPickerOpen(false);
     if (isEmptyPlan(p)) {
-      say(`Seçili cihazların hiçbirinde ${fx?.label ?? "bu efekt"} için yeterli lamba yok.`);
+      say(`Seçili cihazların hiçbirinde ${fx?.label ?? "bu efekt"} için yeterli armatür yok.`);
       return;
     }
     applyEffect(p, number, text);
     const skipped = p.skipped.length
-      ? ` ${p.skipped.length} cihaz atlandı (en az ${fx?.minLamps} lamba gerekir).`
+      ? ` ${p.skipped.length} cihaz atlandı (en az ${fx?.minLamps} armatür gerekir).`
       : "";
-    const upgraded = fx?.allLamps && count.lamps > 0 ? " Bu efekt cihazın tüm lambalarında çalışır." : "";
+    const upgraded = fx?.allLamps && count.lamps > 0 ? " Bu efekt cihazın tüm armatürlerinde çalışır." : "";
     say(`${fx?.label ?? "Efekt"} başlatıldı.${upgraded}${skipped}`);
   }
 
@@ -114,7 +114,7 @@ export function SelectionActionBar({
     setPickerOpen(false);
     if (isEmptyPlan(stopPlan)) return;
     stopEffect(stopPlan);
-    say("Efekt durduruldu; lambalar son şiddetine döndü.");
+    say("Efekt durduruldu; armatürler son şiddetine döndü.");
   }
 
   // Aynı seçim için ileri bir saate zamanlama (Aç varsayılan, formda değişir).

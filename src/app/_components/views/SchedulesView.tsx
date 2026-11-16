@@ -42,7 +42,7 @@ function targetText(s: ScheduleView, zones: Zone[], devices: DeviceView[]): stri
   const devCount = t.devices.length;
   const lampCount = t.lamps.length;
   if (devCount) parts.push(`${devCount} cihaz`);
-  if (lampCount) parts.push(`${lampCount} lamba`);
+  if (lampCount) parts.push(`${lampCount} armatür`);
   // Tek cihaz hedefinde cihaz adı daha anlaşılır.
   if (!names.length && devCount === 1 && !lampCount) {
     const d = devices.find((x) => x.deviceId === t.devices[0]);
@@ -256,7 +256,7 @@ export function SchedulesView() {
         title="Zamanlamalar"
         subtitle={
           schedules.length === 0
-            ? "Lambaları seçtiğiniz saatte kendiliğinden açın, kapatın ya da efekt başlatın."
+            ? "Armatürleri seçtiğiniz saatte kendiliğinden açın, kapatın ya da efekt başlatın."
             : `${schedules.length} zamanlama · ${enabledCount} etkin`
         }
         actions={
@@ -282,7 +282,7 @@ export function SchedulesView() {
         <EmptyBox>
           {zones.length === 0
             ? "Zamanlama kurmak için önce bir bölge oluşturun."
-            : "Henüz zamanlama yok. Örneğin her gün gün batımında açılıp gece yarısı kısılmasını ayarlayabilirsiniz."}
+            : "Tanımlı zamanlama yok. Örnek: her gün gün batımında açılış, gece yarısı %50 kısma."}
         </EmptyBox>
       ) : (
         <>

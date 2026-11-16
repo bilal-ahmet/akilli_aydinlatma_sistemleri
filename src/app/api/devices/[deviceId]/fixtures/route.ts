@@ -23,7 +23,7 @@ export async function GET(
       .orderBy(asc(schema.fixtures.channel));
     return ok(rows.map(toFixture));
   } catch (err) {
-    return fail("Lambalar okunamadı", 500, String(err));
+    return fail("Armatürler okunamadı", 500, String(err));
   }
 }
 
@@ -38,7 +38,7 @@ export async function POST(
 
   const parsed = fixtureCreateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return fail("Geçersiz lamba verisi", 422, parsed.error.flatten());
+    return fail("Geçersiz armatür verisi", 422, parsed.error.flatten());
   }
 
   // Cihaz kayıtlı mı?
@@ -62,7 +62,7 @@ export async function POST(
       ),
     )
     .limit(1);
-  if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu Lamba numarası zaten kayıtlı"), 409);
+  if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu armatür numarası zaten kayıtlı"), 409);
 
   try {
     const [row] = await db
@@ -71,6 +71,6 @@ export async function POST(
       .returning();
     return ok(toFixture(row), { status: 201 });
   } catch (err) {
-    return fail("Lamba oluşturulamadı", 500, String(err));
+    return fail("Armatür oluşturulamadı", 500, String(err));
   }
 }

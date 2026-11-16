@@ -93,7 +93,7 @@ export function FaultHistory({
 
   const technical = useTechnical();
   const nameOf = (ch: number | null) =>
-    ch === null ? "Cihaz" : names.get(ch) || `Lamba ${ch}`;
+    ch === null ? "Cihaz" : names.get(ch) || `Armatür ${ch}`;
 
   return (
     <div>
@@ -122,8 +122,8 @@ export function FaultHistory({
           {loading
             ? "Yükleniyor…"
             : technical
-              ? "Bu cihazda kayıtlı arıza yok. Cihazdan arıza bildirimi geldiğinde (lamba arızası, sürücü/LED bayrağı ya da komut hatası) buraya başlangıç ve bitiş zamanıyla yazılır."
-              : "Bu cihazda kayıtlı arıza yok. Cihaz bir sorun bildirdiğinde (lamba arızası, aşırı ısınma, uygulanamayan komut vb.) buraya başlangıç ve bitiş zamanıyla yazılır."}
+              ? "Bu cihazda kayıtlı arıza yok. Cihazdan arıza bildirimi geldiğinde (armatür arızası, sürücü/LED bayrağı ya da komut hatası) buraya başlangıç ve bitiş zamanıyla yazılır."
+              : "Bu cihazda kayıtlı arıza yok. Cihaz bir sorun bildirdiğinde (armatür arızası, aşırı ısınma, uygulanamayan komut vb.) buraya başlangıç ve bitiş zamanıyla yazılır."}
         </p>
       ) : (
         <div className="space-y-4">

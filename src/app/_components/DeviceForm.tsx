@@ -150,7 +150,7 @@ export function DeviceDialog({
               {technical ? (
                 <>
                   <span className="font-semibold text-accent">MAC yalnızca yanlış girildiyse değiştirin.</span>{" "}
-                  Lambalar, D4i geçmişi, arızalar, komut kaydı ve zamanlama hedefleri yeni MAC&apos;e
+                  Armatürler, D4i geçmişi, arızalar, komut kaydı ve zamanlama hedefleri yeni MAC&apos;e
                   taşınır; yeni MAC&apos;ten önceden gelmiş (kayıtsız) veriler korunur. Komutlar bundan sonra{" "}
                   <code className="font-mono">Meven:{normalized ?? "<MAC>"}/cmd</code>{" "}
                   topic&apos;ine gider.
@@ -159,7 +159,7 @@ export function DeviceDialog({
               ) : (
                 <>
                   <span className="font-semibold text-accent">Cihaz kodunu yalnızca yanlış girildiyse değiştirin.</span>{" "}
-                  Bu cihazın lambaları, ölçümleri ve arıza geçmişi yeni koda taşınır.
+                  Bu cihazın armatürleri, ölçümleri ve arıza geçmişi yeni koda taşınır.
                 </>
               )}
             </p>
@@ -206,7 +206,7 @@ export function DeviceDialog({
             <p className="mt-2 text-[12.5px] leading-normal text-muted">
               {poleOptions.length === 0
                 ? "Bu bölgede boş direk yok. Direkler bölge sayfasından eklenir."
-                : "Cihazın takılı olduğu direk. Listede yalnızca bu bölgedeki boş direkler var."}
+                : "Cihazın monte edildiği direk. Listede yalnızca bu bölgedeki boş direkler var."}
             </p>
           </div>
         ) : null}

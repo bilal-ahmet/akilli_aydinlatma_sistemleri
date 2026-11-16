@@ -62,7 +62,7 @@ function Section({
               onClick={() => onPick(fx)}
               title={
                 short
-                  ? `Bu efekt en az ${fx.minLamps} lambalı cihazlarda çalışır.`
+                  ? `Bu efekt en az ${fx.minLamps} armatürlü cihazlarda çalışır.`
                   : undefined
               }
               className={`flex flex-col gap-0.5 rounded-xl border p-3 text-left transition-colors ${
@@ -87,7 +87,7 @@ function Section({
                       short ? "bg-danger/15 text-danger" : "bg-panel text-muted"
                     }`}
                   >
-                    en az {fx.minLamps} lamba
+                    en az {fx.minLamps} armatür
                   </span>
                 ) : null}
               </span>
@@ -189,16 +189,16 @@ export function EffectPicker({
           {/* Kaydırma modal gövdesinde (bkz. Modal) — burada ayrı kutu açılmaz. */}
           <div>
             <Section
-              heading="Tek lamba"
-              note="Seçili lambaya uygulanır"
+              heading="Tek armatür"
+              note="Seçili armatüre uygulanır"
               effects={SINGLE_LAMP_FX}
               activeFx={activeFx}
               lampCount={lampCount}
               onPick={pick}
             />
             <Section
-              heading="Tüm lambalar"
-              note="Cihazdaki tüm lambalar birlikte çalar, tek lambaya verilemez"
+              heading="Tüm armatürler"
+              note="Cihazdaki tüm armatürler birlikte çalar, tek armatüre verilemez"
               effects={ALL_LAMP_FX}
               activeFx={activeFx}
               lampCount={lampCount}

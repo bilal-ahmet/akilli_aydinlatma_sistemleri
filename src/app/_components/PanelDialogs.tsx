@@ -310,7 +310,7 @@ function DeleteDevice({ device, onClose }: { device: DeviceView; onClose: () => 
         ) : (
           <span className="font-semibold text-text">{deviceName(device, false)}</span>
         )}{" "}
-        cihazı ve tüm kayıtları (lambalar, {technical ? "telemetri" : "ölçümler"}, arıza geçmişi)
+        cihazı ve tüm kayıtları (armatürler, {technical ? "telemetri" : "ölçümler"}, arıza geçmişi)
         silinecek.
       </p>
     </ConfirmDelete>

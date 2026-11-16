@@ -91,7 +91,7 @@ export function DeviceControlModal({
   // Bakım sekmesi: tarama admin + manager, OTA yalnızca admin (DeviceMaintenance).
   const showMaintenance = role === "admin" || role === "manager";
   // Admin "Kanal 3 / ch3" görür, müşteri "Lamba 3" (DALI adresi terimi yok).
-  const lampRef = (ch: number) => (technical ? `Kanal ${ch}` : `Lamba ${ch}`);
+  const lampRef = (ch: number) => (technical ? `Kanal ${ch}` : `Armatür ${ch}`);
 
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [loading, setLoading] = useState(true);
@@ -471,7 +471,7 @@ export function DeviceControlModal({
       setFormError(
         technical
           ? `Kanal 0-${MAX_CHANNEL} arası bir sayı olmalı`
-          : "Geçerli bir Lamba numarası girin",
+          : "Geçerli bir armatür numarası girin",
       );
       return;
     }
@@ -493,7 +493,7 @@ export function DeviceControlModal({
       });
       const j = await res.json();
       if (!res.ok) {
-        throw new Error(j.error ?? (technical ? `Hata (${res.status})` : "İşlem tamamlanamadı, tekrar deneyin."));
+        throw new Error(j.error ?? (technical ? `Hata (${res.status})` : "İşlem tamamlanamadı; yeniden deneyin."));
       }
       const saved = j.data as Fixture;
       setFixtures((fs) =>
@@ -641,11 +641,11 @@ export function DeviceControlModal({
           // Salt okunur hesapta kontrol sekmesindeki tüm düğmeler pasif
           // (fieldset disabled); sunucu da yazma isteklerine 403 döner.
           <fieldset disabled={!canWrite} className="m-0 min-w-0 border-0 p-0">
-        {/* Cihaz-seviyesi kontrol (tüm lambalar) */}
+        {/* Cihaz-seviyesi kontrol (tüm armatürler) */}
         <div className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="mb-2 flex items-center justify-between gap-3">
             <span className="text-base font-semibold text-text">
-              {technical ? "Tüm cihaz" : "Tüm lambalar"}
+              {technical ? "Tüm cihaz" : "Tüm armatürler"}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -670,10 +670,10 @@ export function DeviceControlModal({
           />
         </div>
 
-        {/* Lambalar (DALI kanalları) */}
+        {/* Armatürler (DALI kanalları) */}
         <div className="mt-5 mb-2 flex items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-text">
-            Lambalar <span className="text-sm font-normal text-muted">({fixtures.length})</span>
+            Armatürler <span className="text-sm font-normal text-muted">({fixtures.length})</span>
           </h3>
           <button
             type="button"
@@ -683,7 +683,7 @@ export function DeviceControlModal({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
               <path d="M12 5v14M5 12h14" />
             </svg>
-            Lamba ekle
+            Armatür ekle
           </button>
         </div>
 
@@ -694,8 +694,8 @@ export function DeviceControlModal({
           ) : fixtures.length === 0 ? (
             <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
               {technical
-                ? "Bu cihazda tanımlı lamba yok. “Lamba ekle” ile kanal tanımla; cihaz çok-lamba verisi yayınladığında lambalar otomatik da eklenir."
-                : "Bu cihazın lambaları, cihaz çalışmaya başlayınca burada görünür. İsterseniz “Lamba ekle” ile kendiniz de ekleyebilirsiniz."}
+                ? "Bu cihazda tanımlı armatür yok. “Armatür ekle” ile kanal tanımla; cihaz çok-armatür verisi yayınladığında armatürler otomatik da eklenir."
+                : "Cihaz devreye alındığında armatürleri burada otomatik listelenir. “Armatür ekle” ile elle de tanımlanabilir."}
             </p>
           ) : (
             fixtures.map((f) => {
@@ -705,7 +705,7 @@ export function DeviceControlModal({
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-sm font-semibold text-text">
-                        {f.name || `Lamba ${f.channel}`}
+                        {f.name || `Armatür ${f.channel}`}
                       </span>
                       {technical ? (
                         <span className="shrink-0 font-mono text-xs text-muted">ch{f.channel}</span>
@@ -737,7 +737,7 @@ export function DeviceControlModal({
                         type="button"
                         onClick={() => openEditForm(f)}
                         aria-label={`${lampRef(f.channel)} düzenle`}
-                        title="Lambayı düzenle"
+                        title="Armatürü düzenle"
                         className={iconBtn}
                       >
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -748,7 +748,7 @@ export function DeviceControlModal({
                         type="button"
                         onClick={() => deleteFixture(f.channel)}
                         aria-label={`${lampRef(f.channel)} sil`}
-                        title="Lambayı sil"
+                        title="Armatürü sil"
                         className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-danger/15 hover:text-danger"
                       >
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -777,15 +777,15 @@ export function DeviceControlModal({
         )}
       </Modal>
 
-      {/* Lamba ekle / düzenle */}
+      {/* Armatür ekle / düzenle */}
       <Modal
         open={form !== null}
         onClose={() => setForm(null)}
-        title={form?.mode === "edit" ? "Lambayı düzenle" : "Lamba ekle"}
+        title={form?.mode === "edit" ? "Armatürü düzenle" : "Armatür ekle"}
         subtitle={
           form?.mode === "edit" ? (
             <span className="text-xs">
-              {form.original.name || `Lamba ${form.original.channel}`}
+              {form.original.name || `Armatür ${form.original.channel}`}
               {technical ? <span className="font-mono"> · ch{form.original.channel}</span> : null}
             </span>
           ) : undefined
@@ -799,7 +799,7 @@ export function DeviceControlModal({
         <form onSubmit={submitForm} className="flex flex-col gap-4">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted" htmlFor="fx-ch">
-              {technical ? "Kanal (DALI adresi) *" : "Lamba numarası"}
+              {technical ? "Kanal (DALI adresi) *" : "Armatür numarası"}
             </label>
             <input
               id="fx-ch"
@@ -811,15 +811,15 @@ export function DeviceControlModal({
               onChange={(e) => setFormChannel(e.target.value)}
               placeholder={technical ? `0 - ${MAX_CHANNEL}` : "Örn. 3"}
             />
-            {/* Kanal = cihazın DALI adresi; değiştirmek komutu başka lambaya yollar. */}
+            {/* Kanal = cihazın DALI adresi; değiştirmek komutu başka armatüre yollar. */}
             {form?.mode === "edit" && formChannel !== String(form.original.channel) ? (
               <p className="mt-1.5 rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
                 {technical ? (
                   <>
                     Kanal cihazın DALI adresidir; değiştirirsen komutlar artık{" "}
-                    <span className="font-mono">ch{formChannel || "?"}</span> adresindeki lambaya
+                    <span className="font-mono">ch{formChannel || "?"}</span> adresindeki armatüre
                     gider. Eski adresin D4i geçmişi ch{form.original.channel} altında kalır ve cihaz
-                    o adresi raporlamayı sürdürürse lamba listede yeniden belirir.
+                    o adresi raporlamayı sürdürürse armatür listede yeniden belirir.
                   </>
                 ) : (
                   <>Numarayı yalnızca yanlış girildiyse değiştirin.</>
@@ -840,8 +840,8 @@ export function DeviceControlModal({
             />
             {technical ? (
               <p className="mt-1 text-xs text-muted">
-                Lamba listesinde ve D4i telemetrisinde bu isim görünür. Boş bırakılırsa{" "}
-                <span className="font-mono">Lamba {formChannel || "<kanal>"}</span> yazılır.
+                Armatür listesinde ve D4i telemetrisinde bu isim görünür. Boş bırakılırsa{" "}
+                <span className="font-mono">Armatür {formChannel || "<kanal>"}</span> yazılır.
               </p>
             ) : null}
           </div>
@@ -864,7 +864,7 @@ export function DeviceControlModal({
         </form>
       </Modal>
 
-      {/* Efekt seçici (cihaz ya da tek lamba) */}
+      {/* Efekt seçici (cihaz ya da tek armatür) */}
       <EffectPicker
         open={effectTarget !== null}
         title={effectTitle}

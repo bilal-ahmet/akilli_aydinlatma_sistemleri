@@ -203,7 +203,7 @@ export function DeviceMaintenance({
       if (!res.ok) {
         setPhase(action, {
           kind: "failed",
-          message: j?.error ?? (technical ? `Hata (${res.status})` : "İstek gönderilemedi, tekrar deneyin."),
+          message: j?.error ?? (technical ? `Hata (${res.status})` : "İstek gönderilemedi; yeniden deneyin."),
         });
         return;
       }
@@ -222,12 +222,12 @@ export function DeviceMaintenance({
             kind: "failed",
             message: technical
               ? "Cihaz 20 sn içinde yanıt vermedi (çevrimdışı ya da Thread ağı yavaş olabilir)."
-              : "Cihaz yanıt vermedi. Cihaz kapalı ya da bağlantısı zayıf olabilir.",
+              : "Cihazdan yanıt alınamadı. Cihaz kapalı ya da bağlantı kalitesi düşük olabilir.",
           });
         }, ACK_TIMEOUT_MS),
       );
     } catch {
-      setPhase(action, { kind: "failed", message: "İstek gönderilemedi, bağlantınızı kontrol edin." });
+      setPhase(action, { kind: "failed", message: "İstek gönderilemedi; internet bağlantınızı kontrol edin." });
     }
   }
 
@@ -245,11 +245,11 @@ export function DeviceMaintenance({
         <section className="rounded-xl border border-border bg-panel-2 p-3.5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h3 className="text-base font-semibold text-text">Lambaları tara</h3>
+              <h3 className="text-base font-semibold text-text">Armatürleri tara</h3>
               <p className="mt-1 text-sm text-muted">
                 {technical
-                  ? "DALI commissioning: hattaki lambaları bulur, adressiz yeni lambalara boş kanal (0–4) verir. Mevcut kanallar korunur, ışık seviyesi değişmez."
-                  : "Yeni lamba taktıktan sonra kullanın. Cihaz bağlı lambaları bulur ve listeye ekler; ışıklar değişmez."}
+                  ? "DALI commissioning: hattaki armatürleri bulur, adressiz yeni armatürlere boş kanal (0–4) verir. Mevcut kanallar korunur, ışık seviyesi değişmez."
+                  : "Yeni armatür montajından sonra kullanın. Cihaz bağlı armatürleri tespit edip listeye ekler; ışık seviyesi değişmez."}
               </p>
             </div>
             <button
@@ -258,15 +258,15 @@ export function DeviceMaintenance({
               disabled={phases.commission.kind === "waiting"}
               className="btn-glow h-10 shrink-0 px-4 text-sm"
             >
-              {phases.commission.kind === "waiting" ? "Gönderiliyor…" : "Lambaları tara"}
+              {phases.commission.kind === "waiting" ? "Gönderiliyor…" : "Armatürleri tara"}
             </button>
           </div>
           <Result
             phase={phases.commission}
             accepted={
               technical
-                ? "Tarama başladı. Bulunan her lamba ~30 sn içinde d4i_periodic raporuyla listeye düşer."
-                : "Tarama başladı. Bulunan lambalar yaklaşık 30 saniye içinde Kontrol sekmesinde görünecek."
+                ? "Tarama başladı. Bulunan her armatür ~30 sn içinde d4i_periodic raporuyla listeye düşer."
+                : "Tarama başladı. Bulunan armatürler yaklaşık 30 saniye içinde Kontrol sekmesinde görünecek."
             }
           />
         </section>

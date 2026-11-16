@@ -23,11 +23,11 @@ export async function PATCH(
   const ctx = await authorizeDevice(req, deviceId, "write");
   if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
-  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir Lamba numarası girin"), 422);
+  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir armatür numarası girin"), 422);
 
   const parsed = fixtureUpdateSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return fail("Geçersiz lamba verisi", 422, parsed.error.flatten());
+    return fail("Geçersiz armatür verisi", 422, parsed.error.flatten());
   }
   const { channel: newChannel, name } = parsed.data;
 
@@ -45,7 +45,7 @@ export async function PATCH(
         ),
       )
       .limit(1);
-    if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu Lamba numarası zaten kayıtlı"), 409);
+    if (dup) return fail(msg(ctx.user, "Bu kanal zaten tanımlı", "Bu armatür numarası zaten kayıtlı"), 409);
     patch.channel = newChannel;
   }
 
@@ -56,7 +56,7 @@ export async function PATCH(
       .from(schema.fixtures)
       .where(and(eq(schema.fixtures.deviceId, deviceId), eq(schema.fixtures.channel, ch)))
       .limit(1);
-    if (!row) return fail("Lamba bulunamadı", 404);
+    if (!row) return fail("Armatür bulunamadı", 404);
     return ok(toFixture(row));
   }
 
@@ -68,10 +68,10 @@ export async function PATCH(
         and(eq(schema.fixtures.deviceId, deviceId), eq(schema.fixtures.channel, ch)),
       )
       .returning();
-    if (!row) return fail("Lamba bulunamadı", 404);
+    if (!row) return fail("Armatür bulunamadı", 404);
     return ok(toFixture(row));
   } catch (err) {
-    return fail("Lamba güncellenemedi", 500, String(err));
+    return fail("Armatür güncellenemedi", 500, String(err));
   }
 }
 
@@ -84,7 +84,7 @@ export async function DELETE(
   const ctx = await authorizeDevice(req, deviceId, "write");
   if (ctx instanceof Response) return ctx;
   const ch = Number(channel);
-  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir Lamba numarası girin"), 422);
+  if (!Number.isInteger(ch)) return fail(msg(ctx.user, "Geçersiz kanal", "Geçerli bir armatür numarası girin"), 422);
 
   try {
     const deleted = await db
@@ -96,9 +96,9 @@ export async function DELETE(
         ),
       )
       .returning({ id: schema.fixtures.id });
-    if (deleted.length === 0) return fail("Lamba bulunamadı", 404);
+    if (deleted.length === 0) return fail("Armatür bulunamadı", 404);
     return ok({ deleted: true });
   } catch (err) {
-    return fail("Lamba silinemedi", 500, String(err));
+    return fail("Armatür silinemedi", 500, String(err));
   }
 }

@@ -104,7 +104,7 @@ export function ErrorToasts() {
                     )}
                   </span>
                 ) : null}
-                {typeof t.channel === "number" ? <span>· Lamba {t.channel}</span> : null}
+                {typeof t.channel === "number" ? <span>· Armatür {t.channel}</span> : null}
               </p>
             )}
           </div>

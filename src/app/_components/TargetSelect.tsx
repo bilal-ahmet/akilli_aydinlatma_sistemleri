@@ -59,7 +59,7 @@ export function planText(plan: Pick<TargetPlan, "zones" | "devices" | "lamps">, 
   if (plan.zones.length === 1) parts.push(zones.find((z) => z.id === plan.zones[0])?.name ?? "1 bölge");
   else if (plan.zones.length > 1) parts.push(`${plan.zones.length} bölge`);
   if (plan.devices.length) parts.push(`${plan.devices.length} cihaz`);
-  if (plan.lamps.length) parts.push(`${plan.lamps.length} lamba`);
+  if (plan.lamps.length) parts.push(`${plan.lamps.length} armatür`);
   return parts.join(", ");
 }
 
@@ -199,7 +199,7 @@ export function TargetPicker({
       onClose={onClose}
       size="xl"
       title="Nerede çalışsın?"
-      subtitle="Bölgenin tamamını ya da tek tek cihaz ve lambaları seçin."
+      subtitle="Bölgenin tamamını ya da tek tek cihaz ve armatürleri seçin."
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-muted">

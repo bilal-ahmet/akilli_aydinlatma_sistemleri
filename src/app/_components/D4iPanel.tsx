@@ -34,7 +34,7 @@ import {
  * ham/teknik alanlar ana ızgarada değil "Teknik detay" bölümünde durur.
  *
  * Müşteri kullanıcıları (useTechnical = false) sade dil görür: "Sürücü" yerine
- * "Güç ünitesi"; teknik detay, arc seviyeleri ve ham değer açıklamaları gizli.
+ * "Sürücü ünitesi"; teknik detay, arc seviyeleri ve ham değer açıklamaları gizli.
  */
 
 const tr0 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 0 });
@@ -197,7 +197,7 @@ function SummaryStats({ r, technical }: { r: D4iSnapshot; technical: boolean }) 
   const power = num(r.powerW, "W");
   if (power) tiles.push({ label: "Anlık güç", value: power, sub: "şebekeden çekilen" });
   const load = num(r.raw?.d4i?.load_power?.value, "W", tr0);
-  if (load) tiles.push({ label: technical ? "Yük gücü" : "Lamba gücü", value: load, sub: "LED'e giden" });
+  if (load) tiles.push({ label: technical ? "Yük gücü" : "Armatür gücü", value: load, sub: "LED'e giden" });
   const energy = num(r.energyWh, "Wh", tr1);
   if (energy) tiles.push({ label: "Toplam enerji", value: energy });
 
@@ -221,10 +221,10 @@ function PlainSummary({ r, ledTemp }: { r: D4iSnapshot; ledTemp: Reading | null 
     tiles.push({ label: "Işık seviyesi", value: `%${levelToPercent(r.actualLevel)}`, accent: true });
   }
   const power = num(r.powerW, "W");
-  if (power) tiles.push({ label: "Çektiği güç", value: power });
+  if (power) tiles.push({ label: "Çekilen güç", value: power });
   const energy = num(r.energyWh, "Wh", tr1);
   if (energy) tiles.push({ label: "Toplam enerji", value: energy });
-  // Güç ünitesi sıcaklığı doğrudan ölçülür; yoksa LED'inki (tahminiyse ≈).
+  // Sürücü ünitesi sıcaklığı doğrudan ölçülür; yoksa LED'inki (tahminiyse ≈).
   const temp =
     num(r.driverTemperatureC, "°C", tr0) ??
     (ledTemp && ledTemp.kind !== "unverified" ? reading(ledTemp, "°C", tr0) : null);
@@ -242,7 +242,7 @@ function PlainSummary({ r, ledTemp }: { r: D4iSnapshot; ledTemp: Reading | null 
   );
 }
 
-/** Şu an süren arızaların sade adları (lamba, güç ünitesi, LED). */
+/** Şu an süren arızaların sade adları (armatür, sürücü ünitesi, LED). */
 function activeFaultLabels(r: D4iSnapshot): string[] {
   const out: string[] = [];
   if (r.online === false) out.push(faultLabel("offline", false));
@@ -275,7 +275,7 @@ function PlainStatus({ r }: { r: D4iSnapshot }) {
 }
 
 /**
- * Müşteride ayrıntılar (güç ünitesi, LED, arıza sayaçları) kapalı başlar,
+ * Müşteride ayrıntılar (sürücü ünitesi, LED, arıza sayaçları) kapalı başlar,
  * tıklayınca açılır; admin'de her şey doğrudan görünür. `<details>` — state
  * yok, klavye erişimi tarayıcıdan.
  */
@@ -381,7 +381,7 @@ function Faults({
             {activeCount} {technical ? "aktif" : "sürüyor"}
           </span>
         ) : (
-          <span className="text-xs text-muted">· şu an {technical ? "aktif arıza" : "süren arıza"} yok</span>
+          <span className="text-xs text-muted">· {technical ? "aktif arıza yok" : "süren arıza yok"}</span>
         )}
       </div>
 
@@ -430,7 +430,7 @@ function Faults({
             : ""}
         </p>
       ) : (
-        <p className="mt-2 text-xs text-muted">Sayılar, lambanın ömrü boyunca kaç kez bu arızanın yaşandığını gösterir.</p>
+        <p className="mt-2 text-xs text-muted">Sayılar, armatürün ömrü boyunca kaç kez bu arızanın yaşandığını gösterir.</p>
       )}
     </div>
   );
@@ -559,17 +559,17 @@ export function D4iPanel({
 }) {
   const faulty = rows.filter(isFaulty).length;
   const technical = useTechnical();
-  const gear = technical ? "Sürücü" : "Güç ünitesi";
+  const gear = technical ? "Sürücü" : "Sürücü ünitesi";
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-text">
-          {technical ? "D4i telemetrisi" : "Lamba ölçümleri"}{" "}
-          <span className="text-sm font-normal text-muted">({rows.length} lamba)</span>
+          {technical ? "D4i telemetrisi" : "Armatür ölçümleri"}{" "}
+          <span className="text-sm font-normal text-muted">({rows.length} armatür)</span>
           {faulty > 0 ? (
             <span className="rounded-md bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
-              {faulty} lambada arıza
+              {faulty} armatürde arıza
             </span>
           ) : null}
         </h3>
@@ -614,7 +614,7 @@ export function D4iPanel({
           </p>
         ) : (
           <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
-            Bu cihazdan henüz ölçüm gelmedi. Cihaz veri göndermeye başlayınca lambaların güç,
+            Bu cihazdan henüz ölçüm gelmedi. Cihaz veri göndermeye başlayınca armatürlerin güç,
             sıcaklık ve arıza bilgileri burada listelenir.
           </p>
         )
@@ -623,7 +623,7 @@ export function D4iPanel({
           {rows.map((r) => {
             const drv = r.raw?.d4i?.driver;
             const led = r.raw?.d4i?.led;
-            const name = names.get(r.channel) || `Lamba ${r.channel}`;
+            const name = names.get(r.channel) || `Armatür ${r.channel}`;
 
             // LED ölçümleri sütunlardan değil ham bloktan okunur: sürücü
             // doğrulayamadığı değeri null'a çekiyor, sütunlar da boş kalıyor.
@@ -652,12 +652,12 @@ export function D4iPanel({
                   ) : null}
                   {technical && r.lampFailure ? (
                     <span className="rounded-md bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
-                      lamba arızası
+                      armatür arızası
                     </span>
                   ) : null}
                   {!r.d4iSupported ? (
                     <span className="ml-auto rounded-md bg-panel px-2 py-0.5 text-xs text-muted">
-                      {technical ? "D4i desteklemiyor" : "Bu lamba ölçüm göndermiyor"}
+                      {technical ? "D4i desteklemiyor" : "Bu armatür ölçüm göndermiyor"}
                     </span>
                   ) : null}
                 </div>
@@ -701,8 +701,7 @@ export function D4iPanel({
                           },
                           {
                             label: "Güç katsayısı",
-                            // Müşteriye anlamsız bir elektrik terimi — yalnızca admin.
-                            value: technical ? num(pickNumber(drv, "power_factor"), "", tr1) : null,
+                            value: num(pickNumber(drv, "power_factor"), "", tr1),
                           },
                           {
                             label: technical ? "Çıkış akımı seviyesi" : "Çıkış seviyesi",
@@ -718,11 +717,11 @@ export function D4iPanel({
                           },
                           { label: "Çalışma süresi", value: hours(r.driverOperatingTimeS) },
                           {
-                            label: technical ? "Enerjilenme/başlatma sayısı" : "Elektrik verilme sayısı",
+                            label: technical ? "Enerjilenme/başlatma sayısı" : "Enerjilendirme sayısı",
                             value: num(pickNumber(drv, "startup_count"), "", tr0),
                             note: technical
-                              ? "Sürücüye enerji verilip başlatılma sayısı — lambanın aç/kapa sayısı değildir."
-                              : "Güç ünitesine elektrik verilme sayısı — lambanın aç/kapa sayısı değildir.",
+                              ? "Sürücüye enerji verilip başlatılma sayısı — armatürün aç/kapa sayısı değildir."
+                              : "Sürücü ünitesinin enerjilendirilme sayısı — armatürün aç/kapa sayısı değildir.",
                           },
                         ]}
                       />
@@ -759,11 +758,11 @@ export function D4iPanel({
                           },
                           { label: "Çalışma süresi", value: hours(pickNumber(led, "operating_time_s")) },
                           {
-                            label: technical ? "Enerjilenme/başlatma sayısı" : "Elektrik verilme sayısı",
+                            label: technical ? "Enerjilenme/başlatma sayısı" : "Enerjilendirme sayısı",
                             value: num(pickNumber(led, "startup_count"), "", tr0),
                             note: technical
-                              ? "LED modülünün enerjilenme sayısı — lambanın aç/kapa sayısı değildir."
-                              : "LED'e elektrik verilme sayısı — lambanın aç/kapa sayısı değildir.",
+                              ? "LED modülünün enerjilenme sayısı — armatürün aç/kapa sayısı değildir."
+                              : "LED modülünün enerjilendirilme sayısı — armatürün aç/kapa sayısı değildir.",
                           },
                         ]}
                       />

@@ -37,7 +37,7 @@ export function DevicesView() {
   const online = devices.filter((d) => isOnline(d, now)).length;
   const subtitle =
     devices.length === 0
-      ? "Henüz cihaz yok"
+      ? "Tanımlı cihaz yok"
       : `${zoneCount} bölgede ${devices.length} ${technical ? "ESP32" : "cihaz"}` +
         (now === null
           ? ""
@@ -108,7 +108,7 @@ export function DevicesView() {
         <EmptyBox>Yükleniyor…</EmptyBox>
       ) : devices.length === 0 ? (
         <EmptyBox>
-          Henüz cihaz yok.
+          Tanımlı cihaz yok.
           {canWrite
             ? technical
               ? " Gerçek ESP32'yi bağlamadan önce “Yeni Cihaz” ile MAC adresini ve bölgesini tanımlayın."
@@ -126,7 +126,7 @@ export function DevicesView() {
       {technical ? (
         <p className="text-[12.5px] text-muted">
           “Ölçüm bekleniyor”: cihaz bağlı, ancak son 10 dakikada gerilim ve güç bilgisi göndermedi.
-          Işık, cihazın lambalarının son bilinen durumudur (son komut ya da cihaz raporu); lamba
+          Işık, cihazın armatürlerinin son bilinen durumudur (son komut ya da cihaz raporu); armatür
           kaydı olmayan cihazda bölgenin son komutu gösterilir.
         </p>
       ) : null}

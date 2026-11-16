@@ -133,7 +133,7 @@ function PolePanel({
             </>
           ) : (
             <p className="text-sm text-muted">
-              Bu direğe cihaz takılı değil.
+              Bu direğe cihaz atanmamış.
               {canWrite ? (
                 <>
                   {" "}
@@ -173,12 +173,12 @@ function PolePanel({
           </section>
         ) : null}
 
-        {/* Lambalar */}
+        {/* Armatürler */}
         {device ? (
           <section className="flex flex-col gap-1.5">
-            <h3 className="eyebrow">Lambalar · {device.lamps.length}</h3>
+            <h3 className="eyebrow">Armatürler · {device.lamps.length}</h3>
             {device.lamps.length === 0 ? (
-              <p className="text-[13px] text-muted">Cihaz henüz lamba bildirmedi.</p>
+              <p className="text-[13px] text-muted">Henüz armatür verisi gelmedi.</p>
             ) : (
               <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
                 {device.lamps.map((l) => {
@@ -191,7 +191,7 @@ function PolePanel({
                         className={`h-2 w-2 shrink-0 rounded-full ${faulty ? "bg-danger" : lampOn(l) ? "bg-glow" : "bg-muted"}`}
                       />
                       <span className="min-w-0 flex-1 truncate text-text">
-                        {l.name?.trim() || `Lamba ${l.channel}`}
+                        {l.name?.trim() || `Armatür ${l.channel}`}
                         {technical ? <span className="ml-1 font-mono text-[11px] text-muted">ch{l.channel}</span> : null}
                       </span>
                       <span className={faulty ? "font-medium text-danger" : "text-ink-2"}>
@@ -215,7 +215,7 @@ function PolePanel({
                   <p className="font-semibold text-text">{a.title}</p>
                   <p className="text-muted">
                     {faultCategoryLabel(a.category, technical)}
-                    {a.channel !== null ? ` · Lamba ${a.channel}` : ""}
+                    {a.channel !== null ? ` · Armatür ${a.channel}` : ""}
                     {a.since ? ` · ${formatAgo(a.since, now)}` : ""}
                   </p>
                 </li>
@@ -404,7 +404,7 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
               }}
               className={`h-9 px-3.5 text-[13px] ${adding ? "btn-line" : "btn-glow"}`}
             >
-              {adding ? "Eklemeyi bırak" : "+ Direk ekle"}
+              {adding ? "Eklemeyi iptal et" : "+ Direk ekle"}
             </button>
           </div>
         ) : null}

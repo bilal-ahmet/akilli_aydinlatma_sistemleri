@@ -23,7 +23,7 @@ function generatePassword(length = 14): string {
 }
 
 function formatLastLogin(iso: string | null): string {
-  return iso ? formatDateTime(iso) : "hiç";
+  return iso ? formatDateTime(iso) : "kayıt yok";
 }
 
 type Form =
@@ -133,7 +133,7 @@ export function UserManager({
         });
       }
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.error ?? "İşlem tamamlanamadı, tekrar deneyin.");
+      if (!res.ok) throw new Error(j?.error ?? "İşlem tamamlanamadı; yeniden deneyin.");
       const saved = j.data as CustomerUser;
       setUsers((us) =>
         (form.mode === "create" ? [...us, saved] : us.map((u) => (u.id === saved.id ? saved : u))).sort(
@@ -266,7 +266,7 @@ export function UserManager({
       </div>
 
       <p className="mt-2 text-[11px] text-muted">
-        <span className="font-medium text-text">Yönetici</span>: bölge, cihaz, lamba ve kullanıcıları yönetir, komut verir.{" "}
+        <span className="font-medium text-text">Yönetici</span>: bölge, cihaz, armatür ve kullanıcıları yönetir, komut verir.{" "}
         <span className="font-medium text-text">İzleyici</span>: yalnızca durumu ve ölçümleri görür, değişiklik yapamaz.
       </p>
 

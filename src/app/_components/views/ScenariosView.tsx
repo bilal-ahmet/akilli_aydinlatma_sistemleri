@@ -63,7 +63,7 @@ const SCEN: Record<ScenKey, Scenario> = {
     rain: false,
     wx: "Sis",
     pre: "Sis bastırıyor, görüş düşük",
-    post: "Lambalar %100, yol yeniden görünüyor",
+    post: "Armatürler %100, yol yeniden görünüyor",
     stopping: "Sis dağılıyor",
     fxLabel: "Sis sırasında efekt",
     fxDefault: null,
@@ -77,7 +77,7 @@ const SCEN: Record<ScenKey, Scenario> = {
     rain: true,
     wx: "Yağmur",
     pre: "Yağmur başladı",
-    post: "Lambalar %80",
+    post: "Armatürler %80",
     stopping: "Yağmur diniyor",
     fxLabel: "Yağmur sırasında efekt",
     fxDefault: null,
@@ -110,7 +110,7 @@ interface Words {
 const fxCmd = (w: Words) =>
   w.fx ? (w.technical ? `efekt ${w.fx.number} (${w.fx.label})` : `${w.fx.label} efekti`) : "";
 const lvCmd = (w: Words, v: number) => (w.technical ? `dim %${v}` : `şiddet %${v}`);
-const everyone = (w: Words) => (w.technical ? "tüm cihazlar" : "tüm lambalar");
+const everyone = (w: Words) => (w.technical ? "tüm cihazlar" : "tüm armatürler");
 const panel = (w: Words) => (w.technical ? "Panel" : "Panel komutu");
 
 function describe(k: ScenKey, w: Words): string {
@@ -118,24 +118,24 @@ function describe(k: ScenKey, w: Words): string {
   switch (k) {
     case "normal":
       return fx
-        ? `Lambalar gece seviyesinde yanarken panelden ${fx.label} efekti başlatılır: ${fx.desc.toLocaleLowerCase("tr-TR")}.`
-        : "Lambalar gece seviyesinde sabit yanar, trafik normal akar.";
+        ? `Armatürler gece seviyesinde yanarken panelden ${fx.label} efekti başlatılır: ${fx.desc.toLocaleLowerCase("tr-TR")}.`
+        : "Armatürler gece seviyesinde sabit yanar, trafik normal akar.";
     case "kaza":
       return `"Kaza yap"a basınca kaza olur, ${
         fx ? `tüm direkler aynı anda ${fx.label} efektine geçer` : "tüm direkler tam parlaklığa çıkar"
       }. Arkadaki trafik kuyruk olur, karşı şerit yavaşlar. "Kazayı düzelt"e basınca kazalı araçlar kalkar; trafik açılınca ${
         fx ? "efekt durur ve " : ""
-      }lambalar eski seviyeye döner.`;
+      }armatürler eski seviyeye döner.`;
     case "sis":
       return `"Sis başlat"a basınca sis basar, yol ve araçlar zor görünür. Panel komutuyla ${
-        fx ? `lambalarda ${fx.label} efekti başlar` : "lambalar anında tam parlaklığa çıkar ve sabit kalır"
-      }. "Sis durdur"a basınca sis dağılır, açılınca lambalar eski seviyeye döner.`;
+        fx ? `armatürlerde ${fx.label} efekti başlar` : "armatürler anında tam parlaklığa çıkar ve sabit kalır"
+      }. "Sis durdur"a basınca sis dağılır, açılınca armatürler eski seviyeye döner.`;
     case "yagmur":
       return `"Yağmur başlat"a basınca yağmur başlar, ıslak yolda görüş azalır. Panel komutuyla ${
-        fx ? `lambalarda ${fx.label} efekti başlar` : "lambalar %80 seviyesine çıkar"
-      }, araçlar biraz yavaşlar. "Yağmur durdur"a basınca yağmur diner, lambalar eski seviyeye döner.`;
+        fx ? `armatürlerde ${fx.label} efekti başlar` : "armatürler %80 seviyesine çıkar"
+      }, araçlar biraz yavaşlar. "Yağmur durdur"a basınca yağmur diner, armatürler eski seviyeye döner.`;
     case "tasarruf":
-      return `Gece yarısından sonra lambalar %20 seviyesinde bekler. Araç yaklaşınca o direkler ${
+      return `Gece yarısından sonra armatürler %20 seviyesinde bekler. Araç yaklaşınca o direkler ${
         fx ? `${fx.label} efektine geçer` : "hızla %100 olur"
       }, araç geçince yavaşça tekrar %20'ye iner. (Her direkte araç algılayan sensör olduğu varsayıldı.)`;
   }
@@ -145,7 +145,7 @@ function command(k: ScenKey, w: Words, lv: number): string {
   const back = w.fx
     ? w.technical
       ? `efekti durdur (dim %${lv})`
-      : `lambalar %${lv} şiddete döner`
+      : `armatürler %${lv} şiddete döner`
     : lvCmd(w, lv);
   switch (k) {
     case "normal":
@@ -368,31 +368,31 @@ export function ScenariosView() {
         }
         if (s.clearing) {
           const q = s.cars.filter((c) => c.lane === 0 && c.v < 60).length;
-          return `Kazalı araçlar kaldırıldı, trafik açılıyor (${q} araç hâlâ yavaş). Lambalar hâlâ ${
+          return `Kazalı araçlar kaldırıldı, trafik açılıyor (${q} araç hâlâ yavaş). Armatürler hâlâ ${
             fxName ? `${fxName} efektinde` : "%100"
           }`;
         }
         if (s.crashPending) return "Kaza bekleniyor…";
-        if (s.crashedOnce) return `Trafik açıldı: ${fxName ? "efekt durdu, " : ""}lambalar eski seviyede (%${L})`;
-        return `Trafik normal, lambalar %${L}. "Kaza yap"a basın.`;
+        if (s.crashedOnce) return `Trafik açıldı: ${fxName ? "efekt durdu, " : ""}armatürler eski seviyede (%${L})`;
+        return `Trafik normal, armatürler %${L}. "Kaza yap"a basın.`;
       }
       if (S.wx) {
-        if (s.wxOn && !cmdSent) return `${S.pre} (lambalar hâlâ %${L})`;
-        if (s.wxOn) return fxName ? `${S.wx} sürüyor, lambalarda ${fxName} efekti` : (S.post ?? "");
-        if (s.wxStopping) return `${S.stopping}, lambalar hâlâ %${Math.round(b * 100)}`;
-        if (s.wxStarted) return `Hava açıldı: lambalar eski seviyede (%${L})`;
-        return `Hava açık, lambalar %${L}. "${S.wx} başlat"a basın.`;
+        if (s.wxOn && !cmdSent) return `${S.pre} (armatürler hâlâ %${L})`;
+        if (s.wxOn) return fxName ? `${S.wx} sürüyor, armatürlerde ${fxName} efekti` : (S.post ?? "");
+        if (s.wxStopping) return `${S.stopping}, armatürler hâlâ %${Math.round(b * 100)}`;
+        if (s.wxStarted) return `Hava açıldı: armatürler eski seviyede (%${L})`;
+        return `Hava açık, armatürler %${L}. "${S.wx} başlat"a basın.`;
       }
-      if (S.level !== undefined && !cmdSent) return `${S.pre} (lambalar hâlâ %${Math.round(b * 100)})`;
+      if (S.level !== undefined && !cmdSent) return `${S.pre} (armatürler hâlâ %${Math.round(b * 100)})`;
       if (s.scen === "tasarruf") {
         const k = s.poleB.filter((x) => x > 0.6).length;
         return k
           ? `Araç geçiyor: ${k} direk ${fxName ? `${fxName} efektinde` : "açık"}, diğerleri %20`
-          : "Yol boş, tüm lambalar %20";
+          : "Yol boş, tüm armatürler %20";
       }
-      if (now - s.restoreT < 2500 && s.prevName) return `${s.prevName} bitti, lambalar eski seviyeye (%${L}) dönüyor`;
-      if (fxName) return `Lambalar ${fxName} efektinde`;
-      return `Lambalar %${Math.round(b * 100)}`;
+      if (now - s.restoreT < 2500 && s.prevName) return `${s.prevName} bitti, armatürler eski seviyeye (%${L}) dönüyor`;
+      if (fxName) return `Armatürler ${fxName} efektinde`;
+      return `Armatürler %${Math.round(b * 100)}`;
     }
 
     function step(now: number) {
@@ -621,7 +621,7 @@ export function ScenariosView() {
     <div className="flex max-w-[960px] flex-col gap-[22px]">
       <PageHeader
         title="Senaryolar"
-        subtitle="Sistemin farklı durumlarda nasıl davrandığını gösteren canlandırma. Gerçek lambalara komut gitmez."
+        subtitle="Sistemin farklı durumlarda nasıl davrandığını gösteren canlandırma. Gerçek armatürlere komut gitmez."
       />
 
       <section className="flex flex-col gap-4 rounded-2xl border border-border bg-panel px-5 py-[18px]">
@@ -647,14 +647,14 @@ export function ScenariosView() {
               className="field !h-9 !w-auto min-w-[220px] cursor-pointer !py-0 text-[13.5px]"
             >
               <option value="">Sabit ışık (efekt yok)</option>
-              <optgroup label="Tek lamba · her lamba kendi başına çalar">
+              <optgroup label="Tek armatür · her armatür kendi başına çalar">
                 {SINGLE_LAMP_FX.map((f) => (
                   <option key={f.number} value={f.number}>
                     {fxOption(f)}
                   </option>
                 ))}
               </optgroup>
-              <optgroup label="Tüm lambalar · lambalar birlikte çalar">
+              <optgroup label="Tüm armatürler · armatürler birlikte çalar">
                 {ALL_LAMP_FX.map((f) => (
                   <option key={f.number} value={f.number}>
                     {fxOption(f)}
@@ -681,8 +681,8 @@ export function ScenariosView() {
               {fx.desc}.
               {fx.allLamps
                 ? technical
-                  ? ` Çok lambalı efekt: gerçekte cihazın kendi lambaları (DALI hattı) arasında çalışır, direkler arasında senkron yoktur; canlandırmada direkler arasında gösteriliyor.`
-                  : " Bu efekt gerçekte aynı direkteki lambalar arasında çalışır; burada anlaşılır olsun diye direkler arasında gösteriliyor."
+                  ? ` Çok armatürlü efekt: gerçekte cihazın kendi armatürleri (DALI hattı) arasında çalışır, direkler arasında senkron yoktur; canlandırmada direkler arasında gösteriliyor.`
+                  : " Bu efekt gerçekte aynı direkteki armatürler arasında çalışır; burada anlaşılır olsun diye direkler arasında gösteriliyor."
                 : ""}
             </p>
           ) : null}

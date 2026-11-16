@@ -19,7 +19,7 @@ import { EmptyBox, PageHeader, PlusIcon, StatusLabel } from "../PanelUi";
 const STATE_LABEL: Record<GatewayState, { label: string; tone: HealthTone }> = {
   online: { label: "Çalışıyor", tone: "ok" },
   offline: { label: "Bağlantı yok", tone: "bad" },
-  never: { label: "Hiç bağlanmadı", tone: "idle" },
+  never: { label: "Henüz bağlanmadı", tone: "idle" },
 };
 
 /** Gateway görünen adı: girilmiş isim, yoksa kimliğin son 4 hanesi. */
@@ -110,7 +110,7 @@ export function GatewaysView() {
   const onlineCount = states.filter((s) => s === "online").length;
   const subtitle =
     gateways.length === 0
-      ? "Henüz ağ geçidi yok"
+      ? "Tanımlı ağ geçidi yok"
       : `${gateways.length} ağ geçidi` + (now === null ? "" : ` · ${onlineCount} çalışıyor`);
 
   const th = "px-3 py-3 text-left font-semibold first:pl-[22px] last:pr-[22px]";
@@ -251,7 +251,7 @@ export function GatewaysView() {
         >
           <p>
             <span className="font-semibold text-text">{gatewayLabel(dialog.gateway)}</span>{" "}
-            ağ geçidinin kaydı silinecek. Cihazlar ve lambalar etkilenmez.
+            ağ geçidinin kaydı silinecek. Cihazlar ve armatürler etkilenmez.
           </p>
           {technical ? (
             <p className="mt-2 text-[13px] text-muted">
@@ -299,7 +299,7 @@ function GatewayDetail({
             ? "Ağ geçidi henüz ayrıntılı bilgi göndermedi."
             : technical
               ? "Gateway henüz yayın yapmadı. MQTT'de Meven:<GW_ID>/health mesajı bekleniyor."
-              : "Ağ geçidinden henüz haber alınmadı."}
+              : "Ağ geçidinden henüz veri gelmedi."}
         </p>
       )}
 
@@ -313,7 +313,7 @@ function GatewayDetail({
           <p className="mt-1 text-[13px] text-muted">
             {technical
               ? "Eşleşme yok: gateway `nodes` listesi göndermiyor ya da cihazlar health'te `gateway` bildirmiyor."
-              : "Bu ağ geçidine bağlı cihaz bilgisi henüz yok."}
+              : "Bu ağ geçidine bağlı cihaz bilgisi alınmadı."}
           </p>
         )}
       </div>

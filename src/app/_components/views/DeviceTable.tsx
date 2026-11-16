@@ -216,8 +216,8 @@ export function DeviceTable({
                               open={isOpen}
                               label={
                                 state === "some"
-                                  ? `${(sel.get(d.deviceId) as Set<number>).size}/${d.lamps.length} lamba seçili`
-                                  : `${d.lamps.length} lamba`
+                                  ? `${(sel.get(d.deviceId) as Set<number>).size}/${d.lamps.length} armatür seçili`
+                                  : `${d.lamps.length} armatür`
                               }
                               deviceTitle={title}
                               onToggle={() => toggleExpanded(d.deviceId)}
@@ -226,7 +226,7 @@ export function DeviceTable({
                           {faults?.length ? (
                             <span className="text-xs text-danger">
                               {[...new Set(faults.map((f) => f.channel))]
-                                .map((ch) => `Lamba ${ch}`)
+                                .map((ch) => `Armatür ${ch}`)
                                 .join(", ")}
                             </span>
                           ) : d.lastError ? (
@@ -236,7 +236,7 @@ export function DeviceTable({
                           ) : m && full && !multiLamp ? (
                             // Lamba düğmesi zaten lamba sayısını gösteriyorsa tekrar yazılmaz.
                             <span className="text-xs text-muted">
-                              {technical ? `${m.lamps} lamba raporluyor` : `${m.lamps} lamba veri gönderiyor`}
+                              {technical ? `${m.lamps} armatür raporluyor` : `${m.lamps} armatür veri gönderiyor`}
                             </span>
                           ) : null}
                         </div>
@@ -333,7 +333,7 @@ function LampToggle({
         onToggle();
       }}
       aria-expanded={open}
-      aria-label={`${deviceTitle} lambalarını ${open ? "gizle" : "göster"}`}
+      aria-label={`${deviceTitle} armatürlerini ${open ? "gizle" : "göster"}`}
       className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[12px] font-medium transition-colors duration-150 ${
         open
           ? "border-glow/60 bg-glow/15 text-text"

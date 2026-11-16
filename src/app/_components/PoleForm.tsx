@@ -239,18 +239,18 @@ export function PoleDialog({
             Cihaz <span className="font-normal text-muted">(isteğe bağlı)</span>
           </label>
           <select id="pl-device" className="field" value={mac} onChange={(e) => setDeviceMac(e.target.value)}>
-            <option value="">Cihaz takılı değil</option>
+            <option value="">Cihaz atanmamış</option>
             {candidates.map((d) => (
               <option key={d.deviceId} value={d.deviceId}>
                 {deviceName(d, technical)}
-                {d.lampCount > 0 ? ` · ${d.lampCount} lamba` : ""}
+                {d.lampCount > 0 ? ` · ${d.lampCount} armatür` : ""}
               </option>
             ))}
           </select>
           <p className="mt-2 text-[12.5px] leading-normal text-muted">
             {candidates.length === 0
               ? "Bu bölgede direğe bağlanmamış cihaz yok."
-              : "Direğin lambaları bu cihazdan izlenir. Listede yalnızca bu bölgedeki boş cihazlar var."}
+              : "Direğin armatürleri bu cihazdan izlenir. Listede yalnızca bu bölgedeki boş cihazlar var."}
           </p>
         </div>
 

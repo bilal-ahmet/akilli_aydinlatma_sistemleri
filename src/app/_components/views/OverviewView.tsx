@@ -337,7 +337,7 @@ function SystemHero() {
 /** Amber kart: şebekeden çekilen ölçülmüş güç + sürücü verimi. */
 function PowerCard() {
   const { live } = useLighting();
-  const gear = useTechnical() ? "Sürücü" : "Güç ünitesi";
+  const gear = useTechnical() ? "Sürücü" : "Sürücü ünitesi";
   const measured = live?.powerW ?? null;
   const load = live?.loadPowerW ?? null;
   const efficiency =
@@ -366,7 +366,7 @@ function PowerCard() {
         <p className="text-[14.5px] leading-normal text-[#2e2412] [text-wrap:pretty]">
           {big ? (
             <>
-              {formatInt(live!.powerLamps)} lambadan ölçüldü
+              {formatInt(live!.powerLamps)} armatürden ölçüldü
               {load !== null ? (
                 <>
                   {" · LED'e giden "}
@@ -410,7 +410,7 @@ function ZoneLevels() {
         <p className="text-[12.5px] text-muted">Son komuta göre · kapalı bölge boş görünür</p>
       </div>
       {zones.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted">Henüz bölge yok.</p>
+        <p className="py-8 text-center text-sm text-muted">Tanımlı bölge yok.</p>
       ) : (
         <div className="scroll-x flex items-end gap-3 overflow-x-auto pb-2 sm:gap-[18px]">
           {zones.map((z) => {
@@ -459,7 +459,7 @@ function ZoneList() {
         </Link>
       </div>
       {zones.length === 0 ? (
-        <p className="border-t border-border py-4 text-sm text-muted">Henüz bölge yok.</p>
+        <p className="border-t border-border py-4 text-sm text-muted">Tanımlı bölge yok.</p>
       ) : (
         // Sabit yükseklik (~4 satır); fazlası kutunun içinde dikey kaydırılır.
         <div className="scroll-y -mr-2.5 max-h-[296px] overflow-y-auto pr-2.5">
@@ -523,16 +523,16 @@ function LitCard() {
   const lamps = countLamps(devices, now);
   const hint =
     lamps.total === 0
-      ? "Cihazlar henüz lamba bildirmedi"
+      ? "Henüz armatür verisi gelmedi"
       : [
           lamps.offline > 0 ? `${formatInt(lamps.offline)} bağlantısız` : null,
           lamps.off > 0 ? `${formatInt(lamps.off)} kapalı` : null,
         ]
           .filter(Boolean)
-          .join(" · ") || "Kapalı lamba yok";
+          .join(" · ") || "Kapalı armatür yok";
   return (
     <StatCard
-      label="Yanan lamba"
+      label="Yanan armatür"
       value={formatInt(lamps.lit)}
       unit={`/ ${formatInt(lamps.total)}`}
       hint={now === null ? "…" : hint}
@@ -569,10 +569,10 @@ export function OverviewView() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <LitCard />
         <StatCard
-          label={technical ? "Yük gücü" : "Lamba gücü"}
+          label={technical ? "Yük gücü" : "Armatür gücü"}
           value={live?.loadPowerW != null ? splitPower(live.loadPowerW).value : "—"}
           unit={live?.loadPowerW != null ? splitPower(live.loadPowerW).unit : undefined}
-          hint={live?.loadPowerW != null ? "LED'e giden güç" : "Cihaz henüz bildirmedi"}
+          hint={live?.loadPowerW != null ? "LED'e giden güç" : "Henüz veri gelmedi"}
         />
         <StatCard
           label="LED gerilimi (ort.)"
@@ -584,8 +584,8 @@ export function OverviewView() {
           unit={live?.ledVoltageV != null ? "V" : undefined}
           hint={
             live?.ledVoltageV != null
-              ? `${formatInt(live.ledVoltageLamps)} lamba ortalaması${live.ledVoltageEstimated ? " (tahmini)" : ""}`
-              : "Cihaz henüz bildirmedi"
+              ? `${formatInt(live.ledVoltageLamps)} armatür ortalaması${live.ledVoltageEstimated ? " (tahmini)" : ""}`
+              : "Henüz veri gelmedi"
           }
         />
         <StatCard
@@ -597,7 +597,7 @@ export function OverviewView() {
             alerts.length === 0
               ? "Tüm cihazlar normal"
               : [
-                  faultyLamps > 0 ? `${faultyLamps} lambada arıza` : null,
+                  faultyLamps > 0 ? `${faultyLamps} armatürde arıza` : null,
                   commandErrors > 0
                     ? technical
                       ? `${commandErrors} komut hatası`

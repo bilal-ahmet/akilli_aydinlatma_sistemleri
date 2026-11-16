@@ -108,7 +108,7 @@ export function FaultsView({ initialZone = "" }: { initialZone?: string }) {
             value: commandCount,
             tone: "text-danger",
           },
-          { label: "etkilenen lamba", value: lampCount, tone: "text-text" },
+          { label: "etkilenen armatür", value: lampCount, tone: "text-text" },
         ]}
       />
 

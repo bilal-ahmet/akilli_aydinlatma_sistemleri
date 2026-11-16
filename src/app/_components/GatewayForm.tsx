@@ -93,7 +93,7 @@ export function GatewayDialog({
         ) : technical ? (
           "Sahadaki gateway'i (Thread Border Router, 4G/WiFi router…) kaydedin."
         ) : (
-          "Cihazların ağa bağlandığı kutuyu kaydedin."
+          "Sahadaki ağ geçidini kaydedin."
         )
       }
       onSubmit={handleSubmit}

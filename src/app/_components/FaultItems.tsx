@@ -63,7 +63,7 @@ function useMapHref(deviceId: string): string | null {
 
 function lampLabel(device: DeviceView | undefined, channel: number, technical: boolean): string {
   const name = device?.lamps.find((l) => l.channel === channel)?.name?.trim();
-  const base = name || `Lamba ${channel}`;
+  const base = name || `Armatür ${channel}`;
   return technical ? `${base} · ch${channel}` : base;
 }
 
@@ -113,7 +113,7 @@ function Location({
     ),
   });
   items.push({
-    label: "Lamba",
+    label: "Armatür",
     value: channel !== null ? lampLabel(device, channel, technical) : "Cihazın tamamı",
   });
 

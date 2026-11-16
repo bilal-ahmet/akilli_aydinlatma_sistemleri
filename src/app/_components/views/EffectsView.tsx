@@ -115,7 +115,7 @@ function EffectCard({
           <span className="mt-1 flex flex-wrap gap-1.5">
             {fx.minLamps != null ? (
               <span className="rounded-md bg-panel-2 px-1.5 py-0.5 text-[11px] text-ink-2">
-                en az {fx.minLamps} lamba
+                en az {fx.minLamps} armatür
               </span>
             ) : null}
             {fx.needsText ? (
@@ -179,7 +179,7 @@ export function EffectsView() {
     // Boş metin gönderilmez → cihaz son ayarlanan metni tekrar çalar.
     const t = selected.needsText ? text || undefined : undefined;
     applyEffect(allChosen ? "all" : plan, selected.number, t);
-    const skipped = plan.skipped.length ? ` ${plan.skipped.length} cihaz atlandı (lamba sayısı yetmiyor).` : "";
+    const skipped = plan.skipped.length ? ` ${plan.skipped.length} cihaz atlandı (armatür sayısı yetmiyor).` : "";
     setSent(`${selected.label} ${targetText()} için başlatıldı.${skipped}`);
   }
 
@@ -187,7 +187,7 @@ export function EffectsView() {
   // ("Tüm Sistem" durdurması hepsini genel şiddete çekerdi).
   function stop() {
     stopEffect(stopPlan);
-    setSent("Efekt durduruldu; lambalar son şiddetine döndü.");
+    setSent("Efekt durduruldu; armatürler son şiddetine döndü.");
   }
 
   // Aynı efekti ve hedefi ileri bir saate zamanla.
@@ -260,14 +260,14 @@ export function EffectsView() {
             />
             <p className="text-[12.5px] leading-snug text-muted">
               Bir bölgeye tıklayarak bölgenin tamamını seçin. Efekti bölgedeki yalnızca bazı cihaz ya
-              da lambalarda çalıştırmak için <span className="font-medium text-ink-2">Cihazları tek tek seç</span>{" "}
+              da armatürlerde çalıştırmak için <span className="font-medium text-ink-2">Cihazları tek tek seç</span>{" "}
               düğmesini kullanın.
             </p>
           </section>
 
           <div className="flex flex-col gap-6">
-            {section("Tek lamba", "her lamba kendi başına çalar", SINGLE_LAMP_FX)}
-            {section("Tüm lambalar", "cihazdaki lambalar birlikte çalar", ALL_LAMP_FX)}
+            {section("Tek armatür", "her armatür kendi başına çalar", SINGLE_LAMP_FX)}
+            {section("Tüm armatürler", "cihazdaki armatürler birlikte çalar", ALL_LAMP_FX)}
           </div>
 
           <div
@@ -281,10 +281,10 @@ export function EffectsView() {
                 <span className="truncate text-[12.5px] text-muted">
                   {nothing
                     ? plan.skipped.length
-                      ? `Seçili cihazların lambası bu efekt için yetmiyor (en az ${selected.minLamps}).`
+                      ? `Seçili cihazların armatürü bu efekt için yetmiyor (en az ${selected.minLamps}).`
                       : "Nerede çalışacağını seçin."
                     : `${targetText()}${plan.skipped.length ? ` · ${plan.skipped.length} cihaz atlanacak` : ""}${
-                        selected.allLamps && count.lamps > 0 ? " · cihazın tüm lambalarında çalışır" : ""
+                        selected.allLamps && count.lamps > 0 ? " · cihazın tüm armatürlerinde çalışır" : ""
                       }`}
                 </span>
               </div>

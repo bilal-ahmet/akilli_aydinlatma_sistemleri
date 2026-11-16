@@ -168,7 +168,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
 
   const power = measure.powerW !== null ? splitPower(measure.powerW) : null;
   const load = measure.loadPowerW !== null ? splitPower(measure.loadPowerW) : null;
-  const noData = "Cihaz henüz bildirmedi";
+  const noData = "Henüz veri gelmedi";
 
   // Süren sorunlar (lamba arızası + komut hatası) — Arızalar sayfasıyla aynı liste.
   const alerts = openAlerts(faults, allDevices, technical).filter((a) => a.zoneSlug === zone.id);
@@ -199,7 +199,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
   const offline = now === null ? 0 : devices.length - online;
   const lampHint =
     lamps.total === 0
-      ? "Kayıtlı lamba yok"
+      ? "Kayıtlı armatür yok"
       : [
           faultyLamps > 0 ? `${faultyLamps} arızalı` : null,
           lamps.offline > 0 ? `${lamps.offline} bağlantısız` : null,
@@ -340,7 +340,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           }
         />
         <CountTile
-          label="Yanan lamba"
+          label="Yanan armatür"
           active={lamps.lit}
           total={lamps.total}
           alert={faultyLamps > 0 || lamps.offline > 0}
@@ -362,7 +362,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
         ) : (
           <p className="flex items-center gap-2.5 rounded-[14px] border border-border bg-panel px-5 py-4 text-sm text-ink-2">
             <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-ok" />
-            Bu bölgede şu an süren arıza yok.
+            Bu bölgede süren arıza yok.
           </p>
         )}
       </section>
@@ -372,7 +372,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           label="Çekilen güç"
           value={power?.value ?? "—"}
           unit={power?.unit}
-          hint={power ? `${measure.lamps} lambadan ölçüldü` : noData}
+          hint={power ? `${measure.lamps} armatürden ölçüldü` : noData}
         />
         <StatCard
           label="LED gerilimi (ort.)"
@@ -384,12 +384,12 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           unit={measure.ledVoltageV !== null ? "V" : undefined}
           hint={
             measure.ledVoltageV !== null
-              ? `${measure.ledVoltageLamps} lamba ortalaması${measure.ledVoltageEstimated ? " (tahmini)" : ""}`
+              ? `${measure.ledVoltageLamps} armatür ortalaması${measure.ledVoltageEstimated ? " (tahmini)" : ""}`
               : noData
           }
         />
         <StatCard
-          label={technical ? "Yük gücü" : "Lamba gücü"}
+          label={technical ? "Yük gücü" : "Armatür gücü"}
           value={load?.value ?? "—"}
           unit={load?.unit}
           hint={load ? "LED'e giden güç" : noData}
@@ -493,7 +493,7 @@ export function ZonesView({ zoneSlug }: { zoneSlug: string | null }) {
         <ZoneDetail key={zone.id} zone={zone} />
       ) : (
         <EmptyBox>
-          Henüz bölge yok.
+          Tanımlı bölge yok.
           {canWrite ? (
             <>
               {" "}
