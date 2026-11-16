@@ -56,9 +56,9 @@ export function BinaryProtocol() {
       <p className="mt-1 max-w-2xl text-xs text-muted">
         Yeni firmware&apos;li cihazlar verilerini <code className="font-mono">Meven:&lt;MAC&gt;/bin</code>
         &apos;e binary basar; sunucu çözüp JSON ile aynı yoldan işler. Sayaçlar sunucunun son
-        açılışından beri ({formatAgo(snap.since, now)}). Komutlar, dinleyen cihazların hepsi binary
-        gönderiyorsa binary gider; aksi halde (ve <code className="font-mono">Meven:all/cmd</code>
-        &apos;de her zaman) JSON.
+        açılışından beri ({formatAgo(snap.since, now)}). Toplu komutlar (bölge, tüm sistem), dinleyen cihazlardan en az biri binary
+        gönderiyor ve hiçbiri JSON gönderen eski firmware değilse binary gider; aksi halde JSON.
+        Hiç bağlanmamış kayıtlar kararı etkilemez.
       </p>
 
       {snap.alarm ? (

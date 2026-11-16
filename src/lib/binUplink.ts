@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { peekTenancy, type TenancyIndex } from "@/lib/tenancy";
 import { decodeFrame, toHex, type RejectReason } from "@/lib/binproto/codec";
@@ -74,6 +74,8 @@ type Store = {
   buildInfo: Map<string, BuildInfo>;
   duplicateJson: number;
   logged: Map<string, number>;
+  /** MAC → son JSON telemetri/health zamanı (binary hiç görülmemiş cihazlar dahil). */
+  jsonSeen: Map<string, number>;
 };
 
 const g = globalThis as unknown as { __fenerBin?: Store };
@@ -86,7 +88,9 @@ const store: Store = (g.__fenerBin ??= {
   buildInfo: new Map(),
   duplicateJson: 0,
   logged: new Map(),
+  jsonSeen: new Map(),
 });
+store.jsonSeen ??= new Map(); // HMR: eski store nesnesinde alan yok
 
 /** Aynı anahtar için saatte en fazla bir log (cihaz her 30 sn aynı paketi basabilir). */
 function logOnce(key: string, level: "warn" | "error", message: string, now: number): void {
@@ -256,6 +260,86 @@ export function binCommandCapable(mac: string): boolean {
 export function noteJsonUplink(mac: string, now = Date.now()): void {
   const d = store.devices.get(mac);
   if (d) d.lastJsonAt = now;
+  store.jsonSeen.set(mac, now);
+}
+
+/**
+ * Bu cihazın JSON konuştuğu BİLİNİYOR mu (eski firmware)? Son uplink'i JSON
+ * telemetri/health ise evet. Hiç görülmemiş ya da sessiz cihaz "bilinmiyor"dur
+ * — ne binary-yetenekli ne JSON'cu.
+ */
+export function knownJsonDevice(mac: string): boolean {
+  const at = store.jsonSeen.get(mac);
+  if (at == null) return false;
+  const bin = store.devices.get(mac)?.lastValidAt;
+  return bin == null || bin < at;
+}
+
+/**
+ * Bir toplu topic'e (bölge / all) binary gidebilir mi? Dinleyen kayıtlı
+ * cihazlardan en az biri binary-yetenekli olmalı ve hiçbiri JSON'cu olarak
+ * bilinmemeli. Hiç bağlanmamış / sessiz kayıtlar kararı ETKİLEMEZ: eskiden
+ * tek bir ölü kayıt bütün bölgeyi JSON'a çekiyordu ve yeni firmware JSON
+ * toplu komutu çözemiyordu.
+ */
+export function groupTakesBinary(macs: Iterable<string>): boolean {
+  let capable = false;
+  for (const mac of macs) {
+    if (knownJsonDevice(mac)) return false;
+    if (binCommandCapable(mac)) capable = true;
+  }
+  return capable;
+}
+
+/** Son 24 saatte JSON health'i görülmüş cihaz açılışta "JSON'cu" sayılır. */
+const SEED_JSON_MAX_AGE_MS = 24 * 60 * 60_000;
+
+/**
+ * Açılışta komut biçimi bilgisini DB'den geri yükler. Bilgi bellekte tutulur
+ * ve sahadaki cihazlar 15 dk'da bir rapor verir; tohumlanmazsa her deploy'dan
+ * sonra komutlar (özellikle toplu olanlar) dakikalarca JSON giderdi.
+ *
+ * Binary işareti: son health'i bizim çeviricimizden çıkmışsa `health_interval_s`
+ * anahtarını taşır (toJson her zaman yazar, değer null olabilir), ya da cihaz
+ * rapor aralığını bildirmiştir (yalnızca binary firmware bildirir). JSON
+ * işareti: health'i var, bu anahtar yok ve cihaz son 24 saatte görülmüş.
+ * Bellekte zaten kaydı olan cihaza dokunulmaz (canlı bilgi daha yenidir).
+ */
+export async function seedBinStateFromDb(): Promise<void> {
+  const rows = await db
+    .select({
+      mac: schema.devices.deviceId,
+      lastSeen: schema.devices.lastSeen,
+      binHealth: sql<boolean>`coalesce(jsonb_exists(${schema.devices.health}, 'health_interval_s'), false)`,
+      hasHealth: sql<boolean>`${schema.devices.health} is not null`,
+      reportIntervalS: schema.devices.reportIntervalS,
+      healthIntervalS: schema.devices.healthIntervalS,
+    })
+    .from(schema.devices)
+    .where(isNotNull(schema.devices.lastSeen));
+  const now = Date.now();
+  let bin = 0;
+  let json = 0;
+  for (const r of rows) {
+    const seen = r.lastSeen!.getTime();
+    if (r.binHealth || r.reportIntervalS != null || r.healthIntervalS != null) {
+      if (store.devices.has(r.mac)) continue;
+      store.devices.set(r.mac, {
+        firstAt: seen,
+        lastAt: seen,
+        lastValidAt: seen,
+        lastJsonAt: null,
+        frames: 0,
+        lastType: null,
+        lastReject: null,
+      });
+      bin += 1;
+    } else if (r.hasHealth && now - seen < SEED_JSON_MAX_AGE_MS && !store.jsonSeen.has(r.mac)) {
+      store.jsonSeen.set(r.mac, seen);
+      json += 1;
+    }
+  }
+  console.log(`[bin] komut biçimi DB'den yüklendi: ${bin} binary, ${json} JSON cihaz`);
 }
 
 export function noteDuplicateJson(mac: string): void {

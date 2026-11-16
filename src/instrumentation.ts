@@ -26,6 +26,17 @@ export async function register() {
     console.error("[instrumentation] tenancy başlatılamadı:", err);
   }
 
+  // Komut biçimi (binary/JSON) bilgisi bellektedir; DB'den geri yüklenmezse
+  // deploy sonrası toplu komutlar cihazların ilk raporuna kadar JSON giderdi.
+  try {
+    const { seedBinStateFromDb } = await import("@/lib/binUplink");
+    void seedBinStateFromDb().catch((err) =>
+      console.error("[instrumentation] komut biçimi yüklenemedi:", err),
+    );
+  } catch (err) {
+    console.error("[instrumentation] komut biçimi başlatılamadı:", err);
+  }
+
   // Zamanlanmış komutlar. Tablo yoksa (migration çalışmadı) yalnızca loglanır;
   // ilk zamanlama CRUD'unda yeniden yüklenir.
   try {

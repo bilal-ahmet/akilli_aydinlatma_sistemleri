@@ -17,6 +17,7 @@ import { intervalSeconds } from "@/lib/deviceWindows";
 import {
   binActive,
   binCommandCapable,
+  groupTakesBinary,
   decodeBinUplink,
   type BinUplinkResult,
   noteDuplicateJson,
@@ -70,9 +71,10 @@ import {
  *  payload'daki `type` ile yapılır (bkz. routeUplink, lib/gateways.ts).
  *  - publish   Meven:<MAC>/cmd  → tekil komut
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
- *  - publish   Meven:all/cmd    → toplu komut (her zaman JSON)
- *  Komut biçimi topic başına seçilir: dinleyenlerin hepsi binary gönderiyorsa
- *  binary (protokol v1, kısa u16 id), değilse JSON (bkz. publishCommand).
+ *  - publish   Meven:all/cmd    → toplu komut
+ *  Komut biçimi topic başına seçilir: dinleyen kayıtlı cihazlardan en az biri
+ *  binary gönderiyor ve hiçbiri JSON'cu olarak bilinmiyorsa binary (protokol
+ *  v1, kısa u16 id), değilse JSON (bkz. publishCommand, groupTakesBinary).
  */
 
 const globalForMqtt = globalThis as unknown as {
@@ -963,15 +965,23 @@ function deviceTakesBinary(mac: string): boolean {
 }
 
 /**
- * Bölge topic'ine binary gidebilir mi? Topic'i bölgenin BÜTÜN cihazları
- * dinler; biri bile binary'yi anlamıyorsa (eski firmware, kapalı, yeni
- * eklenmiş) JSON gider — cihazlar geçiş döneminde JSON'u da kabul ediyor.
- * Bellek içi (tenancy + binUplink), DB'ye gitmez (Kural #10).
+ * Bölge topic'ine binary gidebilir mi? Bölgenin kayıtlı cihazlarından en az
+ * biri binary-yetenekliyse ve hiçbiri JSON'cu (eski firmware) olarak
+ * bilinmiyorsa binary. Hiç bağlanmamış / sessiz kayıtlar kararı etkilemez
+ * (bkz. groupTakesBinary). Bellek içi (tenancy + binUplink), DB'ye gitmez
+ * (Kural #10).
  */
 function zoneTakesBinary(slug: string): boolean {
   if (!binaryCommandsEnabled()) return false;
   const macs = peekTenancy()?.zoneMacs.get(slug);
-  return !!macs && macs.length > 0 && macs.every((mac) => binCommandCapable(mac));
+  return !!macs && groupTakesBinary(macs);
+}
+
+/** `Meven:all/cmd`: aynı kural, bütün kayıtlı cihazlar üzerinden. */
+function allTakesBinary(): boolean {
+  if (!binaryCommandsEnabled()) return false;
+  const idx = peekTenancy();
+  return !!idx && groupTakesBinary(idx.deviceZone.keys());
 }
 
 /** Kablo komutunun (toWireCmd sonrası) binary karşılığı. */
@@ -1080,7 +1090,7 @@ export function publishCommand(
   zoneSlugs?: string[],
 ): { requestId: string; seq: number } {
   // Topic başına biçim: binary yalnızca dinleyenlerin hepsi anlıyorsa.
-  // `Meven:all/cmd` JSON kalır — kayıtsız cihazlar da dinliyor.
+  // `Meven:all/cmd` aynı kuralı bütün kayıtlı cihazlar üzerinden uygular.
   const topics: Array<{ topic: string; binary: boolean }> =
     target === "device"
       ? [{ topic: cmdTopic(id), binary: deviceTakesBinary(id) }]
@@ -1088,7 +1098,7 @@ export function publishCommand(
         ? [{ topic: zoneCmdTopic(id), binary: zoneTakesBinary(id) }]
         : target === "customer"
           ? (zoneSlugs ?? []).map((slug) => ({ topic: zoneCmdTopic(slug), binary: zoneTakesBinary(slug) }))
-          : [{ topic: ALL_CMD, binary: false }];
+          : [{ topic: ALL_CMD, binary: allTakesBinary() }];
 
   // Komut id'si publish'ten ÖNCE üretilir: JSON'da kablodaki `id` =
   // commands.request_id; binary'de kısa id → shortIds ile aynı UUID.
