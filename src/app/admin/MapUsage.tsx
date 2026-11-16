@@ -1,0 +1,79 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useReconcile } from "@/app/_lib/useReconcile";
+import { formatInt } from "@/app/_lib/format";
+
+interface Snapshot {
+  configured: boolean;
+  today: number;
+  dailyLimit: number;
+  month: number;
+  monthlyLimit: number;
+}
+
+function Meter({ label, used, limit }: { label: string; used: number; limit: number }) {
+  const ratio = limit > 0 ? Math.min(1, used / limit) : 1;
+  const full = used >= limit;
+  return (
+    <div className="min-w-[200px] flex-1">
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="text-muted">{label}</span>
+        <span className={`font-mono tabular-nums ${full ? "text-danger" : "text-text"}`}>
+          {formatInt(used)} / {formatInt(limit)}
+        </span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-panel-2">
+        <div
+          className={`h-full rounded-full ${full ? "bg-danger" : "bg-accent"}`}
+          style={{ width: `${Math.round(ratio * 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Google Maps kullanım sayacı. Haritalar sayfası Google ile açılır; sınır
+ * dolunca OpenStreetMap çizilir (lib/mapUsage.ts). Google yapılandırılmamışsa
+ * kart gösterilmez.
+ */
+export function MapUsage() {
+  const [snap, setSnap] = useState<Snapshot | null>(null);
+
+  const load = useCallback(() => {
+    fetch("/api/admin/map-usage")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.data) setSnap(j.data as Snapshot);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  useReconcile(load);
+
+  if (!snap || !snap.configured) return null;
+  const limited = snap.today >= snap.dailyLimit || snap.month >= snap.monthlyLimit;
+
+  return (
+    <section aria-label="Google harita kullanımı" className="rounded-2xl border border-border bg-panel p-5">
+      <h2 className="font-display text-base font-semibold text-text">Google harita kullanımı</h2>
+      <p className="mt-1 max-w-2xl text-xs text-muted">
+        Haritalar sayfası Google Maps ile açılır; her harita kurulumu bir yükleme sayılır (tüm müşteriler ortak).
+        Sınır dolunca harita kendiliğinden OpenStreetMap&apos;e geçer, ücret oluşmaz. Günlük sayaç UTC gece
+        yarısında, aylık sayaç ay başında sıfırlanır.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-x-8 gap-y-4">
+        <Meter label="Bugün" used={snap.today} limit={snap.dailyLimit} />
+        <Meter label="Bu ay" used={snap.month} limit={snap.monthlyLimit} />
+      </div>
+      {limited ? (
+        <p className="mt-3 text-xs font-medium text-danger">
+          Sınır doldu: Haritalar sayfası şu an OpenStreetMap ile açılıyor.
+        </p>
+      ) : null}
+    </section>
+  );
+}

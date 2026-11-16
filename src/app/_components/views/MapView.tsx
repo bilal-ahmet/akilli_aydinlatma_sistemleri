@@ -281,6 +281,9 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showUnlocated, setShowUnlocated] = useState(false);
+  const [view3d, setView3d] = useState(false);
+  /** 3B'de sürükleme: kaydır (varsayılan) ya da döndür. */
+  const [rotateDrag, setRotateDrag] = useState(false);
 
   const stateOf = poleStateResolver(devices, faultsByDevice, now);
   const byMac = new Map(devices.map((d) => [d.deviceId, d]));
@@ -481,12 +484,41 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
           editPole={moving}
           onMove={(id, lat, lng) => setMoving({ id, lat, lng })}
           fitKey={zoneFilter}
+          view3d={view3d}
+          rotateDrag={rotateDrag}
           focus={
             initialFocus && initialFocus.lat !== null && initialFocus.lng !== null
               ? { key: initialFocus.id, lat: initialFocus.lat, lng: initialFocus.lng }
               : null
           }
         />
+
+        {/* Görünüm seçimi: sağ üstte; direk paneli açıkken (geniş ekranda) panelin soluna kayar. */}
+        <div
+          className={`absolute right-3 top-3 flex flex-col items-end gap-2 ${selected ? "sm:right-[364px]" : ""}`}
+        >
+          <SegmentedToggle
+            label="Harita görünümü"
+            options={[
+              { key: "2d", label: "Normal" },
+              { key: "3d", label: "3 Boyutlu" },
+            ]}
+            value={view3d ? "3d" : "2d"}
+            onChange={(k) => setView3d(k === "3d")}
+          />
+          {view3d ? (
+            <SegmentedToggle
+              label="Sürükleme"
+              title="Döndür: haritayı tutup sürükleyerek çevirin. Kaydır modunda sağ tuşla (ya da Ctrl basılı) sürükleyerek, dokunmatik ekranda iki parmakla da döndürebilirsiniz."
+              options={[
+                { key: "pan", label: "Kaydır" },
+                { key: "rotate", label: "Döndür" },
+              ]}
+              value={rotateDrag ? "rotate" : "pan"}
+              onChange={(k) => setRotateDrag(k === "rotate")}
+            />
+          ) : null}
+        </div>
 
         {!polesLoading && poles.length === 0 ? (
           <div className="pointer-events-none absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-panel/95 px-4 py-3 text-center text-[13px] text-ink-2 shadow-lg">
@@ -522,6 +554,44 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Haritanın üzerindeki iki seçenekli düğme grubu. */
+function SegmentedToggle({
+  label,
+  title,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  title?: string;
+  options: Array<{ key: string; label: string }>;
+  value: string;
+  onChange: (key: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      title={title}
+      className="flex rounded-[10px] border border-border bg-panel/95 p-0.5 shadow-md backdrop-blur"
+    >
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          aria-pressed={value === o.key}
+          onClick={() => onChange(o.key)}
+          className={`h-[30px] rounded-lg px-3 text-[13px] font-medium transition ${
+            value === o.key ? "bg-accent-soft text-accent" : "text-ink-2 hover:text-text"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -814,14 +814,45 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
   satır varsa **hiçbir şey yazılmaz**. Türkiye kutusu dışındaki koordinat
   reddedilir — belediye CBS verisi çoğu zaman ITRF96/TM'dir; gerçek dosya
   gelince `proj4` dönüşümü eklenmeli.
-- **Harita** (`_components/PoleMap.tsx`, MapLibre GL, `ssr:false`): altlık
+- **Harita sağlayıcısı** (`_components/PoleMap.tsx` seçici): Google anahtarı
+  varsa bütün haritalar (Haritalar sayfası, bölge kartı, arıza mini haritası)
+  **Google Maps** (`PoleMapGoogle.tsx`); kota dolunca / anahtar yokken / hata
+  olunca **MapLibre + OpenStreetMap** (`PoleMapLibre.tsx`). İki uygulama aynı
+  `PoleMapProps` sözleşmesini paylaşır.
+  - **Kota koruması (para harcanmasın):** kesin sınır Google Cloud'daki
+    "Map loads per day" kotasıdır. Uygulama onun altında kalan yumuşak sınırı
+    uygular: istemci yeni Google haritası kurmadan önce `POST /api/map/session`
+    sorar; `lib/mapUsage.ts` günlük (atomik) ve aylık sayaca bakar
+    (`map_usage`, tüm müşteriler ortak), uygunsa artırıp `google`, değilse
+    `osm` döner. DB hatası / anahtar yok → `osm`. Admin sayfasında sayaç kartı
+    (`admin/MapUsage.tsx`, `GET /api/admin/map-usage`).
+  - **Örnek havuzu** (`_lib/googleMap.ts`): Google her `new Map`'i faturalar.
+    Haritalar ayrık `div`'lerde kurulur, sökülünce yok edilmez, havuza döner
+    (`acquireGoogleMap(kind, scheme)` / `releaseGoogleMap`). Tür (`main` |
+    `compact` | `preview`) ve tema başına havuz; sekme başına yükleme = aynı
+    anda ekranda olan harita sayısı. Mini haritalar ekrana yaklaşınca alır,
+    uzaklaşınca bırakır. **Google haritasını bileşen içinde `new
+    google.maps.Map` ile kurmayın.**
+  - **Yalnızca Maps JavaScript API.** Places, Geocoding, Routes, Street View,
+    Static Maps kullanılmaz (ayrı faturalanır); `clickableIcons: false`.
+  - Çalışma anı hatası (`gm_authFailure`, hata kutusu) → o sekmede MapLibre.
+  - Google 3B: binalar Google'dan, direkler `_lib/googlePoles3d.ts`
+    (`WebGLOverlayView` + three.js, `InstancedMesh`; 3B ilk açılınca yüklenir).
+- **Harita** (`_components/PoleMapLibre.tsx`, MapLibre GL, `ssr:false`): altlık
   `NEXT_PUBLIC_MAP_STYLE_URL[_DARK]`, yoksa anahtarsız OpenFreeMap
-  (positron/dark; OSM atfı haritada). Kümeleme kaynakta, sorunlu direk içeren
+  (liberty/fiord, renkli; OSM atfı haritada). Kümeleme kaynakta, sorunlu direk içeren
   küme kırmızı. MapLibre oklch okumaz → renkler hex. `views/MapView.tsx`: durum
   filtreleri, yan panel (lambalar, arızalar, Aç/Kapat/Şiddet), "+ Direk ekle"
   (haritaya tık), "Konumu taşı" (sürükle + kaydet), konumsuz direği seçip
-  yerleştirme. Bölge detayında `ZoneMapCard` + `PoleList`; arıza kartında
-  "Haritada göster".
+  yerleştirme. Bölge detayında `ZoneMapCard` + `PoleList`; süren arıza kartında
+  mini harita (`FaultMiniMap`, `PoleMap preview`: etkileşimsiz, tıklayınca
+  Harita sayfası; kart ekrana yaklaşınca kurulur — WebGL bağlam sınırı).
+- **3 boyutlu görünüm** (Harita sayfası, sağ üstte Normal / 3 Boyutlu;
+  `PoleMap view3d`; aşağıdaki ayrıntı MapLibre sürümüdür): eğik kamera, binalar ve direkler `fill-extrusion` ile
+  (three.js yok). Direk geometrisi yakınlaşmaya göre ölçeklenir (`poleScale`,
+  ekranda ~sabit boy), zoom 15'ten itibaren çizilir; armatür rengi direk
+  durumundan. 3B'de "Kaydır / Döndür": Döndür'de sürükleme haritayı çevirir
+  (`rotateDrag`). Binalar yalnızca stilde `openmaptiles` kaynağı varsa.
 
 ### Zamanlamalar
 
@@ -1047,7 +1078,9 @@ CREATE TABLE schedules (
 );
 ```
 
-> Migration `0010_schedules.sql`. Saf zaman/hesap testi: `npm run check:schedule`.
+> Migration `0010_schedules.sql`. Ayrıca `map_usage(day PK 'YYYY-MM-DD' UTC,
+> google_loads)` — Google harita yükleme sayacı (migration `0013_map_usage.sql`).
+> Saf zaman/hesap testi: `npm run check:schedule`.
 
 ### `fixtures`
 
@@ -1233,9 +1266,17 @@ SESSION_SECRET=****
 # Uygulama (SSE; aynı origin olduğu için varsayılan /api/events)
 NEXT_PUBLIC_SSE_URL=/api/events
 
-# Harita altlığı (opsiyonel; boşsa anahtarsız OpenFreeMap positron/dark)
+# Harita altlığı (opsiyonel; boşsa anahtarsız OpenFreeMap liberty/fiord)
 NEXT_PUBLIC_MAP_STYLE_URL=
 NEXT_PUBLIC_MAP_STYLE_URL_DARK=
+
+# Google Maps (opsiyonel; yalnızca Haritalar sayfası). Boşsa OpenStreetMap.
+# Anahtar: HTTP referrer + yalnızca Maps JavaScript API. Map ID: Vector, Tilt + Rotation.
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=
+# Uygulama içi kota (harita yüklemesi, tüm müşteriler ortak). Boş = 250 / 8000.
+GOOGLE_MAPS_DAILY_LIMIT=
+GOOGLE_MAPS_MONTHLY_LIMIT=
 
 # Binary komut gönderimi (opsiyonel; varsayılan açık, yalnızca binary gönderen
 # cihazlara). Sahada sorun çıkarsa off → bütün komutlar JSON.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { DeviceView, FaultRecord } from "@/app/_lib/types";
+import type { DeviceView, FaultRecord, PoleView } from "@/app/_lib/types";
 import type { AlertItem } from "@/app/_lib/alerts";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel, useTechnical } from "@/app/_lib/panel";
@@ -17,6 +17,7 @@ import {
   type FaultCategory,
 } from "@/lib/faults";
 import { useDialogs } from "./PanelDialogs";
+import { FaultMiniMap } from "./FaultMiniMap";
 
 /**
  * Arıza kayıtlarının ortak görünümü — Arızalar sayfası ve bölge detayı aynı
@@ -52,13 +53,14 @@ function CategoryChip({ category }: { category: FaultCategory }) {
   );
 }
 
-/** Cihazın bağlı olduğu, konumu girilmiş direğin harita bağlantısı; yoksa null. */
-function useMapHref(deviceId: string): string | null {
+/** Cihazın bağlı olduğu, konumu girilmiş direk ve harita bağlantısı; yoksa null. */
+function usePoleOnMap(deviceId: string): { pole: PoleView; href: string } | null {
   const { devices, poles } = useLighting();
   const { customerSlug } = usePanel();
   const poleId = devices.find((d) => d.deviceId === deviceId)?.poleId;
-  const pole = poleId ? poles.find((p) => p.id === poleId && p.lat !== null) : undefined;
-  return pole ? `/c/${customerSlug}/harita?direk=${pole.id}` : null;
+  const pole = poleId ? poles.find((p) => p.id === poleId && p.lat !== null && p.lng !== null) : undefined;
+  if (!pole) return null;
+  return { pole, href: `/c/${customerSlug}/harita?bolge=${encodeURIComponent(pole.zoneSlug)}&direk=${pole.id}` };
 }
 
 function lampLabel(device: DeviceView | undefined, channel: number, technical: boolean): string {
@@ -152,7 +154,7 @@ export function OpenAlertCard({
   const { devices } = useLighting();
   const { openDevice } = useDialogs();
   const device = devices.find((d) => d.deviceId === alert.deviceId);
-  const mapHref = useMapHref(alert.deviceId);
+  const onMap = usePoleOnMap(alert.deviceId);
   const kindLabel =
     alert.kind === "command" ? (technical ? "Komut hatası" : "Komut uygulanamadı") : alert.warning ? "Uyarı" : "Arıza";
 
@@ -166,11 +168,6 @@ export function OpenAlertCard({
         <Badge tone={alert.warning ? "warn" : "bad"}>{kindLabel}</Badge>
         <CategoryChip category={alert.category} />
         <p className="min-w-0 flex-1 text-[15px] font-semibold text-text">{alert.title}</p>
-        {mapHref ? (
-          <Link href={mapHref} className="btn-line h-[32px] px-3 text-[13px]">
-            Haritada göster
-          </Link>
-        ) : null}
         {device ? (
           <button type="button" onClick={() => openDevice(device)} className="btn-line h-[32px] px-3 text-[13px]">
             Cihaza git
@@ -178,23 +175,28 @@ export function OpenAlertCard({
         ) : null}
       </div>
 
-      {alert.cause ? <p className="text-[13.5px] text-ink-2">{alert.cause}</p> : null}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          {alert.cause ? <p className="text-[13.5px] text-ink-2">{alert.cause}</p> : null}
 
-      <div className="flex flex-col gap-1.5 border-t border-border pt-3">
-        <Location {...alert} showZone={showZone} />
-        {alert.since ? (
-          <p className="text-[12.5px] text-muted">
-            Başladı: {formatStart(alert.since, now)}
-            {now !== null ? (
-              <>
-                {" · "}
-                <span className={alert.warning ? "text-accent" : "text-danger"}>
-                  {formatDuration(now - new Date(alert.since).getTime())} sürüyor
-                </span>
-              </>
+          <div className="flex flex-col gap-1.5 border-t border-border pt-3">
+            <Location {...alert} showZone={showZone} />
+            {alert.since ? (
+              <p className="text-[12.5px] text-muted">
+                Başladı: {formatStart(alert.since, now)}
+                {now !== null ? (
+                  <>
+                    {" · "}
+                    <span className={alert.warning ? "text-accent" : "text-danger"}>
+                      {formatDuration(now - new Date(alert.since).getTime())} sürüyor
+                    </span>
+                  </>
+                ) : null}
+              </p>
             ) : null}
-          </p>
-        ) : null}
+          </div>
+        </div>
+        {onMap ? <FaultMiniMap pole={onMap.pole} href={onMap.href} /> : null}
       </div>
     </div>
   );
@@ -219,7 +221,6 @@ export function ResolvedFaultRows({
 
 function ResolvedFaultRow({ record: h, showZone }: { record: FaultRecord; showZone: boolean }) {
   const technical = useTechnical();
-  const mapHref = useMapHref(h.deviceId);
   const warn = isWarningCode(h.code);
   const text = faultDescription(h.code, technical);
   const duration = new Date(h.resolvedAt!).getTime() - new Date(h.startedAt).getTime();
@@ -233,16 +234,9 @@ function ResolvedFaultRow({ record: h, showZone }: { record: FaultRecord; showZo
       </div>
       {text ? <p className="text-[13px] text-ink-2">{text.what}</p> : null}
       <Location {...h} showZone={showZone} />
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <p className="text-[12.5px] text-muted">
-          {formatWhen(h.startedAt)} → {formatWhen(h.resolvedAt!)} · {formatDuration(duration)} sürdü
-        </p>
-        {mapHref ? (
-          <Link href={mapHref} className="text-[13px] font-medium text-accent hover:underline">
-            Haritada göster
-          </Link>
-        ) : null}
-      </div>
+      <p className="text-[12.5px] text-muted">
+        {formatWhen(h.startedAt)} → {formatWhen(h.resolvedAt!)} · {formatDuration(duration)} sürdü
+      </p>
     </div>
   );
 }

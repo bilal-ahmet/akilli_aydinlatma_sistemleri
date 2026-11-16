@@ -438,6 +438,17 @@ export const schedules = pgTable(
   ],
 );
 
+/**
+ * Google Maps kullanım sayacı: gün (UTC) başına kurulan Google haritası sayısı.
+ * Ücretsiz kotayı aşmamak için `lib/mapUsage.ts` bu sayaca bakar; sınır dolunca
+ * harita OpenStreetMap'e (MapLibre) düşer. Tüm müşteriler için ortaktır —
+ * Google anahtar başına faturalar.
+ */
+export const mapUsage = pgTable("map_usage", {
+  day: varchar("day", { length: 10 }).primaryKey(), // YYYY-MM-DD (UTC)
+  googleLoads: integer("google_loads").notNull().default(0),
+});
+
 export type CustomerRow = typeof customers.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type AuthSessionRow = typeof authSessions.$inferSelect;
