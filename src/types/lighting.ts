@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/effects";
 import { GATEWAY_TYPES } from "@/lib/gateways";
+import type { ZoneSyncView } from "@/lib/zoneSync/plan";
 import {
   SCHEDULE_ACTIONS,
   SCHEDULE_OFFSET_MAX,
@@ -30,6 +31,18 @@ export type MaintenanceAction = (typeof MAINTENANCE_ACTIONS)[number];
 
 export function isMaintenanceAction(a: unknown): a is MaintenanceAction {
   return typeof a === "string" && (MAINTENANCE_ACTIONS as readonly string[]).includes(a);
+}
+
+/**
+ * Bölge aboneliği komutları (zone_add/remove/clear/list). Panelden değil, bölge
+ * senkron motorundan (lib/zoneSync) üretilir; yanıtları lamba hatası değildir
+ * (rozete/arıza geçmişine yazılmaz) — bkz. lib/mqtt.ts handleZoneAck.
+ */
+export const ZONE_ACTIONS = ["zone_add", "zone_remove", "zone_clear", "zone_list"] as const;
+export type ZoneAction = (typeof ZONE_ACTIONS)[number];
+
+export function isZoneAction(a: unknown): a is ZoneAction {
+  return typeof a === "string" && (ZONE_ACTIONS as readonly string[]).includes(a);
 }
 
 // Kanal (DALI lambası) no: bir ESP'ye bağlı bağımsız aydınlatma adresi.
@@ -337,7 +350,8 @@ export type ZoneStatusValue = (typeof ZONE_STATUSES)[number];
 
 export const zoneCreateSchema = z.object({
   name: z.string().trim().min(1, "İsim zorunlu").max(100),
-  slug: z.string().trim().max(100).optional(),
+  // Bölge slug'ı topic'tir ve cihaza gönderilir: firmware 32 karakter kabul eder.
+  slug: z.string().trim().max(32).optional(),
   district: z.string().trim().max(100).optional(),
   poleCount: z.number().int().min(0).max(100000).optional(),
   status: z.enum(ZONE_STATUSES).optional(),
@@ -363,6 +377,23 @@ export const zoneUpdateSchema = z
   });
 export type ZoneUpdate = z.infer<typeof zoneUpdateSchema>;
 
+// ── Alt gruplar (dinamik bölge aboneliği) ────────────────────
+// Slug sunucuda adla bölge slug'ından üretilir (≤32, değişmez); yalnızca ad düzenlenir.
+export const zoneGroupCreateSchema = z.object({
+  name: z.string().trim().min(1, "Ad zorunlu").max(100),
+});
+export const zoneGroupUpdateSchema = zoneGroupCreateSchema;
+
+/** Toplu üyelik: bölgenin cihazları eklenir / çıkarılır (MAC listesi). */
+export const zoneGroupMembersSchema = z
+  .object({
+    add: z.array(z.string().trim().min(1)).max(500).optional(),
+    remove: z.array(z.string().trim().min(1)).max(500).optional(),
+  })
+  .refine((d) => (d.add?.length ?? 0) + (d.remove?.length ?? 0) > 0, {
+    message: "Eklenecek ya da çıkarılacak cihaz yok",
+  });
+
 // ── Device CRUD (dashboard → backend) ────────────────────────
 // Cihaz kimliği = MAC. Girdi iki noktalı/noktasız olabilir; backend normalize eder.
 export const deviceCreateSchema = z.object({
@@ -377,9 +408,10 @@ export type DeviceCreate = z.infer<typeof deviceCreateSchema>;
  * kimliğidir: değişince kayıtları yeni MAC'e taşınır (bkz. PATCH route,
  * `renameDeviceMac`). İki noktalı/noktasız girilebilir.
  *
- * DİKKAT: bölge değişikliği yalnızca dashboard kaydını taşır. Cihazın hangi
- * `Meven:<slug>/cmd` topic'ini dinlediği firmware'deki ZONE_SLUG'tan gelir;
- * cihaz yeniden flaşlanmadıkça yeni bölgenin komutlarını ALMAZ.
+ * Bölge değişikliği: dinamik bölge aboneliğini destekleyen firmware'de yeni
+ * bölge cihaza gönderilir (lib/zoneSync; çevrimdışıysa bağlandığında). Eski
+ * firmware'de cihaz hangi topic'i dinleyeceğini ZONE_SLUG'tan bilir ve yeniden
+ * flaşlanmadıkça yeni bölgenin komutlarını ALMAZ.
  */
 export const deviceUpdateSchema = z
   .object({
@@ -488,15 +520,16 @@ export const scheduleTargetSchema = z.union([
   z
     .object({
       zones: z.array(z.string().trim().min(1).max(100)).default([]),
+      groups: z.array(z.string().trim().min(1).max(32)).default([]),
       devices: z.array(scheduleMac).default([]),
       lamps: z
         .array(z.object({ mac: scheduleMac, channel: z.number().int().min(0).max(MAX_CHANNEL) }))
         .default([]),
     })
-    .refine((t) => t.zones.length + t.devices.length + t.lamps.length > 0, {
+    .refine((t) => t.zones.length + t.groups.length + t.devices.length + t.lamps.length > 0, {
       message: "En az bir bölge, cihaz ya da armatür seçilmeli",
     })
-    .refine((t) => t.zones.length + t.devices.length + t.lamps.length <= SCHEDULE_TARGET_MAX, {
+    .refine((t) => t.zones.length + t.groups.length + t.devices.length + t.lamps.length <= SCHEDULE_TARGET_MAX, {
       message: `En fazla ${SCHEDULE_TARGET_MAX} hedef seçilebilir`,
     }),
 ]);
@@ -604,7 +637,12 @@ export type LiveEvent = {
    * Olayın kaynağı: cihaz komut yanıtı mı, telemetri mi, komut echo'su mu,
    * bakım komutu yanıtı mı (commission/ota_check), sağlık mesajı mı.
    */
-  kind?: "ack" | "telemetry" | "command" | "maintenance" | "health" | "gateway";
+  kind?: "ack" | "telemetry" | "command" | "maintenance" | "health" | "gateway" | "zone_sync";
+  /**
+   * kind:"zone_sync" — cihazın bölge aboneliği durumu (lib/zoneSync). Hata metni
+   * burada durur, üstteki `error`'a konmaz (bildirim olarak düşmesin).
+   */
+  zoneSync?: ZoneSyncView;
   /**
    * kind:"gateway" — olayın ait olduğu gateway (GW_ID). Gateway olaylarında
    * `deviceId`/`zoneSlug` YOKTUR; cihaz/bölge dinleyicileri bunları atlar.

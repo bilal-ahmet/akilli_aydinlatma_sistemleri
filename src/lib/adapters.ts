@@ -66,6 +66,8 @@ export function toDeviceView(row: {
   poleId?: string | null;
   poleCode?: string | null;
   lamps?: DeviceView["lamps"];
+  groups?: string[];
+  zoneSync?: DeviceView["zoneSync"];
 }): DeviceView {
   // Ham health mesajından yalnızca panelin kullandığı alanlar (şema dışı
   // alanlar DB'de kalır).
@@ -100,6 +102,8 @@ export function toDeviceView(row: {
     poleId: row.poleId ?? null,
     poleCode: row.poleCode ?? null,
     lamps: row.lamps ?? [],
+    groups: row.groups ?? [],
+    zoneSync: row.zoneSync ?? null,
   };
 }
 

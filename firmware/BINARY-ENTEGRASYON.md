@@ -65,11 +65,33 @@ yüklenir; deploy sonrası cihazın ilk raporu beklenmez.
 - **Kapatma anahtarı:** `MQTT_BINARY_COMMANDS=off` → bütün komutlar JSON.
 - Admin kartı cihaz başına komut biçimini gösterir.
 
+## Dinamik bölge aboneliği (zone komutları)
+
+Firmware ekibinin "Dinamik zone ve bölgesel OTA" planı: cihaz dinlediği bölge
+topic'lerini NVS'te tutar, backend `Meven:<MAC>/cmd`'ye binary komutla yönetir.
+
+| Kod | Action | Alan | Etki |
+|---|---|---|---|
+| 6 | `zone_add` | 1-3 × `0xA9 COMMAND_ZONE` | ekle + abone ol |
+| 7 | `zone_remove` | 1-3 × `0xA9` | çıkar + aboneliği bırak |
+| 8 | `zone_clear` | — | hepsini sil (MAC + `all` kalır) |
+| 9 | `zone_list` | — | ack listenin tamamını taşır |
+
+- Yeni alanlar: `0xA9 COMMAND_ZONE` (metin, bir pakette tekrar edebilir),
+  `0xAA COMMAND_ZONE_COUNT` (u8, komuttan sonra cihazdaki bölge sayısı; -14 ve
+  -21'de yok). Sonuç kodları -18 `zone gecersiz`, -19 `zone siniri asildi`,
+  -20 `zone kaydedilemedi`, -21 `zone komutu yalnizca cihaz topic'inden kabul edilir`.
+- Ack JSON'u (köprüyle aynı): `{"action":"zone_list","id":16,"status":"ok","zone_count":2,"zones":[…]}`.
+  Tekrar eden 0xA9 `frame.fields` dizisinden okunur (Map son değere iner).
+- Backend tarafı: `src/lib/zoneSync/` (istenen durum ↔ cihazın listesi, cihaz
+  başına tek uçuşta komut, HELLO'da doğrulama). Dokümandaki 9 örnek paket
+  `npm run check:binproto`'da birebir sınanır. Ayrıntı: CLAUDE.md "Dinamik bölge aboneliği".
+
 ## Kod
 
 | Dosya | Görev |
 |---|---|
-| `src/lib/binproto/fields.ts` | Alan tablosu (138 alan) + enum'lar — `msg_fields.h`'nin kopyası |
+| `src/lib/binproto/fields.ts` | Alan tablosu (140 alan) + enum'lar — `msg_fields.h`'nin kopyası |
 | `src/lib/binproto/codec.ts` | CRC-16/CCITT-FALSE, `decodeFrame`, `encodeFrame` |
 | `src/lib/binproto/toJson.ts` | Python `to_legacy` portu (d4i, health, ack, commission…) |
 | `src/lib/binproto/espErr.ts` | OTA hata kodu → ESP-IDF adı |

@@ -44,6 +44,19 @@ export function binaryCommandsEnabled(): boolean {
 }
 
 /**
+ * Dinamik bölge aboneliği (lib/zoneSync). Varsayılan `on`: cihazın dinlediği
+ * bölge/alt grup topic'leri DB'den yönetilir. `observe`: yalnızca zone_list
+ * gönderilir, farklar admin kartında görünür, cihazda değişiklik yapılmaz.
+ * `off`: hiçbir zone komutu gönderilmez (acil kapatma).
+ */
+export function zoneSyncMode(): "on" | "observe" | "off" {
+  const v = process.env.MQTT_ZONE_SYNC?.trim().toLowerCase();
+  if (v === "observe") return "observe";
+  if (v === "off" || v === "0" || v === "false" || v === "no") return "off";
+  return "on";
+}
+
+/**
  * JSON aynası (firmware ekibinin izlemesi için): çözülen binary uplink'in
  * JSON karşılığı `Meven:<MAC>/json/<data|health|reject>`'e de basılır.
  * Varsayılan KAPALI (broker trafiği). `MQTT_JSON_MIRROR=all` → bütün cihazlar;

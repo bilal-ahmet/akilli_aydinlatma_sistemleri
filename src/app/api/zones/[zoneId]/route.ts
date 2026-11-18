@@ -6,6 +6,7 @@ import { zoneUpdateSchema } from "@/types/lighting";
 import { authorizeZone } from "@/lib/auth/guard";
 import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
+import { kick as kickZoneSync } from "@/lib/zoneSync/engine";
 
 export const runtime = "nodejs";
 
@@ -98,6 +99,7 @@ export async function DELETE(
     .limit(1);
   if (!zone) return fail("Bölge bulunamadı", 404);
 
+  let deletedMacs: string[] = [];
   try {
     await db.transaction(async (tx) => {
       // Zone'a bağlı cihazların id'lerini al → onların status loglarını ve
@@ -107,6 +109,19 @@ export async function DELETE(
         .from(schema.devices)
         .where(eq(schema.devices.zoneId, zone.id));
       const deviceIds = devs.map((d) => d.deviceId);
+      deletedMacs = deviceIds;
+      // Alt grupların slug'ları da topic'tir: bir daha verilmez. Üyelikleri
+      // cascade ile silinir; cihazlara temizlik bölge senkronuyla gider.
+      const groups = await tx
+        .select({ slug: schema.zoneGroups.slug })
+        .from(schema.zoneGroups)
+        .where(eq(schema.zoneGroups.zoneId, zone.id));
+      if (groups.length > 0) {
+        await tx
+          .insert(schema.retiredZoneSlugs)
+          .values(groups.map((gr) => ({ slug: gr.slug, customerId: ctx.customer.id })))
+          .onConflictDoNothing();
+      }
 
       if (deviceIds.length > 0) {
         await tx
@@ -140,6 +155,9 @@ export async function DELETE(
         .onConflictDoNothing();
     });
     await refreshTenancy();
+    // Silinen cihazlar bölge ve alt grup topic'lerini bıraksın (istenen = ∅ →
+    // bağlandıklarında zone_clear).
+    kickZoneSync(deletedMacs);
     await audit({
       req,
       user: ctx.user,

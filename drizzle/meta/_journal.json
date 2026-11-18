@@ -106,6 +106,13 @@
       "when": 1794988435689,
       "tag": "0014_device_health_log",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794998221592,
+      "tag": "0015_zone_groups",
+      "breakpoints": true
     }
   ]
 }

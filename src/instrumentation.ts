@@ -37,6 +37,17 @@ export async function register() {
     console.error("[instrumentation] komut biçimi başlatılamadı:", err);
   }
 
+  // Bölge aboneliği (zone sync) durumu bellektedir; DB'den yüklenir. Komut
+  // basılmaz, cihazların ilk uplink'i / HELLO'su beklenir.
+  try {
+    const { seedZoneSync } = await import("@/lib/zoneSync/engine");
+    void seedZoneSync().catch((err) =>
+      console.error("[instrumentation] bölge senkronu yüklenemedi:", err),
+    );
+  } catch (err) {
+    console.error("[instrumentation] bölge senkronu başlatılamadı:", err);
+  }
+
   // Zamanlanmış komutlar. Tablo yoksa (migration çalışmadı) yalnızca loglanır;
   // ilk zamanlama CRUD'unda yeniden yüklenir.
   try {

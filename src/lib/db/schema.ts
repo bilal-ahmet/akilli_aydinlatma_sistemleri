@@ -13,6 +13,7 @@ import {
   index,
   unique,
   check,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { ScheduleResult, ScheduleTarget } from "@/lib/scheduleTime";
@@ -128,7 +129,7 @@ export const zones = pgTable("zones", {
 }, (t) => [index("idx_zones_customer_id").on(t.customerId)]);
 
 /**
- * Silinmiş bölgelerin slug'ları. Slug = MQTT topic (`Meven:<slug>/cmd`) ve
+ * Silinmiş bölgelerin ve alt grupların slug'ları. Slug = MQTT topic (`Meven:<slug>/cmd`) ve
  * sahada o slug ile flaşlanmış cihazlar bölge silindikten sonra da o topic'i
  * dinlemeye devam eder. Slug başka bir müşteriye verilirse o müşterinin bölge
  * komutları eski cihazlara ulaşır — bu yüzden silinen slug bir daha verilmez.
@@ -137,6 +138,59 @@ export const retiredZoneSlugs = pgTable("retired_zone_slugs", {
   slug: varchar("slug", { length: 100 }).primaryKey(),
   customerId: uuid("customer_id"),
   retiredAt: timestamp("retired_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Alt grup: bir bölgenin cihazlarından oluşan ek topic (`Meven:<slug>/cmd`).
+ * Cihaz üyesi olduğu grupların slug'larını NVS'te tutar ve o topic'leri de
+ * dinler (dinamik bölge aboneliği, lib/zoneSync). Slug bölge slug'larıyla aynı
+ * ad alanındadır (global benzersiz, ≤32 karakter, silinince emekliye ayrılır).
+ * Ad değişebilir, slug değişmez.
+ */
+export const zoneGroups = pgTable(
+  "zone_groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    zoneId: uuid("zone_id")
+      .notNull()
+      .references(() => zones.id, { onDelete: "cascade" }),
+    slug: varchar("slug", { length: 32 }).notNull().unique(),
+    name: varchar("name", { length: 100 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("idx_zone_groups_zone_id").on(t.zoneId)],
+);
+
+/** Alt grup üyeliği. Üye, grubun bölgesindeki bir cihazdır (MAC, mantıksal ref). */
+export const zoneGroupMembers = pgTable(
+  "zone_group_members",
+  {
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => zoneGroups.id, { onDelete: "cascade" }),
+    deviceId: varchar("device_id", { length: 100 }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.deviceId] }),
+    index("idx_zone_group_members_device").on(t.deviceId),
+  ],
+);
+
+/**
+ * Cihazın bildirdiği bölge listesi + senkron durumu (MAC başına). Bilinçli
+ * olarak `devices`'a bağlı değil: silinen cihazın temizliği (istenen = ∅ →
+ * zone_clear) bu satır sayesinde yapılır. `reported` NULL = bilinmiyor.
+ */
+export const deviceZoneSync = pgTable("device_zone_sync", {
+  mac: varchar("mac", { length: 100 }).primaryKey(),
+  reported: text("reported").array(),
+  reportedAt: timestamp("reported_at", { withTimezone: true }),
+  // unknown | pending | synced | error | unsupported | no_response
+  status: varchar("status", { length: 20 }).notNull().default("unknown"),
+  lastError: varchar("last_error", { length: 200 }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  unsupportedFw: varchar("unsupported_fw", { length: 32 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
 /**
@@ -407,7 +461,7 @@ export const faultEvents = pgTable(
 export const commands = pgTable("commands", {
   id: uuid("id").primaryKey().defaultRandom(),
   requestId: uuid("request_id").notNull().unique(), // idempotency
-  targetType: varchar("target_type", { length: 20 }).notNull(), // zone | device | customer | all
+  targetType: varchar("target_type", { length: 20 }).notNull(), // zone | group | device | customer | all
   targetId: varchar("target_id", { length: 100 }).notNull(),
   // Komutu veren kullanıcı ve komutun verildiği müşteri ("all" için NULL).
   userId: uuid("user_id"),
@@ -485,3 +539,5 @@ export type D4iTelemetryRow = typeof d4iTelemetry.$inferSelect;
 export type FaultEventRow = typeof faultEvents.$inferSelect;
 export type CommandRow = typeof commands.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
+export type ZoneGroupRow = typeof zoneGroups.$inferSelect;
+export type DeviceZoneSyncRow = typeof deviceZoneSync.$inferSelect;

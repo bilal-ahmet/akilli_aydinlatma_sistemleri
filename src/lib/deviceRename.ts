@@ -49,6 +49,15 @@ export async function renameDeviceMac(oldMac: string, newMac: string, customerId
       .update(schema.faultEvents)
       .set({ deviceId: newMac })
       .where(eq(schema.faultEvents.deviceId, oldMac));
+    // Alt grup üyelikleri yeni MAC'e (yeni MAC'in aynı gruptaki satırı varsa eski silinir).
+    await tx.execute(sql`
+      DELETE FROM zone_group_members AS o
+      WHERE o.device_id = ${oldMac}
+        AND EXISTS (SELECT 1 FROM zone_group_members n WHERE n.device_id = ${newMac} AND n.group_id = o.group_id)`);
+    await tx
+      .update(schema.zoneGroupMembers)
+      .set({ deviceId: newMac })
+      .where(eq(schema.zoneGroupMembers.deviceId, oldMac));
     await tx
       .update(schema.commands)
       .set({ targetId: newMac })

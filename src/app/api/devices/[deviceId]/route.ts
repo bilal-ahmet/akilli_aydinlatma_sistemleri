@@ -8,6 +8,7 @@ import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { normalizeMac } from "@/lib/mac";
 import { renameDeviceMac } from "@/lib/deviceRename";
 import { audit } from "@/lib/audit";
+import { forgetUnverified, kick as kickZoneSync, zoneExtrasFor } from "@/lib/zoneSync/engine";
 
 export const runtime = "nodejs";
 
@@ -192,8 +193,18 @@ export async function PATCH(
             .limit(1);
     if (!updated) return fail("Cihaz bulunamadı", 404);
 
+    // Bölge değişti: alt gruplar bölgeye aittir, eski bölgenin gruplarından
+    // çıkar. Yeni bölge (ve grupların bırakılması) cihaza bölge senkronuyla
+    // gönderilir (lib/zoneSync; çevrimdışıysa bağlandığında).
+    const zoneChanged = !!patch.zoneId && patch.zoneId !== current.zoneId;
+    if (zoneChanged) {
+      await db.delete(schema.zoneGroupMembers).where(eq(schema.zoneGroupMembers.deviceId, deviceId));
+    }
+
     if (newMac) await renameDeviceMac(deviceId, newMac, ctx.customerId);
     if (patch.zoneId || newMac) await refreshTenancy();
+    if (zoneChanged || newMac) kickZoneSync([newMac ?? deviceId]);
+    if (newMac) await forgetUnverified(deviceId);
     await audit({
       req,
       user: ctx.user,
@@ -211,7 +222,7 @@ export async function PATCH(
       .leftJoin(schema.poles, eq(schema.devices.poleId, schema.poles.id))
       .where(eq(schema.devices.deviceId, newMac ?? deviceId))
       .limit(1);
-    return ok(toDeviceView(row));
+    return ok(toDeviceView({ ...row, ...zoneExtrasFor(newMac ?? deviceId) }));
   } catch (err) {
     return fail("Cihaz güncellenemedi", 500, String(err));
   }
@@ -249,9 +260,13 @@ export async function DELETE(
         .where(eq(schema.deviceHealthLog.deviceId, deviceId));
       await tx.delete(schema.faultEvents).where(eq(schema.faultEvents.deviceId, deviceId));
       await tx.delete(schema.fixtures).where(eq(schema.fixtures.deviceId, deviceId));
+      await tx.delete(schema.zoneGroupMembers).where(eq(schema.zoneGroupMembers.deviceId, deviceId));
       await tx.delete(schema.devices).where(eq(schema.devices.deviceId, deviceId));
     });
     await refreshTenancy();
+    // Silinen cihaz bölge topic'lerini dinlemeyi bıraksın: istenen = ∅ →
+    // bağlandığında zone_clear (daha önce senkronlanmışsa).
+    kickZoneSync([deviceId]);
     await audit({
       req,
       user: ctx.user,

@@ -7,6 +7,7 @@ import { normalizeMac } from "@/lib/mac";
 import { authorizeScope } from "@/lib/auth/guard";
 import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
+import { kick as kickZoneSync, zoneExtrasFor } from "@/lib/zoneSync/engine";
 import type { LampView } from "@/app/_lib/types";
 
 export const runtime = "nodejs";
@@ -104,7 +105,12 @@ export async function GET(req: Request) {
 
     return ok(
       rows.map((r) =>
-        toDeviceView({ ...r, ...latest.get(r.deviceId), ...lamps.get(r.deviceId) }),
+        toDeviceView({
+          ...r,
+          ...latest.get(r.deviceId),
+          ...lamps.get(r.deviceId),
+          ...zoneExtrasFor(r.deviceId),
+        }),
       ),
     );
   } catch (err) {
@@ -201,6 +207,8 @@ export async function POST(req: Request) {
       name: name ?? null,
     });
     await refreshTenancy();
+    // Bölge cihaza gönderilir (dinamik abonelik; cihaz bağlandığında).
+    kickZoneSync([mac]);
     await audit({
       req,
       user: ctx.user,
@@ -217,7 +225,7 @@ export async function POST(req: Request) {
       .leftJoin(schema.poles, eq(schema.devices.poleId, schema.poles.id))
       .where(eq(schema.devices.deviceId, mac))
       .limit(1);
-    return ok(toDeviceView(row), { status: 201 });
+    return ok(toDeviceView({ ...row, ...zoneExtrasFor(mac) }), { status: 201 });
   } catch (err) {
     return fail("Cihaz oluşturulamadı", 500, String(err));
   }

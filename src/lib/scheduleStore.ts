@@ -56,7 +56,9 @@ export function checkTargetOwnership(
   idx: TenancyIndex,
 ): string | null {
   if ("all" in target) return null;
-  const badZone = target.zones.some((s) => idx.zoneOwner.get(s) !== customer.id);
+  const badZone =
+    target.zones.some((s) => idx.zoneOwner.get(s) !== customer.id) ||
+    (target.groups ?? []).some((s) => idx.groupOwner.get(s) !== customer.id);
   const badMac = [...target.devices, ...target.lamps.map((l) => l.mac)].some(
     (m) => idx.deviceOwner.get(m) !== customer.id,
   );

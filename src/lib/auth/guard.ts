@@ -123,6 +123,24 @@ export async function authorizeZone(
 }
 
 /**
+ * Alt grup (`/api/zones/:zone/groups/:group/*`). Sahiplik tenancy index'inden
+ * (DB'siz, Kural #10); grup verilen bölgeye ait değilse ya da başka müşterinin
+ * ise 404 (varlık sızmaz).
+ */
+export async function authorizeGroup(
+  req: Request,
+  zoneSlug: string,
+  groupSlug: string,
+  need: Need,
+): Promise<ScopeCtx | Response> {
+  const ctx = await authorizeZone(req, zoneSlug, need);
+  if (ctx instanceof Response) return ctx;
+  const idx = await getTenancy();
+  if (idx.groupZone.get(groupSlug) !== zoneSlug) return fail("Alt grup bulunamadı", 404);
+  return ctx;
+}
+
+/**
  * Tek cihaz (MAC) üzerindeki işlemler. Kayıtsız (bölgesiz) MAC'lere yalnızca
  * admin erişebilir; müşteri için 404.
  */

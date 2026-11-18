@@ -1,3 +1,4 @@
+import type { ZoneSyncView } from "@/lib/zoneSync/plan";
 import type { D4iBlock } from "@/lib/d4i";
 import type { OtaStatus } from "@/types/lighting";
 import type {
@@ -23,6 +24,18 @@ export interface Zone {
   status: ZoneStatus;
   /** Aktif efekt numarası (1-14) veya null/undefined */
   activeFx?: number | null;
+}
+
+/** Bölgenin alt grubu (`GET /api/zones/:zone/groups`). */
+export interface ZoneGroupView {
+  /** Topic slug'ı (değişmez) — API kimliği. Müşteriye gösterilmez. */
+  slug: string;
+  name: string;
+  zoneSlug: string;
+  /** Üye cihazların MAC'leri. */
+  members: string[];
+  /** Grubu cihazında uygulamış (senkron) üye sayısı. */
+  synced: number;
 }
 
 export interface DeviceView {
@@ -68,6 +81,16 @@ export interface DeviceView {
    * doldurur, tekil yanıtlarda boş gelir.
    */
   lamps: LampView[];
+  /**
+   * Üyesi olduğu alt grupların slug'ları (bölgesinin grupları; tenancy'den).
+   * Ad için bölgenin grup listesine bakılır.
+   */
+  groups: string[];
+  /**
+   * Dinamik bölge aboneliği durumu (lib/zoneSync): cihaza bölge/alt grup
+   * listesi uygulandı mı. null = bilinmiyor (yanıt bunu taşımıyor).
+   */
+  zoneSync: ZoneSyncView | null;
 }
 
 /**

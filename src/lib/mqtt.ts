@@ -26,6 +26,14 @@ import {
 } from "@/lib/binUplink";
 import { encodeCommand, type BinaryCommand } from "@/lib/binproto/command";
 import { ShortIdTable } from "@/lib/binproto/shortIds";
+import {
+  noteFirmware as zoneNoteFirmware,
+  onAck as zoneOnAck,
+  onHello as zoneOnHello,
+  onUplink as zoneOnUplink,
+  registerZonePublisher,
+} from "@/lib/zoneSync/engine";
+import type { ZoneOp } from "@/lib/zoneSync/plan";
 import { HELLO_TEXT } from "@/lib/binproto/toJson";
 import {
   cmdTopic,
@@ -48,6 +56,7 @@ import {
   deviceHealthSchema,
   gatewayUplinkSchema,
   isMaintenanceAction,
+  isZoneAction,
   type Action,
   commandAckSchema,
   type CommandAck,
@@ -157,6 +166,10 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
 async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   const result = await decodeBinUplink(mac, payload);
   mirrorJson(mac, result);
+  // Bölge aboneliği: HELLO = cihaz (yeniden) bağlandı → listeyi doğrula; her
+  // geçerli paket = cihaz ayakta → bekleyen zone işi varsa sürdür.
+  if (result.kind === "hello") zoneOnHello(mac);
+  else if (result.kind !== "skip") zoneOnUplink(mac);
   if (result.kind === "json") {
     return routeUplink(`Meven:${mac}/bin`, { mac, suffix: result.suffix }, result.json, "bin");
   }
@@ -295,7 +308,8 @@ async function touchDevice(
  * `commands.target_id` = müşteri slug'ı ile kaydedilir).
  */
 function commandTargets(mac: string, zone?: { slug: string; customerId: string }): string[] {
-  const targets = [mac, "all"];
+  // Alt grup komutları `commands.target_id` = grup slug'ı ile kaydedilir.
+  const targets = [mac, "all", ...(peekTenancy()?.deviceGroups.get(mac) ?? [])];
   if (zone) {
     targets.push(zone.slug);
     const customerSlug = peekTenancy()?.customersById.get(zone.customerId)?.slug;
@@ -488,6 +502,8 @@ async function handleAck(
   const requestId = ack.id != null && UUID_RE.test(String(ack.id)) ? String(ack.id) : undefined;
   const flight = requestId ? inflight.get(requestId) : undefined;
 
+  if (isZoneAction(ack.action) || flight?.zoneOp) return handleZoneAck(mac, ack, requestId, now);
+
   const maintenance = isMaintenanceAction(ack.action) ? ack.action : flight?.maintenance;
   if (maintenance) return handleMaintenanceAck(mac, ack, maintenance, requestId, now);
 
@@ -564,6 +580,22 @@ async function handleAck(
 }
 
 /**
+ * Bölge aboneliği komutunun (zone_add/remove/clear/list) yanıtı. Lamba hatası
+ * değildir: `devices.last_error`'a, arıza geçmişine ve `commands`'a yazılmaz;
+ * durum lib/zoneSync'te tutulur ve `kind:"zone_sync"` olayıyla yayınlanır.
+ */
+async function handleZoneAck(
+  mac: string,
+  ack: CommandAck,
+  requestId: string | undefined,
+  now: Date,
+): Promise<void> {
+  await touchDevice(mac, now);
+  if (requestId) inflight.delete(requestId);
+  await zoneOnAck(mac, ack, requestId);
+}
+
+/**
  * Bakım komutunun (commission / ota_check) yanıtı. `"ok"` işin bittiği değil,
  * cihazın isteği KABUL ettiği anlamına gelir: tarama sonucu d4i_periodic
  * raporlarıyla, OTA ilerlemesi /health ile gelir. Lamba hatası olmadığı için
@@ -612,6 +644,7 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   const healthIntervalS = intervalSeconds((h as Record<string, unknown>).health_interval_s);
   const reportIntervalS = intervalSeconds((h as Record<string, unknown>).report_interval_s);
   noteHealth(mac, { firmwareVersion, ota }, now.getTime());
+  zoneNoteFirmware(mac, firmwareVersion);
 
   const { device } = await touchDevice(mac, now, {
     // Sürüm alanı gelmediyse eski değer ezilmez.
@@ -937,6 +970,8 @@ type Inflight = {
   /** Kabloya giden kanal (yoksa tüm lambalar) — hata olayına kesin kanal. */
   channel?: number;
   maintenance?: MaintenanceAction;
+  /** Bölge aboneliği komutu (lib/zoneSync) — `commands`'a yazılmaz. */
+  zoneOp?: ZoneOp["action"];
   /** Satır yazılmadan gelen yanıtın sonucu. */
   outcome?: CommandOutcome;
   /** commands satırı yazıldı mı. */
@@ -977,6 +1012,13 @@ function deviceTakesBinary(mac: string): boolean {
 function zoneTakesBinary(slug: string): boolean {
   if (!binaryCommandsEnabled()) return false;
   const macs = peekTenancy()?.zoneMacs.get(slug);
+  return !!macs && groupTakesBinary(macs);
+}
+
+/** Alt grup topic'i: aynı kural, grubun üyeleri üzerinden. */
+function groupTopicTakesBinary(slug: string): boolean {
+  if (!binaryCommandsEnabled()) return false;
+  const macs = peekTenancy()?.groupMacs.get(slug);
   return !!macs && groupTakesBinary(macs);
 }
 
@@ -1071,6 +1113,10 @@ function toWireCmd(cmd: CommandInput): CommandInput {
  * target:
  *  - "device" → Meven:<MAC>/cmd  (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
  *  - "zone"     → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
+ *  - "group"    → Meven:<grup slug'ı>/cmd (id = grup slug'ı) — alt grup, tek
+ *                 publish. Yalnızca grubu NVS'ine almış (senkron) cihazlara
+ *                 ulaşır; panel/zamanlayıcı bu yüzden tüm üyeler senkronsa
+ *                 grup komutu, değilse cihaz komutları gönderir.
  *  - "customer" → müşterinin HER bölgesi için Meven:<slug>/cmd (id = müşteri
  *                 slug'ı, `zoneSlugs` = müşterinin bölgeleri). Müşterinin
  *                 "Tüm Sistem"i budur: firmware müşteri topic'i tanımadığı ve
@@ -1084,7 +1130,7 @@ function toWireCmd(cmd: CommandInput): CommandInput {
 // bağımsız olarak korur. Frontend SSE'de bunu eski/yeni event ayrımı için kullanır.
 let cmdSeq = 0;
 
-export type CommandTarget = "device" | "zone" | "customer" | "all";
+export type CommandTarget = "device" | "zone" | "group" | "customer" | "all";
 
 export function publishCommand(
   target: CommandTarget,
@@ -1099,9 +1145,11 @@ export function publishCommand(
       ? [{ topic: cmdTopic(id), binary: deviceTakesBinary(id) }]
       : target === "zone"
         ? [{ topic: zoneCmdTopic(id), binary: zoneTakesBinary(id) }]
-        : target === "customer"
-          ? (zoneSlugs ?? []).map((slug) => ({ topic: zoneCmdTopic(slug), binary: zoneTakesBinary(slug) }))
-          : [{ topic: ALL_CMD, binary: allTakesBinary() }];
+        : target === "group"
+          ? [{ topic: zoneCmdTopic(id), binary: groupTopicTakesBinary(id) }]
+          : target === "customer"
+            ? (zoneSlugs ?? []).map((slug) => ({ topic: zoneCmdTopic(slug), binary: zoneTakesBinary(slug) }))
+            : [{ topic: ALL_CMD, binary: allTakesBinary() }];
 
   // Komut id'si publish'ten ÖNCE üretilir: JSON'da kablodaki `id` =
   // commands.request_id; binary'de kısa id → shortIds ile aynı UUID.
@@ -1138,6 +1186,26 @@ export function publishMaintenance(mac: string, action: MaintenanceAction): { re
   if (action === "ota_check") noteOtaSent(mac);
   return { requestId };
 }
+
+/**
+ * Bölge aboneliği komutu (lib/zoneSync motoru çağırır) — YALNIZCA binary,
+ * YALNIZCA Meven:<MAC>/cmd (cihaz başka topic'ten geleni -21 ile reddeder).
+ * Tekrar denemede aynı kısa id kullanılır ki ilk denemenin geç gelen ack'i de
+ * eşleşsin. Senkron, DB'ye dokunmaz.
+ */
+function publishZoneOp(
+  mac: string,
+  op: ZoneOp,
+  reuse?: { requestId: string; shortId: number },
+): { requestId: string; shortId: number } {
+  const requestId = reuse?.requestId ?? randomUUID();
+  const shortId = reuse?.shortId ?? shortIds.issue(requestId);
+  const payload = Buffer.from(encodeCommand({ action: op.action, id: shortId, zones: op.zones }));
+  getMqttClient().publish(cmdTopic(mac), payload, { qos: 1 });
+  rememberInflight(requestId, { zoneOp: op.action });
+  return { requestId, shortId };
+}
+registerZonePublisher(publishZoneOp);
 
 /** publishMaintenance sonrası `commands` kaydı (route'larda after() içinde). */
 export async function recordMaintenance(
@@ -1325,6 +1393,27 @@ export async function recordCommand(
       });
     }
     return; // cihaz komutunda bölge snapshot işi yok
+  }
+
+  if (target === "group") {
+    // Alt grup: bölge snapshot'ı değişmez (bölgenin tamamı değil), üyelerin
+    // lamba snapshot'ı + cihaz seviyesi echo'su yayınlanır.
+    const patch = patchFor(action, value, number);
+    const macs = [...((await getTenancy()).groupMacs.get(id) ?? [])];
+    await patchFixtures(macs, patch, at, seq);
+    for (const mac of macs) {
+      emitLiveEvent({
+        deviceId: mac,
+        isOn: patch.isOn,
+        brightness: patch.brightness,
+        activeFx: patch.activeFx,
+        status: "ok",
+        kind: "command",
+        at,
+        seq,
+      });
+    }
+    return;
   }
 
   if (target === "zone") {

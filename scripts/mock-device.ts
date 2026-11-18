@@ -31,6 +31,16 @@
  * JSON ack (/data). `--bin` olmadan eski firmware gibi davranır: binary komuta
  * "gecersiz json" döner.
  *
+ * Dinamik bölge aboneliği (`--bin` ile varsayılan açık): cihaz dinlediği bölge
+ * topic'lerini "NVS"te (bellekte) tutar; zone_add / zone_remove / zone_clear /
+ * zone_list binary komutlarıyla değişir, yeniden abone olur (reboot yok).
+ * Başlangıç listesi `--zones a,b` ya da konumsal bölge, ikisi de yoksa
+ * firmware'in varsayılan üç bölgesi. Kurallar firmware planıyla aynı: yalnızca
+ * Meven:<MAC>/cmd'den (-21), slug a-z0-9- 1-32 ve `all` değil (-18), pakette
+ * ≤3 / toplam ≤16 (-19), ya hep ya hiç, idempotent; ack ZONE_COUNT taşır (-14 /
+ * -21 hariç), zone_list ack'i listenin tamamını. `--no-zones`: zone
+ * komutlarını tanımayan eski binary firmware (-5 bilinmeyen action).
+ *
  * Toplu komuta (bölge topic'i, Meven:all/cmd) başarı cevabı verilmez, hata
  * cevabı 0-3 sn gecikmeyle gider (firmware kararı + önerimiz).
  *
@@ -55,7 +65,7 @@ import {
 
 const RAW_ARGS = process.argv.slice(2);
 /** Değer alan bayraklar — değerleri konumsal argüman sayılmaz. */
-const VALUE_FLAGS = new Set(["--interval", "--health-interval"]);
+const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones"]);
 const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
 const BIN = RAW_ARGS.includes("--bin");
 function flagSeconds(name: string): number | undefined {
@@ -73,12 +83,27 @@ const MAC = (ARGS[0] ?? "A842E3123456")
 const CH_COUNT = Math.max(1, Math.min(64, Number(ARGS[1] ?? 2) || 2));
 const ZONE_SLUG = ARGS[2];
 
+/** Yeni firmware: bölge listesi NVS'te, zone komutlarıyla yönetilir. */
+const ZONE_MODE = BIN && !RAW_ARGS.includes("--no-zones");
+/** NVS boşken firmware'in bir kez yazdığı varsayılan bölgeler. */
+const DEFAULT_ZONES = ["bilisim-vadisi", "bilisim-vadisi-openthread", "ekaldes"];
+const zonesFlag = RAW_ARGS.indexOf("--zones");
+/** Cihazın "NVS"teki bölge listesi (ZONE_MODE'da dinamik). */
+let nvsZones: string[] =
+  zonesFlag >= 0
+    ? (RAW_ARGS[zonesFlag + 1] ?? "").split(",").map((z) => z.trim()).filter(Boolean)
+    : ZONE_SLUG
+      ? [ZONE_SLUG]
+      : ZONE_MODE
+        ? [...DEFAULT_ZONES]
+        : [];
+
 const T_CMD = `Meven:${MAC}/cmd`;
 const T_ALL = "Meven:all/cmd";
 const T_DATA = `Meven:${MAC}/data`;
 const T_HEALTH = `Meven:${MAC}/health`;
 const T_BIN = `Meven:${MAC}/bin`;
-const TOPICS = [T_CMD, T_ALL, ...(ZONE_SLUG ? [`Meven:${ZONE_SLUG}/cmd`] : [])];
+const zoneTopic = (slug: string) => `Meven:${slug}/cmd`;
 
 /** Kanal durumu — firmware gibi 0-254 DALI arc level tutulur. */
 type ChannelState = { level: number; on: boolean; fx: number | null };
@@ -150,7 +175,11 @@ function resultCode(error: string): { code: number; needed?: number; available?:
   return { code: -5 };
 }
 
-function binaryAck(error?: string, onlyResult?: number) {
+function binaryAck(
+  error?: string,
+  onlyResult?: number,
+  extra: ReadonlyArray<readonly [string, FieldValue | undefined]> = [],
+) {
   const r = onlyResult !== undefined ? { code: onlyResult } : error ? resultCode(error) : { code: 0 };
   const action =
     onlyResult === undefined && typeof current.action === "string"
@@ -164,6 +193,7 @@ function binaryAck(error?: string, onlyResult?: number) {
       ["COMMAND_RESULT", r.code],
       ["COMMAND_LAMPS_NEEDED", r.needed],
       ["COMMAND_LAMPS_AVAILABLE", r.available],
+      ...extra,
     ]),
   );
   if (bulkCmd && r.code === 0) return;
@@ -260,7 +290,7 @@ function ledBlock(address: number, on: boolean): Record<string, unknown> {
 
 // ── Binary protokol v1 (--bin) ───────────────────────────────
 
-type BinFields = Array<[string, FieldValue | undefined]>;
+type BinFields = Array<readonly [string, FieldValue | null | undefined]>;
 
 function publishBin(type: Parameters<typeof encodeFrame>[0], fields: BinFields): number {
   const frame = encodeFrame(type, fields);
@@ -579,9 +609,10 @@ client.on("connect", () => {
   console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)${BIN ? " · binary protokol v1" : ""}`);
   healthStaticSent = false; // yeni bağlantı: bir-kezlik health alanları tekrar gider
   intervalsSent = false;
-  client.subscribe(TOPICS, { qos: 1 }, (err) => {
+  const topics = [T_CMD, T_ALL, ...nvsZones.map(zoneTopic)]; // yeniden bağlanmada güncel NVS listesi
+  client.subscribe(topics, { qos: 1 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
-    console.log(`  dinleniyor:\n    ${TOPICS.join("\n    ")}`);
+    console.log(`  dinleniyor:\n    ${topics.join("\n    ")}`);
     console.log("\nDashboard'dan komut gönder → burada görünecek, yanıtı dashboard'a dönecek.\n");
     if (BIN) publishBin("HELLO", []);
     for (const ch of channels.keys()) publishD4i(ch);
@@ -609,6 +640,8 @@ client.on("message", (topic, raw) => {
     }
     if (frame.typeName !== "COMMAND") return binaryAck(undefined, -17);
     const f = new Map(frame.fields);
+    // 0xA9 tekrar eder: Map son değere iner, paket sırasından okunur.
+    zonesInCmd = frame.fields.filter(([n]) => n === "COMMAND_ZONE").map(([, v]) => String(v));
     const num = (k: string) => (typeof f.get(k) === "number" ? (f.get(k) as number) : undefined);
     const code = num("COMMAND_ACTION");
     const ch = num("COMMAND_CHANNEL");
@@ -638,6 +671,8 @@ client.on("message", (topic, raw) => {
   if (action === undefined) return ack("action alani yok");
   if (typeof action !== "string") return ack("action string degil");
   const scope = channel === undefined ? "tüm kanallar" : `ch${channel}`;
+
+  if (ZONE_MODE && current.binary && action.startsWith("zone_")) return handleZone(action, via);
 
   if (action === "on" || action === "off") {
     if (!validChannel(channel)) return ack("bilinmeyen action");
@@ -786,6 +821,58 @@ client.on("message", (topic, raw) => {
 });
 
 client.on("error", (e) => console.error("MQTT hata:", e.message));
+
+/** Son binary komuttaki COMMAND_ZONE değerleri (sırasıyla). */
+let zonesInCmd: string[] = [];
+
+const ZONE_RE = /^[a-z0-9-]{1,32}$/;
+
+/** Bölge listesini değiştirir ve abonelikleri günceller (reboot yok). */
+function applyZones(next: string[]): void {
+  const removed = nvsZones.filter((z) => !next.includes(z));
+  const added = next.filter((z) => !nvsZones.includes(z));
+  nvsZones = next;
+  if (removed.length) client.unsubscribe(removed.map(zoneTopic));
+  if (added.length) client.subscribe(added.map(zoneTopic), { qos: 1 });
+  console.log(`  NVS bölgeleri: [${nvsZones.join(", ")}]`);
+}
+
+/** Zone komutu (firmware planı: ya hep ya hiç, idempotent, ack'te ZONE_COUNT). */
+function handleZone(action: string, via: string): void {
+  const count = (n: number): Array<readonly [string, FieldValue | undefined]> => [["COMMAND_ZONE_COUNT", n]];
+  const fail = (text: string, withCount = true) => {
+    console.warn(`◀ ${action} reddedildi (${via}): ${text}`);
+    binaryAck(text, undefined, withCount ? count(nvsZones.length) : []);
+  };
+  if (via !== "MAC") return fail("zone komutu yalnizca cihaz topic'inden kabul edilir", false);
+  const zones = zonesInCmd;
+  if (action === "zone_add" || action === "zone_remove") {
+    if (zones.length === 0) return fail("zone gecersiz");
+    if (zones.length > 3) return fail("zone siniri asildi");
+    if (zones.some((z) => !ZONE_RE.test(z) || z === "all")) return fail("zone gecersiz");
+  }
+  if (action === "zone_add") {
+    const next = [...nvsZones, ...zones.filter((z) => !nvsZones.includes(z))];
+    if (next.length > 16) return fail("zone siniri asildi");
+    console.log(`◀ zone_add [${zones.join(", ")}]`);
+    applyZones(next);
+  } else if (action === "zone_remove") {
+    console.log(`◀ zone_remove [${zones.join(", ")}]`);
+    applyZones(nvsZones.filter((z) => !zones.includes(z)));
+  } else if (action === "zone_clear") {
+    console.log("◀ zone_clear");
+    applyZones([]);
+  } else if (action === "zone_list") {
+    console.log(`◀ zone_list → [${nvsZones.join(", ")}]`);
+    return binaryAck(undefined, undefined, [
+      ...count(nvsZones.length),
+      ...nvsZones.map((z) => ["COMMAND_ZONE", z] as const),
+    ]);
+  } else {
+    return fail("bilinmeyen action", false);
+  }
+  binaryAck(undefined, undefined, count(nvsZones.length));
+}
 
 // Periyodik rapor — her adres için sırayla; health ayrı aralıkla.
 setInterval(() => {

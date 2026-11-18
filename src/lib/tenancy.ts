@@ -43,6 +43,11 @@ export type TenancyIndex = {
   deviceZone: Map<string, string>; // MAC → zone slug (OTA'nın bölge bazlı sıralanması için)
   zoneMacs: Map<string, string[]>; // zone slug → kayıtlı MAC'ler (bölge komutunun biçimi için)
   gatewayOwner: Map<string, string>; // GW_ID → customer id
+  // Alt gruplar (dinamik bölge aboneliği). Slug'lar bölgelerle aynı topic ad alanında.
+  groupOwner: Map<string, string>; // grup slug → customer id
+  groupZone: Map<string, string>; // grup slug → bölge slug'ı
+  groupMacs: Map<string, string[]>; // grup slug → üye MAC'ler (yalnızca grubun bölgesindeki kayıtlı cihazlar)
+  deviceGroups: Map<string, string[]>; // MAC → üyesi olduğu grup slug'ları
   users: Map<string, UserState>;
   loadedAt: number;
 };
@@ -53,7 +58,7 @@ const g = globalThis as unknown as {
 };
 
 async function load(): Promise<TenancyIndex> {
-  const [customerRows, zoneRows, deviceRows, gatewayRows, userRows] = await Promise.all([
+  const [customerRows, zoneRows, deviceRows, gatewayRows, userRows, groupRows, memberRows] = await Promise.all([
     db
       .select({
         id: schema.customers.id,
@@ -83,6 +88,12 @@ async function load(): Promise<TenancyIndex> {
         mustChangePassword: schema.users.mustChangePassword,
       })
       .from(schema.users),
+    db
+      .select({ id: schema.zoneGroups.id, slug: schema.zoneGroups.slug, zoneId: schema.zoneGroups.zoneId })
+      .from(schema.zoneGroups),
+    db
+      .select({ groupId: schema.zoneGroupMembers.groupId, mac: schema.zoneGroupMembers.deviceId })
+      .from(schema.zoneGroupMembers),
   ]);
 
   const customersById = new Map<string, CustomerInfo>();
@@ -121,6 +132,31 @@ async function load(): Promise<TenancyIndex> {
   const gatewayOwner = new Map<string, string>();
   for (const gw of gatewayRows) gatewayOwner.set(gw.gatewayId, gw.customerId);
 
+  const groupOwner = new Map<string, string>();
+  const groupZone = new Map<string, string>();
+  const groupMacs = new Map<string, string[]>();
+  const deviceGroups = new Map<string, string[]>();
+  const groupSlugById = new Map<string, string>();
+  for (const gr of groupRows) {
+    const cid = zoneCustomerById.get(gr.zoneId);
+    const zoneSlug = zoneSlugById.get(gr.zoneId);
+    if (!cid || !zoneSlug) continue;
+    groupOwner.set(gr.slug, cid);
+    groupZone.set(gr.slug, zoneSlug);
+    groupMacs.set(gr.slug, []);
+    groupSlugById.set(gr.id, gr.slug);
+  }
+  for (const m of memberRows) {
+    const slug = groupSlugById.get(m.groupId);
+    // Üye yalnızca grubun bölgesindeki kayıtlı cihaz olabilir (bölge değişince
+    // üyelik silinir; burada yine de savunmacı süzülür).
+    if (!slug || deviceZone.get(m.mac) !== groupZone.get(slug)) continue;
+    groupMacs.get(slug)!.push(m.mac);
+    const list = deviceGroups.get(m.mac);
+    if (list) list.push(slug);
+    else deviceGroups.set(m.mac, [slug]);
+  }
+
   const users = new Map<string, UserState>();
   for (const u of userRows) users.set(u.id, { ...u, role: u.role as Role });
 
@@ -132,6 +168,10 @@ async function load(): Promise<TenancyIndex> {
     deviceZone,
     zoneMacs,
     gatewayOwner,
+    groupOwner,
+    groupZone,
+    groupMacs,
+    deviceGroups,
     users,
     loadedAt: Date.now(),
   };

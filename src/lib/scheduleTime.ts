@@ -32,7 +32,13 @@ export const SCHEDULE_GRACE_MS = 15 * 60_000;
 /** `planTargets` çıktısı ya da müşterinin "Tüm Sistem"i. */
 export type ScheduleTarget =
   | { all: true }
-  | { zones: string[]; devices: string[]; lamps: { mac: string; channel: number }[] };
+  | {
+      zones: string[];
+      /** Alt gruplar (grup slug'ı); eski kayıtlarda yok. */
+      groups?: string[];
+      devices: string[];
+      lamps: { mac: string; channel: number }[];
+    };
 
 export type ScheduleResult = {
   sent: number; // gönderilen komut (publish) sayısı
