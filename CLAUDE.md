@@ -680,7 +680,7 @@ DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 > **MAC düzeltmesi** (`mac`, yalnızca yanlış girilmiş kod için): cihazın kimliği
 > MAC olduğundan bütün kayıtları yeni MAC'e taşınır (`lib/deviceRename.ts →
 > renameDeviceMac`, tek transaction). Taşınanlar: `fixtures`, `d4i_telemetry`,
-> `device_status`, `fault_events`, cihaz `commands` logu ve müşterinin
+> `device_status`, `device_health_log`, `fault_events`, cihaz `commands` logu ve müşterinin
 > zamanlama hedefleri. Kayıtsız MAC'in verisi de yazıldığı için yeni MAC'te
 > gerçek cihazın lamba satırları zaten olabilir: aynı kanalda yeni MAC'in
 > satırı kalır, eski satırdan yalnızca isim aktarılır. Son görülme, sağlık,
@@ -896,6 +896,26 @@ içinde OTA isteği aldıysa **409** (bölge eşlemesi: tenancy `deviceZone`).
 Kayıt `commands` (`target_type:'device'`) + `audit_log` (`device.commission` /
 `device.ota_check`).
 
+### Cihaz kayıtları (yalnızca admin)
+
+```
+GET /api/admin/devices/:deviceId/records?kind=data|health|rf&limit=50&format=json|csv[&download=1]
+```
+
+Cihazın son N kaydı (varsayılan 50, en fazla 5000), yeniden eskiye. Guard
+`authorizeAdmin`: müşteri kullanıcıları (manager/viewer) 403 alır.
+- `data`: `d4i_telemetry` (lamba başına periyodik rapor, ham paket `raw`).
+- `health`: `device_health_log` (her `/health` mesajı, **7 gün** saklanır).
+- `rf`: aynı health satırlarının Thread radyo bloğu (`health.thread`: rol, parent
+  RSSI/LQ, RLOC16, kanal, PAN, sayaçlar, `neighbors[]`).
+- `format=csv` ya da `download=1` dosya olarak iner (`Content-Disposition`).
+  CSV `lib/csv.ts` ile üretilir: `;` ayırıcı, ondalık virgül, UTF-8 BOM (Excel
+  TR), iç içe alanlar noktalı sütun (`thread.channel`), diziler JSON hücre.
+
+UI: cihaz modalinde **Kayıtlar** sekmesi (`_components/DeviceRecords.tsx`,
+yalnızca `role === "admin"`): Veri · Health · RF alt görünümleri, satır açılınca
+ham JSON / komşu listesi, CSV/JSON indirme. Müşteriye hiç gösterilmez.
+
 ### Dashboard Real-time (SSE)
 
 Dashboard cihaz durumlarını real-time takip etmek için **SSE** (Server-Sent Events) kullanır — Next.js App Router'da native çalışır, custom server gerekmez:
@@ -1012,8 +1032,11 @@ CREATE TABLE devices (
 );
 ```
 
-> `health*` sütunları migration `0008_device_health.sql`. `/health` mesaj başına
-> satır açmaz, `devices` satırını günceller. `GET /api/devices` bunları
+> `health*` sütunları migration `0008_device_health.sql`. `/health` `devices`
+> satırını günceller (son mesaj); ayrıca kayıtlı cihazın her mesajı
+> `device_health_log`'a eklenir (admin "Kayıtlar", migration `0014`, 7 gün:
+> `lib/healthLog.ts`, temizlik saatte en fazla bir kez health yazımının
+> ardından, ayrı zamanlayıcı yok). `GET /api/devices` bunları
 > `firmwareVersion`, `resetReason`, `ota`, `healthAt` olarak döner.
 
 ### `gateways`
