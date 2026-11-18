@@ -10,6 +10,7 @@ import { activeFaultCodes } from "@/lib/faults";
 import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
+import { appendHealthLog } from "@/lib/healthLog";
 import { isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { normalizeMac } from "@/lib/mac";
@@ -612,7 +613,7 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   const reportIntervalS = intervalSeconds((h as Record<string, unknown>).report_interval_s);
   noteHealth(mac, { firmwareVersion, ota }, now.getTime());
 
-  await touchDevice(mac, now, {
+  const { device } = await touchDevice(mac, now, {
     // Sürüm alanı gelmediyse eski değer ezilmez.
     ...(firmwareVersion ? { firmwareVersion } : {}),
     ...(gatewayId ? { gatewayId } : {}),
@@ -621,6 +622,8 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
     health: h as Record<string, unknown>,
     healthAt: now,
   });
+  // Geçmiş (admin "Kayıtlar"): yalnızca kayıtlı cihaz — kayıtsız MAC birikmez.
+  if (device) await appendHealthLog(mac, h as Record<string, unknown>, now);
 
   emitLiveEvent({
     deviceId: mac,

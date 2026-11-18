@@ -352,6 +352,28 @@ export const d4iTelemetry = pgTable(
   (t) => [
     index("idx_d4i_telemetry_device_channel").on(t.deviceId, t.channel),
     index("idx_d4i_telemetry_recorded_at").on(t.recordedAt.desc()),
+    // Admin "Kayıtlar": cihazın son N raporu (kanal fark etmeksizin).
+    index("idx_d4i_telemetry_device_recorded").on(t.deviceId, t.recordedAt.desc()),
+  ],
+);
+
+/**
+ * Health geçmişi — her `/health` mesajı (Thread/RF bloğu dahil) bir satır.
+ * `devices.health` yalnızca son mesajı tutar; bu tablo admin'in "Kayıtlar"
+ * sekmesi ve indirme içindir. Yalnızca kayıtlı cihazlar yazılır, 7 günden
+ * eskiler `lib/healthLog.ts` ile silinir (müşteriye gösterilmez).
+ */
+export const deviceHealthLog = pgTable(
+  "device_health_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deviceId: varchar("device_id", { length: 100 }).notNull(), // MAC
+    health: jsonb("health").$type<Record<string, unknown>>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_device_health_log_device_recorded").on(t.deviceId, t.recordedAt.desc()),
+    index("idx_device_health_log_recorded_at").on(t.recordedAt),
   ],
 );
 

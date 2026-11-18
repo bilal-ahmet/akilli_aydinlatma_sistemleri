@@ -119,6 +119,9 @@ export async function DELETE(
           .delete(schema.d4iTelemetry)
           .where(inArray(schema.d4iTelemetry.deviceId, deviceIds));
         await tx
+          .delete(schema.deviceHealthLog)
+          .where(inArray(schema.deviceHealthLog.deviceId, deviceIds));
+        await tx
           .delete(schema.faultEvents)
           .where(inArray(schema.faultEvents.deviceId, deviceIds));
         await tx

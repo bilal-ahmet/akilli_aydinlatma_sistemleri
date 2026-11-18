@@ -38,6 +38,10 @@ export async function renameDeviceMac(oldMac: string, newMac: string, customerId
       .set({ deviceId: newMac })
       .where(eq(schema.d4iTelemetry.deviceId, oldMac));
     await tx
+      .update(schema.deviceHealthLog)
+      .set({ deviceId: newMac })
+      .where(eq(schema.deviceHealthLog.deviceId, oldMac));
+    await tx
       .update(schema.deviceStatus)
       .set({ deviceId: newMac })
       .where(eq(schema.deviceStatus.deviceId, oldMac));
