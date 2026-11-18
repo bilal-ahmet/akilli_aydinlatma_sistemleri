@@ -272,6 +272,12 @@ export const devices = pgTable("devices", {
   // raporundaki `nodes` listesinden ya da cihaz health'indeki `gateway`
   // alanından dolar; gateway silinince NULL'lanır.
   gatewayId: varchar("gateway_id", { length: 100 }),
+  // "Tüm cihaz" kontrolünün son komut snapshot'ı (üstten alta): kanalsız cihaz
+  // komutu, alt grup, bölge ve "Tüm Sistem" komutları yazar; lamba (kanal)
+  // komutları ve telemetri DEĞİŞTİRMEZ. NULL = hiç komut almadı → panel bölge
+  // snapshot'ına düşer. Cihaz modalinin açılış değeri buradan gelir.
+  masterOn: boolean("master_on"),
+  masterBrightness: integer("master_brightness"),
   // Takılı olduğu direk. Bir direkte tek cihaz (UNIQUE; NULL'lar serbest).
   // Direk ile cihaz aynı bölgede olmalı (lib/poleStore.ts); direk silinince NULL.
   poleId: uuid("pole_id")

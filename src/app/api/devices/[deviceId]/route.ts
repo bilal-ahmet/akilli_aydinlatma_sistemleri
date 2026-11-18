@@ -25,6 +25,8 @@ const selectShape = {
   healthIntervalS: schema.devices.healthIntervalS,
   reportIntervalS: schema.devices.reportIntervalS,
   gatewayId: schema.devices.gatewayId,
+  masterOn: schema.devices.masterOn,
+  masterBrightness: schema.devices.masterBrightness,
   poleId: schema.devices.poleId,
   poleCode: schema.poles.code,
   zoneSlug: schema.zones.slug,

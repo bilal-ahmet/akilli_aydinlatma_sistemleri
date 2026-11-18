@@ -1276,6 +1276,21 @@ async function patchFixtures(
 }
 
 /**
+ * Cihazların "Tüm cihaz" snapshot'ı (`devices.master_on/master_brightness`).
+ * Yalnızca cihaz seviyesi ve üstü (alt grup, bölge, "Tüm Sistem") komutlar
+ * yazar; `off` şiddeti korur (patch'te brightness yok). `macs === null` → tümü.
+ */
+async function patchDeviceMaster(macs: string[] | null, patch: StatePatch): Promise<void> {
+  if (macs?.length === 0) return;
+  const set: { masterOn?: boolean; masterBrightness?: number } = {};
+  if (typeof patch.isOn === "boolean") set.masterOn = patch.isOn;
+  if (typeof patch.brightness === "number") set.masterBrightness = patch.brightness;
+  if (Object.keys(set).length === 0) return;
+  const q = db.update(schema.devices).set(set);
+  await (macs === null ? q : q.where(inArray(schema.devices.deviceId, macs)));
+}
+
+/**
  * Tek lambaya komut (on/off/dim/tek lamba efekti) gelince: o lamba tüm hattı süren bir efektteyse
  * (Chase vb.) efekt cihazın tamamında durmuş sayılır — aynı efekti taşıyan
  * diğer lambaların `active_fx`'i de temizlenir. Web paneli bu durumda önce
@@ -1364,6 +1379,7 @@ export async function recordCommand(
         });
       }
     } else {
+      await patchDeviceMaster([id], patch);
       const updated = await db
         .update(schema.fixtures)
         .set(patch)
@@ -1405,6 +1421,7 @@ export async function recordCommand(
     // lamba snapshot'ı + cihaz seviyesi echo'su yayınlanır.
     const patch = patchFor(action, value, number);
     const macs = [...((await getTenancy()).groupMacs.get(id) ?? [])];
+    await patchDeviceMaster(macs, patch);
     await patchFixtures(macs, patch, at, seq);
     for (const mac of macs) {
       emitLiveEvent({
@@ -1435,9 +1452,14 @@ export async function recordCommand(
       .select({ mac: schema.devices.deviceId })
       .from(schema.devices)
       .where(eq(schema.devices.zoneId, zone.id));
+    const zonePatch = patchFor(action, value, number);
+    await patchDeviceMaster(
+      macs.map((d) => d.mac),
+      zonePatch,
+    );
     await patchFixtures(
       macs.map((d) => d.mac),
-      patchFor(action, value, number),
+      zonePatch,
       at,
       seq,
     );
@@ -1472,10 +1494,13 @@ export async function recordCommand(
       .set(allPatch)
       .where(eq(schema.zones.customerId, cid))
       .returning();
-    await patchFixtures(idx.customersById.get(cid)?.macs ?? [], allPatch, at, seq);
+    const customerMacs = [...(idx.customersById.get(cid)?.macs ?? [])];
+    await patchDeviceMaster(customerMacs, allPatch);
+    await patchFixtures(customerMacs, allPatch, at, seq);
   } else {
     customerIds = [...idx.customersById.keys()];
     updated = await db.update(schema.zones).set(allPatch).returning();
+    await patchDeviceMaster(null, allPatch);
     await patchFixtures(null, allPatch, at, seq);
   }
 

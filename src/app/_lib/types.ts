@@ -91,6 +91,13 @@ export interface DeviceView {
    * listesi uygulandı mı. null = bilinmiyor (yanıt bunu taşımıyor).
    */
   zoneSync: ZoneSyncView | null;
+  /**
+   * "Tüm cihaz" kontrolünün son komut snapshot'ı (cihaz/alt grup/bölge/"Tüm
+   * Sistem" komutları yazar; lamba komutları değiştirmez). null = hiç komut
+   * almadı → bölge snapshot'ı kullanılır.
+   */
+  masterOn: boolean | null;
+  masterBrightness: number | null;
 }
 
 /**

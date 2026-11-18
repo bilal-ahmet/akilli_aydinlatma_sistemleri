@@ -481,10 +481,17 @@ export function LightingProvider({
           if (lastSeq !== undefined && e.seq < lastSeq) return; // eski komut-echo
           lastSeqRef.current.set(key, e.seq);
         }
-        if (typeof e.activeFx !== "undefined") {
-          const fx = e.activeFx;
-          setDevices((ds) => ds.map((d) => (d.deviceId === e.deviceId ? { ...d, activeFx: fx } : d)));
-        }
+        // "Tüm cihaz" snapshot'ı (devices.master_*) + çalışan efekt.
+        setDevices((ds) =>
+          ds.map((d) => {
+            if (d.deviceId !== e.deviceId) return d;
+            const next = { ...d };
+            if (typeof e.activeFx !== "undefined") next.activeFx = e.activeFx;
+            if (typeof e.isOn === "boolean") next.masterOn = e.isOn;
+            if (typeof e.brightness === "number") next.masterBrightness = e.brightness;
+            return next;
+          }),
+        );
         return;
       }
 
@@ -571,6 +578,20 @@ export function LightingProvider({
           return next;
         }),
       );
+      // Bölge (ve "Tüm Sistem"in bölge başına) komutu bölgedeki cihazların
+      // "Tüm cihaz" snapshot'ını da yazar (sunucu: patchDeviceMaster).
+      if (e.kind === "command" && !e.deviceId) {
+        const slug = e.zoneSlug;
+        setDevices((ds) =>
+          ds.map((d) => {
+            if (d.zoneSlug !== slug) return d;
+            const next = { ...d };
+            if (typeof e.isOn === "boolean") next.masterOn = e.isOn;
+            if (typeof e.brightness === "number") next.masterBrightness = e.brightness;
+            return next;
+          }),
+        );
+      }
     },
     [scheduleLiveRefresh],
   );

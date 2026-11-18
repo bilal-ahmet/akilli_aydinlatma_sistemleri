@@ -1105,9 +1105,16 @@ CREATE TABLE devices (
   health_interval_s INTEGER,    -- firmware'in join'de bildirdiği aralıklar (sn);
   report_interval_s INTEGER,    --   NULL = bildirilmedi (0012_device_intervals)
   gateway_id    VARCHAR(100),   -- bağlı gateway (GW_ID, mantıksal ref; nodes / health'ten)
+  master_on     BOOLEAN,        -- "Tüm cihaz" son komut snapshot'ı (0016_device_master);
+  master_brightness INTEGER,    --   NULL = hiç komut almadı → panel bölge snapshot'ına düşer
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+> `master_*`: kanalsız cihaz komutu, alt grup, bölge ve "Tüm Sistem" komutları
+> yazar (`recordCommand → patchDeviceMaster`); lamba (kanal) komutları ve
+> telemetri değiştirmez. Cihaz modalinin "Tüm cihaz" açılış değeri buradan
+> gelir (`GET /api/devices` → `masterOn`, `masterBrightness`).
 
 > `health*` sütunları migration `0008_device_health.sql`. `/health` `devices`
 > satırını günceller (son mesaj); ayrıca kayıtlı cihazın her mesajı

@@ -183,14 +183,17 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
 
     case "device-control": {
       if (!device) return null;
-      // "Tüm cihaz" seed'i cihazın bölgesinin komut snapshot'ından gelir (son
-      // bölge/"Tüm Sistem" komutunu yansıtsın diye); bölge yoksa telemetri.
+      // "Tüm cihaz" seed'i cihazın kendi son komut snapshot'ı (devices.master_*:
+      // cihaz/alt grup/bölge/"Tüm Sistem" komutları yazar). Hiç komut almamışsa
+      // bölgenin snapshot'ı, bölge de yoksa telemetri.
       const z = zones.find((zn) => zn.id === device.zoneSlug);
       return (
         <DeviceControlModal
           device={device}
-          initialOn={z ? z.isOn : device.relayStatus === "on"}
-          initialBrightness={z ? z.brightness : (device.brightness ?? 0)}
+          initialOn={device.masterOn ?? (z ? z.isOn : device.relayStatus === "on")}
+          initialBrightness={
+            device.masterBrightness ?? (z ? z.brightness : (device.brightness ?? 0))
+          }
           onClose={onClose}
         />
       );
