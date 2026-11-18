@@ -86,7 +86,19 @@ kontrolcüsü) kontratı için: `ESP32-ENTEGRASYON.md`.
   health, son data, firmware sürümü, son görülme.
 - Aynı MAC hem cihaz hem gateway olarak kaydedilemez.
 
-## 6) Donanımsız test
+## 6) Binary protokol v1 ile çalışan gateway
+
+Gateway cihazlarla aynı codec'i (`msg_codec`) kullanıyorsa `Meven:<GW_ID>/bin`'e
+HEALTH (tip 5) ve HELLO (tip 7) basabilir. Backend, **panelde kayıtlı** bir
+GW_ID'den gelen bu iki tipi gateway health'i olarak işler (firmware sürümü,
+çalışma süresi, Thread rolü/kanal/PAN/ağ adı, OTA). Diğer tipler atılır.
+
+- Binary protokolde gateway türü, `uplink` ve `nodes` alanı **yok**. Tür
+  kayıttan alınır; bağlı cihaz eşleşmesi binary'de kurulamaz.
+- Kayıtsız GW_ID'nin binary paketi lambadan ayırt edilemez → "Keşfedilen ağ
+  geçitleri" listesine düşmez. GW_ID panelde önce elle kaydedilmeli.
+
+## 7) Donanımsız test
 
 ```
 npm run mock:gateway A1B2C3D4E5F6 thread_br A842E3123456

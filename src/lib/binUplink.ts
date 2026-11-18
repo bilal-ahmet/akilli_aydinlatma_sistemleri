@@ -198,10 +198,16 @@ export async function decodeBinUplink(mac: string, payload: Uint8Array): Promise
   if (!frame.typeName || frame.typeName === "COMMAND") {
     return reject(mac, dev, "UNKNOWN_TYPE", `bilinmeyen mesaj tipi ${frame.type}`, payload, now);
   }
-  // Gateway'ler v1 cihaz protokolünü kullanmaz; kayıtlı gateway kimliğinden
-  // gelen paket cihaz yoluna düşmesin.
-  if (peekTenancy()?.gatewayOwner.has(mac)) {
-    return reject(mac, dev, "GATEWAY", "kayıtlı gateway kimliği", payload, now);
+  // Kayıtlı gateway (aynı codec'li ESP32 Border Router) yalnızca HEALTH ve
+  // HELLO basabilir; bunlar lib/mqtt.ts'te gateway yoluna gider. Lambaya özgü
+  // tipler (d4i, ack, commission) gateway kimliğinden gelirse cihaz yoluna
+  // düşmesin diye atılır.
+  if (
+    peekTenancy()?.gatewayOwner.has(mac) &&
+    frame.typeName !== "HEALTH" &&
+    frame.typeName !== "HELLO"
+  ) {
+    return reject(mac, dev, "GATEWAY", `kayıtlı gateway kimliği (${frame.typeName})`, payload, now);
   }
 
   const buildInfo: BuildInfo = frame.typeName === "HEALTH" ? await buildInfoFor(mac) : {};

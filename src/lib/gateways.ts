@@ -221,6 +221,35 @@ export function summarizeGateway(
 }
 
 /**
+ * Binary protokol v1 HEALTH paketinin (lib/binproto/toJson → healthJson)
+ * çıktısını gateway health zarfına çevirir. Binary protokolde gateway'e özgü
+ * bir mesaj tipi yok; aynı codec'i kullanan Border Router cihazlarla ortak
+ * HEALTH'i basar. Farklar:
+ *  - `firmware_version` → `fw` (zarf adı), cihaza özgü `type: "health"` ve
+ *    `device_id` atılır (gateway'in türü kayıttan gelir).
+ *  - `thread.pan_id` sayı gelir; JSON kontratındaki gibi "0x1234" metnine,
+ *    `partition_id` ondalık metne çevrilir (binlik ayraçla gösterilmesin).
+ *  - `nodes` ve `uplink` binary'de yok → panelde görünmez.
+ */
+export function gatewayHealthFromBin(json: unknown): Record<string, unknown> {
+  const rec = asRecord(json) ?? {};
+  const { type: _type, device_id: _deviceId, firmware_version, ...rest } = rec;
+  void _type;
+  void _deviceId;
+  const out: Record<string, unknown> = { ...rest };
+  if (typeof firmware_version === "string" && firmware_version) out.fw = firmware_version;
+  const thread = asRecord(rest.thread);
+  if (thread) {
+    const t: Record<string, unknown> = { ...thread };
+    if (typeof t.pan_id === "number") t.pan_id = `0x${t.pan_id.toString(16).toUpperCase().padStart(4, "0")}`;
+    if (typeof t.partition_id === "number") t.partition_id = String(t.partition_id);
+    if (t.network_name === "") t.network_name = null;
+    out.thread = t;
+  }
+  return out;
+}
+
+/**
  * Gateway raporundaki `nodes` listesinden cihaz MAC'leri (iki noktasız, büyük
  * harf). Liste yoksa null — "boş liste" ile "bilgi yok" ayrı tutulur: boş
  * liste gateway'e bağlı cihaz kalmadığını söyler.

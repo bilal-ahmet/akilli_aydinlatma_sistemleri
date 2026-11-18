@@ -298,7 +298,7 @@ function GatewayDetail({
           {g.lastSeen
             ? "Ağ geçidi henüz ayrıntılı bilgi göndermedi."
             : technical
-              ? "Gateway henüz yayın yapmadı. MQTT'de Meven:<GW_ID>/health mesajı bekleniyor."
+              ? "Gateway henüz yayın yapmadı. MQTT'de Meven:<GW_ID>/bin (binary HEALTH/HELLO) ya da Meven:<GW_ID>/health (JSON) bekleniyor."
               : "Ağ geçidinden henüz veri gelmedi."}
         </p>
       )}

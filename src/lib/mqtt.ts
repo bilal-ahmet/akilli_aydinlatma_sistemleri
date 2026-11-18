@@ -11,7 +11,7 @@ import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import { appendHealthLog } from "@/lib/healthLog";
-import { isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
+import { gatewayHealthFromBin, isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { normalizeMac } from "@/lib/mac";
 import { intervalSeconds } from "@/lib/deviceWindows";
@@ -166,6 +166,16 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
 async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   const result = await decodeBinUplink(mac, payload);
   mirrorJson(mac, result);
+  // Kayıtlı gateway: binary HEALTH → gateway health'i, HELLO → yalnızca "haber
+  // aldık". Diğer tipler decodeBinUplink'te zaten atıldı. Bölge senkronu
+  // kancalarına girmez (gateway'e zone komutu gitmemeli).
+  if (peekTenancy()?.gatewayOwner.has(mac)) {
+    if (result.kind === "hello") return handleGatewayUplink(mac, "hello", {});
+    if (result.kind === "json" && result.suffix === "health") {
+      return handleGatewayUplink(mac, "health", gatewayHealthFromBin(result.json));
+    }
+    return;
+  }
   // Bölge aboneliği: HELLO = cihaz (yeniden) bağlandı → listeyi doğrula; her
   // geçerli paket = cihaz ayakta → bekleyen zone işi varsa sürdür.
   // Yan iştir: hatası paketin işlenmesini (last_seen, telemetri) asla durdurmamalı.
@@ -689,9 +699,29 @@ const lastNodeSig = (globalForGw.__fenerGwNodes ??= new Map());
  */
 async function handleGatewayUplink(
   gatewayId: string,
-  suffix: UplinkSuffix,
+  suffix: UplinkSuffix | "hello",
   json: unknown,
 ): Promise<void> {
+  if (suffix === "hello") {
+    // Binary HELLO: gövde yok. Son health/data ezilmez, yalnızca görülme.
+    const ownerId = (await getTenancy()).gatewayOwner.get(gatewayId);
+    if (!ownerId) return;
+    const now = new Date();
+    await db
+      .update(schema.gateways)
+      .set({ lastSeen: now, online: true })
+      .where(eq(schema.gateways.gatewayId, gatewayId));
+    emitLiveEvent({
+      kind: "gateway",
+      gatewayId,
+      customerId: ownerId,
+      status: "ok",
+      online: true,
+      firmwareVersion: null,
+      at: now.toISOString(),
+    });
+    return;
+  }
   const parsed = gatewayUplinkSchema.safeParse(json);
   if (!parsed.success) {
     console.warn(`[mqtt] bilinmeyen gateway payload (${gatewayId}/${suffix})`);

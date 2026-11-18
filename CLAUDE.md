@@ -383,6 +383,13 @@ Tam kontrat: `firmware/GATEWAY-ENTEGRASYON.md`.
   cihaz yoluna girmez. Abonelikler değişmedi (`+/data`, `+/health`).
 - **Gateway `Meven:all/cmd`'ye ve bölge topic'lerine abone olmaz** (firmware
   kuralı; lambalara giden toplu komutlar).
+- **Binary (`Meven:<GW_ID>/bin`):** protokol v1'de gateway'e özgü tip yok;
+  aynı codec'li Border Router cihazlarla ortak HEALTH/HELLO basar. Kayıtlı
+  gateway kimliğinden gelen HEALTH `gatewayHealthFromBin` ile zarfa çevrilip
+  `handleGatewayUplink`'e gider (`firmware_version`→`fw`, `pan_id`→"0x…"),
+  HELLO yalnızca `last_seen`'i ilerletir, diğer tipler `GATEWAY` ile atılır.
+  Zone sync kancalarına girmez. Binary'de `nodes`/`uplink` yok; kayıtsız
+  binary gateway "keşfedilen" listesine düşmez (kimlik önce kaydedilmeli).
 - Kayıtsız GW_ID'nin verisi yazılmaz; `lib/gatewayDiscovery.ts` (bellek içi)
   admin'in "Keşfedilen ağ geçitleri" listesine düşer. Kayıtlıysa `gateways`
   satırı tek UPDATE ile güncellenir (geçmiş yok). LWT (`online:false`) yalnızca
