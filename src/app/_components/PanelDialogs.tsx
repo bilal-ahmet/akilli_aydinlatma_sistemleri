@@ -3,7 +3,7 @@
 import { createContext, useContext, useState } from "react";
 import type { DeviceView, PoleView, ScheduleView, Zone } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
-import { useTechnical } from "@/app/_lib/panel";
+import { usePanel, useTechnical } from "@/app/_lib/panel";
 import { formatMac } from "@/lib/mac";
 import { deviceName } from "@/app/_lib/format";
 import { Modal } from "./Modal";
@@ -30,6 +30,7 @@ type Dialog =
   | { kind: "device-control"; mac: string }
   | ({ kind: "pole-form"; poleId?: string } & PoleOpts)
   | { kind: "pole-delete"; poleId: string }
+  | { kind: "pole-view"; poleId: string }
   | { kind: "pole-import"; zoneSlug?: string }
   | ({ kind: "schedule-form" } & ScheduleOpts);
 
@@ -58,6 +59,8 @@ interface DialogsValue {
   openDevice: (device: DeviceView) => void;
   openPoleForm: (pole?: PoleView, opts?: PoleOpts) => void;
   confirmDeletePole: (pole: PoleView) => void;
+  /** Direğe tıklama: bağlı cihazın penceresi (cihaz yoksa bilgi + "Cihaz bağla"). */
+  openPole: (pole: PoleView) => void;
   openPoleImport: (zoneSlug?: string) => void;
   openSchedule: (opts?: ScheduleOpts) => void;
 }
@@ -82,6 +85,7 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
     openDevice: (device) => open({ kind: "device-control", mac: device.deviceId }),
     openPoleForm: (pole, opts) => open({ kind: "pole-form", poleId: pole?.id, ...opts }),
     confirmDeletePole: (pole) => open({ kind: "pole-delete", poleId: pole.id }),
+    openPole: (pole) => open({ kind: "pole-view", poleId: pole.id }),
     openPoleImport: (zoneSlug) => open({ kind: "pole-import", zoneSlug }),
     openSchedule: (opts) => open({ kind: "schedule-form", ...opts }),
   };
@@ -157,6 +161,22 @@ function ActiveDialog({ dialog, onClose }: { dialog: Dialog; onClose: () => void
           onClose={onClose}
         />
       );
+
+    case "pole-view": {
+      if (!pole) return null;
+      const poleDevice = pole.deviceId ? devices.find((d) => d.deviceId === pole.deviceId) : undefined;
+      if (!poleDevice) return <PoleNoDevice pole={pole} onClose={onClose} />;
+      const pz = zones.find((zn) => zn.id === poleDevice.zoneSlug);
+      return (
+        <DeviceControlModal
+          device={poleDevice}
+          poleCode={pole.code}
+          initialOn={poleDevice.masterOn ?? (pz ? pz.isOn : poleDevice.relayStatus === "on")}
+          initialBrightness={poleDevice.masterBrightness ?? (pz ? pz.brightness : (poleDevice.brightness ?? 0))}
+          onClose={onClose}
+        />
+      );
+    }
 
     case "pole-import":
       return <PoleImportDialog zoneSlug={dialog.zoneSlug} onClose={onClose} />;
@@ -317,5 +337,33 @@ function DeleteDevice({ device, onClose }: { device: DeviceView; onClose: () => 
         silinecek.
       </p>
     </ConfirmDelete>
+  );
+}
+
+/** Cihazı olmayan direğe tıklanınca: kısa bilgi + (yazma yetkisinde) "Cihaz bağla". */
+function PoleNoDevice({ pole, onClose }: { pole: PoleView; onClose: () => void }) {
+  const { canWrite } = usePanel();
+  const { openPoleForm } = useDialogs();
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Direk ${pole.code}`}
+      subtitle={<span className="text-xs">{pole.name ? `${pole.name} · ` : ""}{pole.zoneName}</span>}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn-line h-10 px-[18px] text-sm">
+            Kapat
+          </button>
+          {canWrite ? (
+            <button type="button" onClick={() => openPoleForm(pole)} className="btn-glow h-10 px-5 text-sm">
+              Cihaz bağla
+            </button>
+          ) : null}
+        </>
+      }
+    >
+      <p className="text-sm text-ink-2">Bu direğe bağlı cihaz yok.</p>
+    </Modal>
   );
 }

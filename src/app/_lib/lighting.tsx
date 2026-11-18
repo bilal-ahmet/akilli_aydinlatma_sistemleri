@@ -213,6 +213,12 @@ interface LightingValue {
   deletePole: (id: string) => Promise<void>;
   /** İçe aktarma sonrası: direkleri ve (bağlar değiştiği için) cihazları yeniden oku. */
   reloadPoles: () => void;
+  /**
+   * Cihaz penceresinde armatür eklenince / düzenlenince / silinince cihaz
+   * satırının lamba listesi hemen güncellensin (yoksa 30 sn'lik mutabakatı
+   * beklerdi).
+   */
+  setDeviceLamps: (mac: string, lamps: LampView[]) => void;
 
   /** Müşterinin alt grupları (bölge bölge). Üyelik `DeviceView.groups`'ta. */
   groups: ZoneGroupView[];
@@ -1084,6 +1090,22 @@ export function LightingProvider({
     setDevices((ds) => ds.map((d) => (d.poleId === id ? { ...d, poleId: null, poleCode: null } : d)));
   }
 
+  function setDeviceLamps(mac: string, lamps: LampView[]) {
+    const sorted = [...lamps].sort((a, b) => a.channel - b.channel);
+    setDevices((ds) =>
+      ds.map((d) =>
+        d.deviceId === mac
+          ? {
+              ...d,
+              lamps: sorted,
+              lampCount: sorted.length,
+              activeFx: sorted.find((l) => l.activeFx != null)?.activeFx ?? null,
+            }
+          : d,
+      ),
+    );
+  }
+
   function reloadPoles() {
     loadPoles();
     loadDevices();
@@ -1178,6 +1200,7 @@ export function LightingProvider({
     updatePole,
     deletePole,
     reloadPoles,
+    setDeviceLamps,
     groups,
     createGroup,
     renameGroup,

@@ -5,6 +5,7 @@ import type { DeviceView, Fixture, D4iSnapshot, FaultEvent } from "@/app/_lib/ty
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { useApi, usePanel } from "@/app/_lib/panel";
+import { useLighting } from "@/app/_lib/lighting";
 import { effectByNumber } from "@/lib/effects";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { formatMac } from "@/lib/mac";
@@ -75,6 +76,7 @@ export function DeviceControlModal({
   initialOn,
   initialBrightness,
   onClose,
+  poleCode,
 }: {
   device: DeviceView;
   /**
@@ -85,10 +87,26 @@ export function DeviceControlModal({
   initialOn: boolean;
   initialBrightness: number;
   onClose: () => void;
+  /** Direğe tıklanarak açıldıysa direk numarası (alt başlıkta gösterilir). */
+  poleCode?: string;
 }) {
   const deviceId = device.deviceId;
   const api = useApi();
   const { canWrite, technical, role } = usePanel();
+  const { setDeviceLamps } = useLighting();
+  /** Armatür CRUD'u sonrası tablo/harita satırını hemen güncelle. */
+  const syncLamps = (list: Fixture[]) =>
+    setDeviceLamps(
+      deviceId,
+      list.map((f) => ({
+        channel: f.channel,
+        name: f.name,
+        isOn: f.isOn,
+        brightness: f.brightness,
+        activeFx: f.activeFx,
+        status: f.status,
+      })),
+    );
   // Bakım sekmesi: tarama admin + manager, OTA yalnızca admin (DeviceMaintenance).
   const showMaintenance = role === "admin" || role === "manager";
   // Kayıtlar (son veri / health / RF + indirme) YALNIZCA admin; API de admin-only.
@@ -499,12 +517,13 @@ export function DeviceControlModal({
         throw new Error(j.error ?? (technical ? `Hata (${res.status})` : "İşlem tamamlanamadı; yeniden deneyin."));
       }
       const saved = j.data as Fixture;
-      setFixtures((fs) =>
-        (form.mode === "add"
-          ? [...fs, saved]
-          : fs.map((f) => (f.channel === form.original.channel ? saved : f))
-        ).sort((a, b) => a.channel - b.channel),
-      );
+      const next = (
+        form.mode === "add"
+          ? [...fixtures, saved]
+          : fixtures.map((f) => (f.channel === form.original.channel ? saved : f))
+      ).sort((a, b) => a.channel - b.channel);
+      setFixtures(next);
+      syncLamps(next);
       setForm(null);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Bilinmeyen hata");
@@ -514,7 +533,9 @@ export function DeviceControlModal({
   }
 
   function deleteFixture(ch: number) {
-    setFixtures((fs) => fs.filter((f) => f.channel !== ch));
+    const next = fixtures.filter((f) => f.channel !== ch);
+    setFixtures(next);
+    syncLamps(next);
     fetch(api(`/api/devices/${deviceId}/fixtures/${ch}`), { method: "DELETE" }).catch(() => {});
   }
 
@@ -567,6 +588,7 @@ export function DeviceControlModal({
             {technical ? null : "Cihaz kodu "}
             <span className="font-mono">{formatMac(deviceId)}</span>
             {device.zoneName ? ` · ${device.zoneName}` : ""}
+            {poleCode ? ` · Direk ${poleCode}` : ""}
           </span>
         }
       >

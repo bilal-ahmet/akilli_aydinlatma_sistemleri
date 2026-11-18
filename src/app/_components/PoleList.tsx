@@ -37,7 +37,7 @@ export function PoleList({ zone }: { zone: Zone }) {
   const { poles, devices, faultsByDevice, polesLoading } = useLighting();
   const { canWrite } = usePanel();
   const technical = useTechnical();
-  const { openPoleForm, openPoleImport, openDevice } = useDialogs();
+  const { openPoleForm, openPoleImport, openDevice, openPole } = useDialogs();
   const now = useNow(15_000);
   const [pageIndex, setPageIndex] = useState(0);
 
@@ -94,7 +94,9 @@ export function PoleList({ zone }: { zone: Zone }) {
               return (
                 <li
                   key={p.id}
-                  className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-border px-[22px] py-3 last:border-b-0 sm:grid-cols-[auto_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.8fr)_auto]"
+                  // Direğe tıklama: bağlı cihazın penceresi (cihaz yoksa "Cihaz bağla").
+                  onClick={() => openPole(p)}
+                  className="cursor-pointer transition-colors hover:bg-panel-2/60 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-border px-[22px] py-3 last:border-b-0 sm:grid-cols-[auto_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.8fr)_auto]"
                 >
                   <span
                     aria-hidden
@@ -112,7 +114,10 @@ export function PoleList({ zone }: { zone: Zone }) {
                     {device ? (
                       <button
                         type="button"
-                        onClick={() => openDevice(device)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDevice(device);
+                        }}
                         className="truncate text-left text-text hover:text-accent hover:underline"
                       >
                         {deviceName(device, technical)}
@@ -131,7 +136,13 @@ export function PoleList({ zone }: { zone: Zone }) {
                       <span className="text-muted">Konum yok</span>
                     )}
                   </span>
-                  {canWrite ? <PoleRowMenu pole={p} /> : <span />}
+                  {canWrite ? (
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <PoleRowMenu pole={p} />
+                    </span>
+                  ) : (
+                    <span />
+                  )}
                 </li>
               );
             })}
