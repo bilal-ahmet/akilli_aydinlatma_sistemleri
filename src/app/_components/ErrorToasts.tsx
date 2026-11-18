@@ -42,7 +42,8 @@ export function ErrorToasts() {
   const onLive = useCallback(
     (e: LiveEvent) => {
       // Bakım komutu (tarama/OTA) yanıtı cihaz panelinde, butonun yanında gösterilir.
-      if (!e.error || e.kind === "maintenance") return;
+      // Bakım ve bölge aboneliği (zone_sync) sonuçları cihaz satırında/panelinde gösterilir.
+      if (!e.error || e.kind === "maintenance" || e.kind === "zone_sync") return;
       const id = nextId.current++;
       const toast: Toast = {
         id,

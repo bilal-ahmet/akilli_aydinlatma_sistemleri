@@ -1,6 +1,6 @@
 "use client";
 
-import type { DeviceView } from "@/app/_lib/types";
+import type { DeviceView, ZoneGroupView } from "@/app/_lib/types";
 import {
   countSelection,
   deviceState,
@@ -18,10 +18,13 @@ export function SelectionQuickBar({
   devices,
   selection,
   onChange,
+  groups,
 }: {
   devices: DeviceView[];
   selection: Selection;
   onChange: (next: Selection) => void;
+  /** Verilirse alt grup çipleri: grubun cihazlarını seçer. */
+  groups?: ZoneGroupView[];
 }) {
   const inList = new Map(
     [...selection].filter(([mac]) => devices.some((d) => d.deviceId === mac)),
@@ -63,6 +66,19 @@ export function SelectionQuickBar({
       >
         Temizle
       </button>
+      {(groups ?? [])
+        .filter((g) => g.members.length > 0)
+        .map((g) => (
+          <button
+            key={g.slug}
+            type="button"
+            className={chip}
+            title="Bu alt grubun cihazlarını seç"
+            onClick={() => onChange(replaceWithin(selection, devices, (d) => g.members.includes(d.deviceId)))}
+          >
+            {g.name} <span className="ml-1 opacity-60">{g.members.length}</span>
+          </button>
+        ))}
       {inList.size > 0 ? (
         <span className="ml-auto text-[13px] font-medium text-text">{selectionText(count)} seçili</span>
       ) : null}

@@ -60,12 +60,15 @@ const offsetLabel = (o: number) => (o === 0 ? "Tam zamanında" : `${Math.abs(o)}
 const SINGLE_LAMP_FX = EFFECTS.filter((fx) => !fx.allLamps);
 const ALL_LAMP_FX = EFFECTS.filter((fx) => fx.allLamps);
 
-/** Kayıtlı hedeften seçim: bölge → bölgenin bütün cihazları, lamba → kanal kümesi. */
+/** Kayıtlı hedeften seçim: bölge / alt grup → bütün cihazları, lamba → kanal kümesi. */
 function selectionFromTarget(target: ScheduleTarget, devices: DeviceView[]): Selection | "all" {
   if ("all" in target) return "all";
   const sel: Selection = new Map();
   const zones = new Set(target.zones);
-  for (const d of devices) if (d.zoneSlug && zones.has(d.zoneSlug)) sel.set(d.deviceId, null);
+  const groups = new Set(target.groups ?? []);
+  for (const d of devices) {
+    if ((d.zoneSlug && zones.has(d.zoneSlug)) || d.groups.some((g) => groups.has(g))) sel.set(d.deviceId, null);
+  }
   for (const mac of target.devices) sel.set(mac, null);
   for (const { mac, channel } of target.lamps) {
     const cur = sel.get(mac);
@@ -129,7 +132,7 @@ export function ScheduleDialog({
   onSaved?: (s: ScheduleView) => void;
 }) {
   const api = useApi();
-  const { zones, devices } = useLighting();
+  const { zones, devices, groups } = useLighting();
   const { zoned, devicesOf } = useZonedDevices(devices);
   const now = useNow(30_000);
 
@@ -160,12 +163,14 @@ export function ScheduleDialog({
   const selection: Selection =
     picked === "all" ? new Map(zoned.map((d) => [d.deviceId, null])) : pruneSelection(picked, zoned);
   const fx = action === "efekt" ? effectByNumber(effectNumber) : undefined;
-  const plan = planTargets(selection, zoned, zones, fx);
+  // Grup hedefi kaydedilir; tek publish olup olmayacağına çalışma anında karar
+  // verilir (üyeler o an senkron mu — lib/commandPlan.ts).
+  const plan = planTargets(selection, zoned, zones, fx, { groups: "any" });
   const allChosen = zoned.length > 0 && listState(selection, zoned) === "all" && plan.skipped.length === 0;
   const emptyTarget = !allChosen && isEmptyPlan(plan);
   const target: ScheduleTarget = allChosen
     ? { all: true }
-    : { zones: plan.zones, devices: plan.devices, lamps: plan.lamps };
+    : { zones: plan.zones, groups: plan.groups ?? [], devices: plan.devices, lamps: plan.lamps };
 
   const timeMinutes = parseClock(clock);
   const spec = {
@@ -366,7 +371,7 @@ export function ScheduleDialog({
                 ? plan.skipped.length
                   ? `Seçili cihazların armatürü bu efekt için yetmiyor (en az ${fx?.minLamps}).`
                   : "Seçim yok"
-                : planText(plan, zones, allChosen)}
+                : planText(plan, zones, allChosen, groups)}
             </span>
           </div>
           {zones.length === 0 ? (

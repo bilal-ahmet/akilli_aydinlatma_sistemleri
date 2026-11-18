@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { DeviceView, ScheduleView, Zone } from "@/app/_lib/types";
+import type { DeviceView, ScheduleView, Zone, ZoneGroupView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useApi, usePanel } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
@@ -32,10 +32,13 @@ function actionText(s: ScheduleView): string {
 }
 
 /** "Tüm bölgeler", "Park Yolu, Sahil", "Park Yolu ve 3 cihaz", "2 lamba". */
-function targetText(s: ScheduleView, zones: Zone[], devices: DeviceView[]): string {
+function targetText(s: ScheduleView, zones: Zone[], devices: DeviceView[], groups: ZoneGroupView[]): string {
   const t = s.target;
   if ("all" in t) return "Tüm bölgeler";
-  const names = t.zones.map((id) => zones.find((z) => z.id === id)?.name ?? "silinmiş bölge");
+  const names = [
+    ...t.zones.map((id) => zones.find((z) => z.id === id)?.name ?? "silinmiş bölge"),
+    ...(t.groups ?? []).map((slug) => groups.find((x) => x.slug === slug)?.name ?? "silinmiş alt grup"),
+  ];
   const parts: string[] = [];
   if (names.length > 0 && names.length <= 2) parts.push(names.join(", "));
   else if (names.length > 2) parts.push(`${names.length} bölge`);
@@ -176,7 +179,7 @@ onDelete: () => void;
 export function SchedulesView() {
   const api = useApi();
   const { canWrite } = usePanel();
-  const { zones, devices } = useLighting();
+  const { zones, devices, groups } = useLighting();
   const { openSchedule } = useDialogs();
   const now = useNow(30_000);
   const [schedules, setSchedules] = useState<ScheduleView[]>([]);
@@ -244,7 +247,7 @@ export function SchedulesView() {
     canWrite,
     busy: busy === s.id,
     when,
-    target: targetText(s, zones, devices),
+    target: targetText(s, zones, devices, groups),
     onToggle: (v: boolean) => void setEnabled(s, v),
     onEdit: () => openSchedule({ schedule: s, onSaved: upsert }),
     onDelete: () => setDeleting(s),

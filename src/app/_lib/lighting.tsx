@@ -9,7 +9,16 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DeviceView, LampView, LiveSummary, OpenFault, PoleView, Zone, ZoneStatus } from "./types";
+import type {
+  DeviceView,
+  LampView,
+  LiveSummary,
+  OpenFault,
+  PoleView,
+  Zone,
+  ZoneGroupView,
+  ZoneStatus,
+} from "./types";
 import type { PoleLocationSource } from "@/types/lighting";
 import { runsGroupEffect, type CommandTargets, type LampRef } from "./selection";
 import type { Action, LiveEvent } from "@/types/lighting";
@@ -53,6 +62,11 @@ async function postCommand(api: ApiFn, path: string, body: CommandBody): Promise
 /** Tek bölge → `Meven:<slug>/cmd` (tek publish, Kural #3). */
 function sendZone(api: ApiFn, zoneId: string, body: CommandBody) {
   return postCommand(api, `/api/zones/${zoneId}/command`, body);
+}
+
+/** Alt grup → `Meven:<grup>/cmd` (tek publish; yalnızca senkron üyelere ulaşır). */
+function sendGroup(api: ApiFn, zoneId: string, slug: string, body: CommandBody) {
+  return postCommand(api, `/api/zones/${zoneId}/groups/${slug}/command`, body);
 }
 
 /** Tek cihaz → `Meven:<MAC>/cmd`. `channel` varsa tek lamba, yoksa tüm lambaları. */
@@ -199,6 +213,18 @@ interface LightingValue {
   deletePole: (id: string) => Promise<void>;
   /** İçe aktarma sonrası: direkleri ve (bağlar değiştiği için) cihazları yeniden oku. */
   reloadPoles: () => void;
+
+  /** Müşterinin alt grupları (bölge bölge). Üyelik `DeviceView.groups`'ta. */
+  groups: ZoneGroupView[];
+  createGroup: (zoneId: string, name: string) => Promise<ZoneGroupView>;
+  renameGroup: (zoneId: string, slug: string, name: string) => Promise<void>;
+  deleteGroup: (zoneId: string, slug: string) => Promise<void>;
+  /** Toplu üyelik: cihazlara ayrı ayrı zone_add / zone_remove gider (sunucu). */
+  setGroupMembers: (
+    zoneId: string,
+    slug: string,
+    change: { add?: string[]; remove?: string[] },
+  ) => Promise<void>;
 }
 
 const LightingContext = createContext<LightingValue | null>(null);
@@ -218,6 +244,7 @@ export function LightingProvider({
   const [faults, setFaults] = useState<OpenFault[]>([]);
   const [poles, setPoles] = useState<PoleView[]>([]);
   const [polesLoading, setPolesLoading] = useState(true);
+  const [groups, setGroups] = useState<ZoneGroupView[]>([]);
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Master (Tüm Sistem) slider'ı BAĞIMSIZ state'tir — bölge ortalamasından
@@ -324,12 +351,22 @@ export function LightingProvider({
       .finally(() => setPolesLoading(false));
   }, [api]);
 
+  const loadGroups = useCallback(() => {
+    fetch(api("/api/groups"))
+      .then((r) => r.json())
+      .then((j) => {
+        if (Array.isArray(j.data)) setGroups(j.data as ZoneGroupView[]);
+      })
+      .catch(() => {});
+  }, [api]);
+
   useEffect(() => {
     loadLive();
     loadFaults();
     loadDevices();
     loadPoles();
-  }, [loadLive, loadFaults, loadDevices, loadPoles]);
+    loadGroups();
+  }, [loadLive, loadFaults, loadDevices, loadPoles, loadGroups]);
 
   /**
    * SSE kaçarsa ekran bayat kalmasın.
@@ -342,8 +379,10 @@ export function LightingProvider({
   const reconcile = useCallback(() => {
     loadLive();
     loadFaults();
-    // Direkler komutla değişmez (kayıt verisi); başka kullanıcının düzenlemesi gelsin.
+    // Direkler ve alt gruplar komutla değişmez (kayıt verisi); başka
+    // kullanıcının düzenlemesi gelsin.
     loadPoles();
+    loadGroups();
     // Cihaz listesi lamba snapshot'ı (komutla optimistic değişen açık/şiddet/
     // efekt) taşır; bölgelerle aynı koruma: uçuşta ya da az önce komut varsa atla.
     if (pendingRef.current.size > 0) return;
@@ -355,7 +394,7 @@ export function LightingProvider({
         if (Array.isArray(j.data)) setZones(j.data as Zone[]);
       })
       .catch(() => {});
-  }, [api, loadLive, loadFaults, loadDevices, loadPoles]);
+  }, [api, loadLive, loadFaults, loadDevices, loadPoles, loadGroups]);
   useReconcile(reconcile);
 
   /**
@@ -446,6 +485,14 @@ export function LightingProvider({
           const fx = e.activeFx;
           setDevices((ds) => ds.map((d) => (d.deviceId === e.deviceId ? { ...d, activeFx: fx } : d)));
         }
+        return;
+      }
+
+      // Bölge aboneliği durumu (lib/zoneSync): alt grup / bölge bilgisi cihaza
+      // uygulandı mı. Grup komutunun tek publish olup olamayacağı buna bağlı.
+      if (e.deviceId && e.kind === "zone_sync") {
+        const zs = e.zoneSync ?? null;
+        setDevices((ds) => ds.map((d) => (d.deviceId === e.deviceId ? { ...d, zoneSync: zs } : d)));
         return;
       }
 
@@ -557,6 +604,22 @@ export function LightingProvider({
   }
 
   /**
+   * Alt gruba komut (tek publish). Üyelerin cihaz anahtarları pending tutulur:
+   * grup komutunun yankısı cihaz/lamba olayları olarak gelir.
+   */
+  function commandGroup(slug: string, body: CommandBody) {
+    const members = devices.filter((d) => d.groups.includes(slug));
+    const zoneId = members[0]?.zoneSlug;
+    if (!zoneId) return;
+    const keys = members.map((d) => deviceKey(d.deviceId));
+    keys.forEach(beginPending);
+    sendGroup(api, zoneId, slug, body)
+      .then((seq) => keys.forEach((k) => applySeq(k, seq)))
+      .catch(() => {})
+      .finally(() => keys.forEach(endPending));
+  }
+
+  /**
    * Efekt durdurmada lambaların döneceği şiddet: bölgenin son şiddeti. Bölgeye
    * hiç şiddet verilmemişse (0) %100 — yoksa tek lambayı hedefleyen işlem,
    * efekti cihazın tamamında durdururken diğer lambaları da söndürürdü.
@@ -610,20 +673,24 @@ export function LightingProvider({
     forceStop?: Set<string>,
   ) {
     const zoneSet = new Set(t.zones ?? []);
+    const groupSet = new Set(t.groups ?? []);
     const devSet = new Set(t.devices ?? []);
     if (zoneSet.size > 0) {
       setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, ...zonePatch } : z)));
     }
-    if (zoneSet.size + devSet.size > 0) {
+    if (zoneSet.size + groupSet.size + devSet.size > 0) {
       setDevices((ds) =>
         ds.map((d) =>
-          devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))
+          devSet.has(d.deviceId) ||
+          (d.zoneSlug !== null && zoneSet.has(d.zoneSlug)) ||
+          d.groups.some((slug) => groupSet.has(slug))
             ? patchDevice(d, lampPatch)
             : d,
         ),
       );
     }
     for (const id of zoneSet) commandZone(id, body);
+    for (const slug of groupSet) commandGroup(slug, body);
     for (const mac of devSet) commandDevice(mac, body);
     if (t.lamps?.length) commandLamps(t.lamps, () => body, lampPatch, forceStop);
   }
@@ -653,12 +720,17 @@ export function LightingProvider({
     selDimRef.current = { target: t, value, stop };
 
     const zoneSet = new Set(t.zones ?? []);
+    const groupSet = new Set(t.groups ?? []);
     const devSet = new Set(t.devices ?? []);
     const lampsByMac = groupBy(t.lamps ?? [], (r) => r.mac);
     setZones((zs) => zs.map((z) => (zoneSet.has(z.id) ? { ...z, ...zonePatch } : z)));
     setDevices((ds) =>
       ds.map((d) => {
-        if (devSet.has(d.deviceId) || (d.zoneSlug !== null && zoneSet.has(d.zoneSlug))) {
+        if (
+          devSet.has(d.deviceId) ||
+          (d.zoneSlug !== null && zoneSet.has(d.zoneSlug)) ||
+          d.groups.some((slug) => groupSet.has(slug))
+        ) {
           return patchDevice(d, lampPatch);
         }
         const refs = lampsByMac.get(d.deviceId);
@@ -926,6 +998,8 @@ export function LightingProvider({
               zoneName: patch.zoneName,
               poleId: patch.poleId,
               poleCode: patch.poleCode,
+              groups: patch.groups,
+              zoneSync: patch.zoneSync,
             }
           : d,
       ),
@@ -991,6 +1065,65 @@ export function LightingProvider({
     loadDevices();
   }
 
+  // ── Alt grup CRUD ──────────────────────────────────────────
+  async function createGroup(zoneId: string, name: string): Promise<ZoneGroupView> {
+    const res = await fetch(api(`/api/zones/${zoneId}/groups`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const group = await readJson<ZoneGroupView>(res, "Alt grup oluşturulamadı");
+    setGroups((gs) => [...gs, group].sort((a, b) => a.name.localeCompare(b.name, "tr")));
+    return group;
+  }
+
+  async function renameGroup(zoneId: string, slug: string, name: string) {
+    const res = await fetch(api(`/api/zones/${zoneId}/groups/${slug}`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const group = await readJson<ZoneGroupView>(res, "Alt grup güncellenemedi");
+    setGroups((gs) => gs.map((x) => (x.slug === slug ? group : x)));
+  }
+
+  async function deleteGroup(zoneId: string, slug: string) {
+    const res = await fetch(api(`/api/zones/${zoneId}/groups/${slug}`), { method: "DELETE" });
+    await readJson<unknown>(res, "Alt grup silinemedi");
+    setGroups((gs) => gs.filter((x) => x.slug !== slug));
+    setDevices((ds) =>
+      ds.map((d) => (d.groups.includes(slug) ? { ...d, groups: d.groups.filter((x) => x !== slug) } : d)),
+    );
+  }
+
+  async function setGroupMembers(
+    zoneId: string,
+    slug: string,
+    change: { add?: string[]; remove?: string[] },
+  ) {
+    const res = await fetch(api(`/api/zones/${zoneId}/groups/${slug}/members`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    });
+    const group = await readJson<ZoneGroupView>(res, "Üyelik güncellenemedi");
+    setGroups((gs) => gs.map((x) => (x.slug === slug ? group : x)));
+    const members = new Set(group.members);
+    setDevices((ds) =>
+      ds.map((d) => {
+        if (d.zoneSlug !== zoneId) return d;
+        const has = d.groups.includes(slug);
+        if (members.has(d.deviceId) === has) return d;
+        return {
+          ...d,
+          groups: has ? d.groups.filter((x) => x !== slug) : [...d.groups, slug],
+          // Kesin durum SSE'yle (kind:"zone_sync") gelir; o ana kadar gönderiliyor.
+          zoneSync: d.zoneSync && d.zoneSync.status !== "unknown" ? { ...d.zoneSync, status: "pending" } : d.zoneSync,
+        };
+      }),
+    );
+  }
+
   const value: LightingValue = {
     zones,
     devices,
@@ -1021,6 +1154,11 @@ export function LightingProvider({
     updatePole,
     deletePole,
     reloadPoles,
+    groups,
+    createGroup,
+    renameGroup,
+    deleteGroup,
+    setGroupMembers,
   };
 
   return <LightingContext.Provider value={value}>{children}</LightingContext.Provider>;

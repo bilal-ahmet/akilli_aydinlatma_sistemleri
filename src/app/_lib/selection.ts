@@ -22,6 +22,8 @@ export interface LampRef {
 
 /** Komut hedefleri: bölge (tek publish), cihazın tamamı, tek lamba. */
 export interface CommandTargets {
+  /** Alt gruplar (grup slug'ı) — tek publish; üyeler `DeviceView.groups`'tan. */
+  groups?: string[];
   zones?: string[];
   devices?: string[];
   lamps?: LampRef[];
@@ -187,14 +189,23 @@ export function lampName(l: LampView): string {
 
 export interface TargetPlan {
   zones: string[];
+  /** Alt gruplar (grup slug'ı) — `Meven:<grup>/cmd`'ye tek publish. */
+  groups?: string[];
   devices: string[];
   lamps: LampRef[];
   /** Lambası efektin istediğinden az olduğu için atlanan cihazlar. */
   skipped: string[];
 }
 
-export function isEmptyPlan(p: { zones: string[]; devices: string[]; lamps: LampRef[] }): boolean {
-  return p.zones.length === 0 && p.devices.length === 0 && p.lamps.length === 0;
+export function isEmptyPlan(p: {
+  zones: string[];
+  groups?: string[];
+  devices: string[];
+  lamps: LampRef[];
+}): boolean {
+  return (
+    p.zones.length === 0 && (p.groups?.length ?? 0) === 0 && p.devices.length === 0 && p.lamps.length === 0
+  );
 }
 
 /** Lambası bu efektin istediğinden az mı? Lamba kaydı yoksa sayı bilinmez; engellenmez. */
@@ -208,12 +219,19 @@ export function tooFewLamps(d: DeviceView, effect: Effect | undefined): boolean 
  *    tamamına yükseltilir. Lambası yetmeyen cihaz atlanır (`skipped`).
  *  - Bölgenin bütün cihazları tamamen seçiliyse tek bölge komutu gider
  *    (Kural #3); o cihazlar ayrıca komut almaz.
+ *  - `opts.groups` verilirse: kalan cihazlar arasında bir alt grubun (≥2 üye)
+ *    bütün üyeleri tamamen seçiliyse tek grup komutu gider (büyükten küçüğe,
+ *    örtüşmesiz). Grup topic'i yalnızca grubu cihazına uygulamış üyelere
+ *    ulaştığı için anlık komutta `"synced"`: tüm üyeler `zoneSync.status ===
+ *    "synced"` olmalı. Zamanlama kaydında `"any"`: karar çalışma anında verilir
+ *    (lib/commandPlan.ts runPlan).
  */
 export function planTargets(
   sel: Selection,
   devices: DeviceView[],
   zones: Zone[],
   effect?: Effect,
+  opts?: { groups?: "synced" | "any" },
 ): TargetPlan {
   const whole = new Set<string>();
   const lamps: LampRef[] = [];
@@ -239,7 +257,31 @@ export function planTargets(
     }
   }
 
-  return { zones: zoneIds, devices: [...whole], lamps, skipped };
+  const groups: string[] = [];
+  if (opts?.groups) {
+    for (const [slug, members] of groupMembers(devices)) {
+      if (members.length < 2) continue;
+      if (!members.every((d) => whole.has(d.deviceId))) continue;
+      if (opts.groups === "synced" && !members.every((d) => d.zoneSync?.status === "synced")) continue;
+      groups.push(slug);
+      for (const d of members) whole.delete(d.deviceId);
+    }
+  }
+
+  return { zones: zoneIds, groups, devices: [...whole], lamps, skipped };
+}
+
+/** Alt grup slug'ı → üye cihazlar (`DeviceView.groups`'tan), büyükten küçüğe. */
+export function groupMembers(devices: DeviceView[]): Array<[string, DeviceView[]]> {
+  const map = new Map<string, DeviceView[]>();
+  for (const d of devices) {
+    for (const slug of d.groups ?? []) {
+      const list = map.get(slug);
+      if (list) list.push(d);
+      else map.set(slug, [d]);
+    }
+  }
+  return [...map.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
 }
 
 /**

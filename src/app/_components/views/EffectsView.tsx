@@ -138,7 +138,7 @@ function EffectCard({
  * seçimi cihazın tamamına yükselir; lambası yetmeyen cihaz atlanır.
  */
 export function EffectsView() {
-  const { zones, devices, applyEffect, stopEffect } = useLighting();
+  const { zones, devices, groups, applyEffect, stopEffect } = useLighting();
   const { canWrite } = usePanel();
   const [selected, setSelected] = useState<Effect>(EFFECTS[0]);
   // "all": varsayılan, tüm cihazlar (yeni yüklenen/eklenen cihaz da dahil).
@@ -156,7 +156,7 @@ export function EffectsView() {
     setSent(null);
   };
 
-  const plan = planTargets(selection, zoned, zones, selected);
+  const plan = planTargets(selection, zoned, zones, selected, { groups: "synced" });
   const stopPlan = planStop(selection, zoned, zones);
   const allChosen = zoned.length > 0 && listState(selection, zoned) === "all" && plan.skipped.length === 0;
   const nothing = isEmptyPlan(plan);
@@ -172,7 +172,7 @@ export function EffectsView() {
     );
   };
 
-  const targetText = () => planText(plan, zones, allChosen);
+  const targetText = () => planText(plan, zones, allChosen, groups);
 
   function start() {
     if (nothing) return;

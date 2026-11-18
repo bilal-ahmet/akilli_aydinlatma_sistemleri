@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { DeviceView, Zone } from "@/app/_lib/types";
+import type { DeviceView, Zone, ZoneGroupView } from "@/app/_lib/types";
 import {
   countSelection,
   deviceSelState,
@@ -53,11 +53,19 @@ export function useZonedDevices(devices: DeviceView[]) {
 }
 
 /** Hedef özeti: "tüm bölgeler", "Park Yolu", "2 bölge, 3 cihaz", "1 lamba". */
-export function planText(plan: Pick<TargetPlan, "zones" | "devices" | "lamps">, zones: Zone[], all: boolean): string {
+export function planText(
+  plan: Pick<TargetPlan, "zones" | "groups" | "devices" | "lamps">,
+  zones: Zone[],
+  all: boolean,
+  groups: ZoneGroupView[] = [],
+): string {
   if (all) return "tüm bölgeler";
   const parts: string[] = [];
   if (plan.zones.length === 1) parts.push(zones.find((z) => z.id === plan.zones[0])?.name ?? "1 bölge");
   else if (plan.zones.length > 1) parts.push(`${plan.zones.length} bölge`);
+  const g = plan.groups ?? [];
+  if (g.length === 1) parts.push(groups.find((x) => x.slug === g[0])?.name ?? "1 alt grup");
+  else if (g.length > 1) parts.push(`${g.length} alt grup`);
   if (plan.devices.length) parts.push(`${plan.devices.length} cihaz`);
   if (plan.lamps.length) parts.push(`${plan.lamps.length} armatür`);
   return parts.join(", ");

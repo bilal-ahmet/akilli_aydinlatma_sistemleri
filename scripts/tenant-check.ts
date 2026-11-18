@@ -184,6 +184,29 @@ async function main() {
   check("A, B bölgesini düzenleyemez → 404", (await call(aMgr, "PATCH", `/api/zones/${zoneB}`, { name: "x" })).status === 404);
   check("A, B bölgesine komut veremez → 404", (await call(aMgr, "POST", `/api/zones/${zoneB}/command`, { action: "on" })).status === 404);
   check("A, B bölgesini silemez → 404", (await call(aMgr, "DELETE", `/api/zones/${zoneB}`)).status === 404);
+  // Alt gruplar (dinamik bölge aboneliği): slug global ve emekliye ayrılır, başka müşteriye görünmez.
+  const grpB = await call(admin, "POST", `/api/zones/${zoneB}/groups`, { name: "Hat A" });
+  const grpBSlug = (grpB.json?.data as { slug: string } | undefined)?.slug ?? "";
+  check("admin B bölgesinde alt grup açar (bölgeyle önekli, ≤32)", grpB.status === 201 && grpBSlug.startsWith(zoneB.slice(0, 6)) && grpBSlug.length <= 32, grpBSlug);
+  check("A, B alt gruplarını listeleyemez → 404", (await call(aMgr, "GET", `/api/zones/${zoneB}/groups`)).status === 404);
+  check("A, B alt grubunu silemez → 404", (await call(aMgr, "DELETE", `/api/zones/${zoneB}/groups/${grpBSlug}`)).status === 404);
+  check("A, B alt grubuna komut veremez → 404", (await call(aMgr, "POST", `/api/zones/${zoneB}/groups/${grpBSlug}/command`, { action: "on" })).status === 404);
+  check("A, B alt grubunu kendi bölgesi üzerinden çağıramaz → 404", (await call(aMgr, "POST", `/api/zones/${zoneA}/groups/${grpBSlug}/members`, { add: [macB] })).status === 404);
+  check("A, B cihazını kendi alt grubuna ekleyemez → 422", await (async () => {
+    const own = await call(aMgr, "POST", `/api/zones/${zoneA}/groups`, { name: "Deneme" });
+    const ownSlug = (own.json?.data as { slug: string } | undefined)?.slug;
+    return !!ownSlug && (await call(aMgr, "POST", `/api/zones/${zoneA}/groups/${ownSlug}/members`, { add: [macB] })).status === 422;
+  })());
+  check("A, B alt grubunun slug'ıyla bölge açamaz (topic ad alanı ortak)", await (async () => {
+    const r = await call(aMgr, "POST", "/api/zones", { name: "x", slug: grpBSlug });
+    const id = (r.json?.data as { id: string } | undefined)?.id;
+    if (r.status === 201 && id) await call(aMgr, "DELETE", `/api/zones/${id}`); // sonraki bölge sayıları bozulmasın
+    return r.status !== 201 || id !== grpBSlug;
+  })());
+  check("admin alt grubu siler", (await call(admin, "DELETE", `/api/zones/${zoneB}/groups/${grpBSlug}`)).status === 200);
+  const grpAgain = await call(admin, "POST", `/api/zones/${zoneB}/groups`, { name: "Hat A" });
+  const grpAgainSlug = (grpAgain.json?.data as { slug: string } | undefined)?.slug ?? "";
+  check("silinen alt grubun slug'ı yeniden verilmez", !!grpAgainSlug && grpAgainSlug !== grpBSlug, grpAgain.json);
   check("A, B cihazına komut veremez → 404", (await call(aMgr, "POST", `/api/devices/${macB}/command`, { action: "on" })).status === 404);
   check("A, B cihaz telemetrisini okuyamaz → 404", (await call(aMgr, "GET", `/api/devices/${macB}/telemetry`)).status === 404);
   const devA = await call(aMgr, "GET", "/api/devices");
@@ -371,6 +394,7 @@ async function main() {
   check("A, B zamanlamasını silemez → 404", (await call(aMgr, "DELETE", `/api/schedules/${schedB}`)).status === 404);
   check("A, B bölgesini hedefleyemez → 422", (await call(aMgr, "POST", "/api/schedules", sched({ zones: [zoneB], devices: [], lamps: [] }))).status === 422);
   check("A, B cihazını hedefleyemez → 422", (await call(aMgr, "POST", "/api/schedules", sched({ zones: [], devices: [macB], lamps: [] }))).status === 422);
+  check("A, B alt grubunu hedefleyemez → 422", (await call(aMgr, "POST", "/api/schedules", sched({ zones: [], groups: [grpAgainSlug], devices: [], lamps: [] }))).status === 422);
   check("izleyici zamanlama kuramaz → 403", (await call(aView, "POST", "/api/schedules", sched({ all: true }))).status === 403);
   check("izleyici zamanlamaları okur", (await call(aView, "GET", "/api/schedules")).status === 200);
   check("geçmiş tek seferlik → 422", (await call(aMgr, "POST", "/api/schedules", { ...sched({ all: true }), repeat: "once", runDate: "2020-01-01" })).status === 422);

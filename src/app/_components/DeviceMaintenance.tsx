@@ -9,6 +9,7 @@ import { useNow } from "@/app/_lib/useNow";
 import { formatDuration } from "@/app/_lib/format";
 import { describeDeviceError, type DeviceErrorInfo } from "@/lib/deviceErrors";
 import { Modal } from "./Modal";
+import { DeviceZoneSync } from "./DeviceZoneSync";
 
 /**
  * Cihaz bakım komutları (firmware 1.0.9+) — cihaz panelinin "Bakım" sekmesi.
@@ -271,6 +272,8 @@ export function DeviceMaintenance({
           />
         </section>
       ) : null}
+
+      {canScan ? <DeviceZoneSync device={device} /> : null}
 
       {canOta ? (
         <section className="rounded-xl border border-border bg-panel-2 p-3.5">

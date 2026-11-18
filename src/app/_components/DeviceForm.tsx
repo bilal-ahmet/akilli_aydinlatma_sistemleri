@@ -5,6 +5,7 @@ import type { DeviceView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { useTechnical } from "@/app/_lib/panel";
 import { formatMac, normalizeMac } from "@/lib/mac";
+import { zoneSyncCapable } from "@/lib/zoneSync/plan";
 import { Modal } from "./Modal";
 
 /**
@@ -37,6 +38,8 @@ export function DeviceDialog({
   const [error, setError] = useState<string | null>(null);
 
   const zoneChanged = device ? zoneSlug !== device.zoneSlug : false;
+  // Yeni firmware bölgesini panelden alır (lib/zoneSync); eskisi ZONE_SLUG'tan.
+  const dynamicZones = zoneSyncCapable(device?.zoneSync);
   // Seçili bölgedeki boş direkler + cihazın şu anki direği (bir direkte tek cihaz).
   const poleOptions = poles.filter(
     (p) => p.zoneSlug === zoneSlug && (!p.deviceId || p.deviceId === device?.deviceId),
@@ -113,12 +116,27 @@ export function DeviceDialog({
               <option key={z.id} value={z.id}>{z.name}</option>
             ))}
           </select>
-          {device && zoneChanged && !technical ? (
+          {device && zoneChanged && dynamicZones && !technical ? (
+            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
+              Yeni bölge bilgisi cihaza gönderilir; cihazın bağlantısı yoksa bağlandığında uygulanır.
+              Cihaz eski bölgenin alt gruplarından çıkarılır.
+            </p>
+          ) : null}
+          {device && zoneChanged && dynamicZones && technical ? (
+            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
+              <span className="font-semibold text-accent">Bölge cihaza gönderilir.</span> Cihaz dinamik
+              bölge aboneliğini destekliyor: <span className="font-mono">Meven:&lt;MAC&gt;/cmd</span> ile{" "}
+              <span className="font-mono">{device.zoneSlug ?? "eski bölge"}</span> ve alt grupları
+              bırakılır, <span className="font-mono">{zoneSlug}</span> eklenir (zone_remove/clear +
+              zone_add). Çevrimdışıysa HELLO&apos;da uygulanır. Eski bölgenin alt grup üyelikleri silinir.
+            </p>
+          ) : null}
+          {device && zoneChanged && !dynamicZones && !technical ? (
             <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
               Bu değişiklik, teknik ekip cihazı yeniden ayarlayınca sahada geçerli olur.
             </p>
           ) : null}
-          {device && zoneChanged && technical ? (
+          {device && zoneChanged && !dynamicZones && technical ? (
             <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
               <span className="font-semibold text-accent">Cihazın yeniden flaşlanması gerekir.</span>{" "}
               Cihaz hangi bölge komutlarını dinleyeceğini firmware&apos;deki{" "}

@@ -8,6 +8,7 @@ import { useNow } from "@/app/_lib/useNow";
 import { deviceHealth, formatAgo, formatPower, formatVolt } from "@/app/_lib/deviceHealth";
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { effectByNumber } from "@/lib/effects";
+import { zoneSyncLabel } from "@/lib/zoneSync/plan";
 import { formatMac } from "@/lib/mac";
 import { deviceName } from "@/app/_lib/format";
 import { isLit } from "@/app/_lib/mockData";
@@ -168,6 +169,8 @@ export function DeviceTable({
             const title = deviceName(d, technical);
             const state = deviceSelState(sel, d);
             const multiLamp = selectable && d.lamps.length > 1;
+            // Bölge / alt grup bilgisi cihaza henüz uygulanmadıysa (lib/zoneSync).
+            const zs = zoneSyncLabel(d.zoneSync, technical);
             const isOpen = multiLamp && expanded.has(d.deviceId);
             const light = deviceLight(d);
             const rowClick = () => (compact && selectable ? select(toggleDevice(sel, d)) : openDevice(d));
@@ -209,7 +212,7 @@ export function DeviceTable({
                           <span className="ml-1.5 text-xs font-normal text-muted">Direk {d.poleCode}</span>
                         ) : null}
                       </button>
-                      {multiLamp || faults?.length || d.lastError || (m && full) ? (
+                      {multiLamp || faults?.length || d.lastError || zs || (m && full) ? (
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           {multiLamp ? (
                             <LampToggle
@@ -232,6 +235,13 @@ export function DeviceTable({
                           ) : d.lastError ? (
                             <span className="text-xs text-danger">
                               {describeDeviceError(d.lastError, { technical }).title}
+                            </span>
+                          ) : zs ? (
+                            <span
+                              className={`text-xs ${zs.tone === "bad" ? "text-danger" : zs.tone === "warn" ? "text-warn" : "text-muted"}`}
+                              title={d.zoneSync?.error ? describeDeviceError(d.zoneSync.error, { technical }).cause : undefined}
+                            >
+                              {zs.text}
                             </span>
                           ) : m && full && !multiLamp ? (
                             // Lamba düğmesi zaten lamba sayısını gösteriyorsa tekrar yazılmaz.

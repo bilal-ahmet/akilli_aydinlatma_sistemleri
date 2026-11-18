@@ -20,6 +20,7 @@ import { BrightnessSlider } from "./BrightnessSlider";
 import { EffectPicker } from "./EffectPicker";
 import { useDialogs } from "./PanelDialogs";
 import { ClockIcon } from "./ScheduleForm";
+import { GroupMembershipDialog } from "./ZoneGroups";
 
 /** Seçimin kararlı imzası — geri bildirim ve kaydırıcı değeri seçime bağlı tutulur. */
 function signature(sel: Selection): string {
@@ -55,9 +56,12 @@ export function SelectionActionBar({
   devices,
   selection,
   onClear,
+  zoneId,
 }: {
   /** Seçimin geçerli olduğu liste (bölge detayında o bölgenin cihazları). */
   devices: DeviceView[];
+  /** Bölge detayında: seçili cihazları bu bölgenin alt gruplarına ekle/çıkar. */
+  zoneId?: string;
   selection: Selection;
   onClear: () => void;
 }) {
@@ -65,6 +69,7 @@ export function SelectionActionBar({
   const { canWrite } = usePanel();
   const { openSchedule } = useDialogs();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
   const [level, setLevel] = useState<{ sig: string; value: number } | null>(null);
   const [notice, setNotice] = useState<{ sig: string; text: string } | null>(null);
 
@@ -72,7 +77,8 @@ export function SelectionActionBar({
   const count = countSelection(selection);
   if (!canWrite || selection.size === 0) return null;
 
-  const plan = planTargets(selection, devices, zones);
+  // Bir alt grubun bütün (senkron) üyeleri seçiliyse tek grup komutu gider.
+  const plan = planTargets(selection, devices, zones, undefined, { groups: "synced" });
   const stopPlan = planStop(selection, devices, zones);
   const what = selectionText(count);
   const value = level?.sig === sig ? level.value : selectedBrightness(selection, devices);
@@ -96,7 +102,7 @@ export function SelectionActionBar({
 
   function pickEffect(number: number, text?: string) {
     const fx = effectByNumber(number);
-    const p = planTargets(selection, devices, zones, fx);
+    const p = planTargets(selection, devices, zones, fx, { groups: "synced" });
     setPickerOpen(false);
     if (isEmptyPlan(p)) {
       say(`Seçili cihazların hiçbirinde ${fx?.label ?? "bu efekt"} için yeterli armatür yok.`);
@@ -170,6 +176,16 @@ export function SelectionActionBar({
               <ClockIcon />
               Zamanla
             </button>
+            {zoneId ? (
+              <button
+                type="button"
+                onClick={() => setGroupOpen(true)}
+                title="Seçili cihazları bir alt gruba ekle ya da çıkar"
+                className={btn}
+              >
+                Alt grup
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onClear}
@@ -189,6 +205,16 @@ export function SelectionActionBar({
           </p>
         ) : null}
       </div>
+
+      {zoneId ? (
+        <GroupMembershipDialog
+          open={groupOpen}
+          onClose={() => setGroupOpen(false)}
+          zoneId={zoneId}
+          macs={[...selection.keys()].filter((mac) => devices.some((d) => d.deviceId === mac))}
+          onDone={say}
+        />
+      ) : null}
 
       <EffectPicker
         open={pickerOpen}

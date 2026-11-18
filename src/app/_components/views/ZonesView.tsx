@@ -24,6 +24,7 @@ import { PoleList } from "../PoleList";
 import { ZoneMapCard } from "../ZoneMapCard";
 import { SelectionQuickBar } from "../SelectionQuickBar";
 import { SelectionActionBar } from "../SelectionActionBar";
+import { ZoneGroupsCard } from "../ZoneGroups";
 import { DeviceTable } from "./DeviceTable";
 
 const tr1 = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
@@ -153,7 +154,8 @@ function ZoneList({ selected }: { selected: string | null }) {
 
 function ZoneDetail({ zone }: { zone: Zone }) {
   const technical = useTechnical();
-  const { toggleZone, setZoneBrightness, faults, faultsByDevice, poles, devices: allDevices } = useLighting();
+  const { toggleZone, setZoneBrightness, faults, faultsByDevice, poles, devices: allDevices, groups } =
+    useLighting();
   const { customerSlug, canWrite } = usePanel();
   const { openZoneForm, confirmDeleteZone, openZoneEffects, openDeviceForm } = useDialogs();
   const router = useRouter();
@@ -427,7 +429,12 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           <>
             {canWrite ? (
               <div className="border-t border-border px-[22px] py-3">
-                <SelectionQuickBar devices={devices} selection={selection} onChange={setPicked} />
+                <SelectionQuickBar
+                  devices={devices}
+                  selection={selection}
+                  onChange={setPicked}
+                  groups={groups.filter((g) => g.zoneSlug === zone.id)}
+                />
               </div>
             ) : null}
             <DeviceTable
@@ -439,6 +446,8 @@ function ZoneDetail({ zone }: { zone: Zone }) {
           </>
         )}
       </section>
+
+      <ZoneGroupsCard zone={zone} devices={devices} onSelect={setPicked} />
 
       <section aria-label="Arıza geçmişi" className="flex flex-col gap-3">
         <h2 className="eyebrow">
@@ -470,6 +479,7 @@ function ZoneDetail({ zone }: { zone: Zone }) {
         devices={devices}
         selection={selection}
         onClear={() => setPicked(emptySelection())}
+        zoneId={zone.id}
       />
     </div>
   );
