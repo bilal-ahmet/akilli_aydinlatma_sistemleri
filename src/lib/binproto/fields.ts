@@ -5,7 +5,9 @@
  * `components/msg_codec/include/msg_fields.h` (alan/enum kodları) ve
  * `src/msg_fields.c` (boy tablosu). Bu dosya onun TypeScript kopyasıdır —
  * kaynak: "MQTT Binary Protokolü v1" dokümanı, rev 1.0 (3 Kasım 2026),
- * `firmware/MQTT-BINARY-PROTOKOL.html`.
+ * `firmware/MQTT-BINARY-PROTOKOL.html`. Ek: dinamik bölge aboneliği (0xA9/0xAA,
+ * action 6-9, sonuç -18…-21) — firmware ekibinin "Dinamik zone ve bölgesel OTA"
+ * planı (Kasım 2026).
  *
  * ⚠ KURAL: firmware yeni bir alan eklediğinde ÖNCE bu tablo güncellenip
  * deploy edilir, SONRA cihazlara OTA yapılır. Tanımsız alan kodu taşıyan paket
@@ -148,6 +150,10 @@ export const FIELD_DEFS: readonly FieldDef[] = [
   i8(0xa6, "COMMAND_RESULT"),
   u8(0xa7, "COMMAND_LAMPS_NEEDED"),
   u8(0xa8, "COMMAND_LAMPS_AVAILABLE"),
+  // Dinamik bölge aboneliği (zone_plan, Kasım 2026). 0xA9 bir pakette TEKRAR
+  // EDEBİLİR (komşu listesinden sonra ikinci istisna): her biri bir slug.
+  vari(0xa9, "COMMAND_ZONE", "text"),
+  u8(0xaa, "COMMAND_ZONE_COUNT"),
   // Health
   u32(0xb0, "HEALTH_UPTIME_S"),
   u32(0xb1, "HEALTH_FREE_HEAP_BYTES"),
@@ -279,6 +285,11 @@ export const COMMAND_ACTIONS: EnumTable = {
   3: "d4i_read",
   4: "commission",
   5: "ota_check",
+  // Dinamik bölge aboneliği — yalnızca Meven:<MAC>/cmd'den kabul edilir (-21).
+  6: "zone_add",
+  7: "zone_remove",
+  8: "zone_clear",
+  9: "zone_list",
 };
 
 /**
@@ -303,9 +314,32 @@ export const COMMAND_RESULT_TEXTS: EnumTable = {
   [-15]: "crc hatali, paket islenmedi",
   [-16]: "desteklenmeyen protokol versiyonu",
   [-17]: "paket bicimi bozuk",
+  // Dinamik bölge aboneliği (zone_plan). -22 eskiden kullanımda olduğu için
+  // yeni kodlar ondan önceki boş aralığa yerleşti.
+  [-18]: "zone gecersiz",
+  [-19]: "zone siniri asildi",
+  [-20]: "zone kaydedilemedi",
+  [-21]: "zone komutu yalnizca cihaz topic'inden kabul edilir",
   [-22]: "action string degil",
 };
 export const COMMAND_RESULT_NOT_ENOUGH_LAMPS = -10;
+
+const RESULT_CODES_BY_TEXT: ReadonlyMap<string, number> = new Map(
+  Object.entries(COMMAND_RESULT_TEXTS).map(([code, text]) => [text, Number(code)]),
+);
+
+/**
+ * Ack'in JSON `error` metni → firmware sonuç kodu (COMMAND_RESULT_TEXTS'in
+ * tersi; -10'un metni sayı taşır). Tanınmayan metin undefined.
+ */
+export function resultCodeOf(error: string | null | undefined): number | undefined {
+  if (!error) return undefined;
+  const exact = RESULT_CODES_BY_TEXT.get(error.trim());
+  if (exact !== undefined) return exact;
+  if (/^bu efekt en az \S+ lamba ister/.test(error.trim())) return COMMAND_RESULT_NOT_ENOUGH_LAMPS;
+  const unknown = /^bilinmeyen hata kodu \((-?\d+)\)$/.exec(error.trim());
+  return unknown ? Number(unknown[1]) : undefined;
+}
 
 /** msg_reset_reason_t (ESP-IDF esp_reset_reason_t sırasıyla aynı). */
 export const RESET_REASONS: EnumTable = {

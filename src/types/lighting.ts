@@ -197,6 +197,10 @@ export const commandAckSchema = z.object({
   error: z.string().optional(),
   action: z.string().optional(),
   id: z.union([z.string(), z.number()]).optional(),
+  // Bölge komutlarının ack'i: komuttan sonra cihazdaki bölge sayısı ve
+  // (yalnızca zone_list'te) listenin tamamı.
+  zone_count: z.number().int().min(0).optional(),
+  zones: z.array(z.string()).optional(),
 });
 export type CommandAck = z.infer<typeof commandAckSchema>;
 

@@ -166,6 +166,45 @@ const EXACT: Record<string, Entry> = {
     cause: "Binary komut paketi çözülemedi (tanımsız alan, taşma ya da tipi COMMAND değil).",
     plain: PLAIN_PROTOCOL,
   },
+  // Dinamik bölge aboneliği (zone_add/remove/clear/list; COMMAND_RESULT -18…-21).
+  // Müşteriye iç sınırlar (32 karakter, 16 bölge, topic) gösterilmez.
+  "zone gecersiz": {
+    code: "zone-invalid",
+    title: "Geçersiz bölge slug'ı",
+    cause:
+      "Slug boş, 32 karakterden uzun, a-z/0-9/- dışında karakter içeriyor, `all` verilmiş ya da komutta slug yok.",
+    plain: {
+      title: "Bölge tanımı geçersiz",
+      cause: "Cihaz gönderilen bölge tanımını kabul etmedi.",
+    },
+  },
+  "zone siniri asildi": {
+    code: "zone-limit",
+    title: "Bölge sınırı aşıldı",
+    cause: "Pakette 3'ten fazla slug var ya da cihazdaki toplam 16 bölge sınırı aşılıyor.",
+    plain: {
+      title: "Bölge sayısı sınırına ulaşıldı",
+      cause: "Cihaza tanımlanabilecek en fazla bölge sayısına ulaşıldı.",
+    },
+  },
+  "zone kaydedilemedi": {
+    code: "zone-store",
+    title: "Bölge listesi NVS'e yazılamadı",
+    cause: "Cihaz bölge listesini kalıcı belleğe yazamadı; değişiklik uygulanmadı.",
+    plain: {
+      title: "Cihaz bölge bilgisini kaydedemedi",
+      cause: "Cihazın kalıcı belleğine yazma başarısız oldu; değişiklik uygulanmadı.",
+    },
+  },
+  "zone komutu yalnizca cihaz topic'inden kabul edilir": {
+    code: "zone-topic",
+    title: "Zone komutu yanlış topic'ten geldi",
+    cause: "Zone komutları yalnızca Meven:<MAC>/cmd'den kabul edilir; bölge ya da `all` topic'inden gelen reddedilir.",
+    plain: {
+      title: "Bölge komutu reddedildi",
+      cause: "Komut cihaza doğru yoldan ulaşmadı.",
+    },
+  },
 };
 
 /** Değişken içeren (sayı taşıyan) metinler. */

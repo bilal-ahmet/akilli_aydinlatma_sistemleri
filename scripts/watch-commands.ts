@@ -111,6 +111,9 @@ function binaryToCommand(raw: Buffer): Record<string, unknown> | string {
   const ch = f.get("COMMAND_CHANNEL");
   if (ch !== undefined && ch !== 255) out.channel = ch;
   if (f.has("COMMAND_ID")) out.id = f.get("COMMAND_ID");
+  // Bölge komutları: 0xA9 tekrar eder → Map'ten değil paket sırasından.
+  const zones = frame.fields.filter(([n]) => n === "COMMAND_ZONE").map(([, v]) => v);
+  if (zones.length > 0) out.zones = zones;
   return out;
 }
 
@@ -129,7 +132,13 @@ client.on("message", (topic, raw) => {
     } else {
       console.log(`  = ${JSON.stringify(cmd)}`);
       if (cmd.action === "commission" || cmd.action === "ota_check") console.log(`  ✓ bakım komutu`);
-      else for (const n of audit(cmd)) console.log(`  ${n}`);
+      else if (typeof cmd.action === "string" && cmd.action.startsWith("zone_")) {
+        console.log(
+          kind === "cihaz"
+            ? `  ✓ bölge aboneliği komutu`
+            : `  ✗ HATA: zone komutu yalnızca Meven:<MAC>/cmd'ye gider — cihaz -21 ile reddeder`,
+        );
+      } else for (const n of audit(cmd)) console.log(`  ${n}`);
     }
     console.log();
     return;

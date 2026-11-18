@@ -26,7 +26,7 @@ import {
   type ConvertContext,
   type LegacyMessage,
 } from "../src/lib/binproto/toJson";
-import { FIELD_DEFS, type MessageTypeName } from "../src/lib/binproto/fields";
+import { FIELD_DEFS, resultCodeOf, type MessageTypeName } from "../src/lib/binproto/fields";
 import { deviceHealthSchema, parseUplink } from "../src/types/lighting";
 import { activeFaultCodes } from "../src/lib/faults";
 import { readMeasurement, type D4iBlock } from "../src/lib/d4i";
@@ -101,7 +101,7 @@ function withCrc(bytes: number[]): Uint8Array {
 }
 
 // ── Alan tablosu ─────────────────────────────────────────────
-check("alan tablosu 138 alan", FIELD_DEFS.length === 138, String(FIELD_DEFS.length));
+check("alan tablosu 140 alan", FIELD_DEFS.length === 140, String(FIELD_DEFS.length));
 check(
   "alan kodları benzersiz",
   new Set(FIELD_DEFS.map((f) => f.code)).size === FIELD_DEFS.length &&
@@ -666,6 +666,99 @@ check(
   "id'siz CRC ack'i → hata metni, id yok",
   ackCrc?.kind === "ack" && ackCrc.json.id === undefined && ackCrc.json.error === "crc hatali, paket islenmedi",
 );
+
+
+// ── Dinamik bölge aboneliği (zone_plan, Kasım 2026) ──────────
+// Dokümandaki örnek paketler (CRC'leri dokümanda hesaplanmış).
+const zoneExamples: Record<string, string> = {
+  add: "01 01 08 A0 06 A1 0C 00 A9 07 65 6B 61 6C 64 65 73 68 3A",
+  add2: "01 01 08 A0 06 A1 0D 00 A9 0D 65 6B 61 6C 64 65 73 2D 68 61 74 2D 61 A9 0C 65 6B 61 6C 64 65 73 2D 67 65 63 65 C7 D5",
+  ack13: "01 01 06 A0 06 A1 0D 00 A6 00 AA 03 EB 88",
+  remove: "01 01 08 A0 07 A1 0E 00 A9 0C 65 6B 61 6C 64 65 73 2D 67 65 63 65 26 D1",
+  clear: "01 01 08 A0 08 A1 0F 00 FB F6",
+  list: "01 01 08 A0 09 A1 10 00 02 93",
+  listAck: "01 01 06 A0 09 A1 10 00 A6 00 AA 02 A9 07 65 6B 61 6C 64 65 73 A9 0D 65 6B 61 6C 64 65 73 2D 68 61 74 2D 61 D9 46",
+  ack17: "01 01 06 A0 06 A1 11 00 A6 EE AA 02 9D 32",
+  ack18: "01 01 06 A0 06 A1 12 00 A6 EB 1D 20",
+};
+for (const [name, h] of Object.entries(zoneExamples)) {
+  const r = decodeFrame(hex(h));
+  check(`zone örnek paketi geçerli: ${name}`, r.ok, r.ok ? "" : `${r.reason} ${r.detail}`);
+}
+const zoneCmd = (c: Parameters<typeof encodeCommand>[0]) => Buffer.from(encodeCommand(c));
+check("zone_add [ekaldes] id 12 = doküman", zoneCmd({ action: "zone_add", id: 12, zones: ["ekaldes"] }).equals(Buffer.from(hex(zoneExamples.add))));
+check(
+  "zone_add 2 slug id 13 = doküman",
+  zoneCmd({ action: "zone_add", id: 13, zones: ["ekaldes-hat-a", "ekaldes-gece"] }).equals(Buffer.from(hex(zoneExamples.add2))),
+);
+check(
+  "zone_remove id 14 = doküman",
+  zoneCmd({ action: "zone_remove", id: 14, zones: ["ekaldes-gece"] }).equals(Buffer.from(hex(zoneExamples.remove))),
+);
+check("zone_clear id 15 = doküman", zoneCmd({ action: "zone_clear", id: 15 }).equals(Buffer.from(hex(zoneExamples.clear))));
+check("zone_list id 16 = doküman", zoneCmd({ action: "zone_list", id: 16 }).equals(Buffer.from(hex(zoneExamples.list))));
+same(
+  "zone_add 2 slug: tekrar eden COMMAND_ZONE sırasıyla",
+  decoded(hex(zoneExamples.add2)).fields.filter(([n]) => n === "COMMAND_ZONE").map(([, v]) => v),
+  ["ekaldes-hat-a", "ekaldes-gece"],
+);
+const zoneAckJson = (h: string) => {
+  const m = legacy(hex(h));
+  return m?.kind === "ack" ? m.json : null;
+};
+check(
+  "zone ack id 13 JSON = doküman (birebir)",
+  JSON.stringify(zoneAckJson(zoneExamples.ack13)) ===
+    JSON.stringify({ action: "zone_add", id: 13, status: "ok", zone_count: 3 }),
+  JSON.stringify(zoneAckJson(zoneExamples.ack13)),
+);
+check(
+  "zone_list ack JSON = doküman (birebir, liste tam)",
+  JSON.stringify(zoneAckJson(zoneExamples.listAck)) ===
+    JSON.stringify({ action: "zone_list", id: 16, status: "ok", zone_count: 2, zones: ["ekaldes", "ekaldes-hat-a"] }),
+  JSON.stringify(zoneAckJson(zoneExamples.listAck)),
+);
+check(
+  "zone ack -18 JSON = doküman (birebir)",
+  JSON.stringify(zoneAckJson(zoneExamples.ack17)) ===
+    JSON.stringify({ action: "zone_add", id: 17, status: "error", error: "zone gecersiz", zone_count: 2 }),
+  JSON.stringify(zoneAckJson(zoneExamples.ack17)),
+);
+same("zone ack -21 (ZONE_COUNT yok)", zoneAckJson(zoneExamples.ack18), {
+  action: "zone_add",
+  id: 18,
+  status: "error",
+  error: "zone komutu yalnizca cihaz topic'inden kabul edilir",
+});
+const listParsed = commandAckSchema.safeParse(zoneAckJson(zoneExamples.listAck));
+check(
+  "commandAckSchema zone_count/zones'u korur",
+  listParsed.success && listParsed.data.zone_count === 2 && listParsed.data.zones?.length === 2,
+);
+for (const raw of [
+  "zone gecersiz",
+  "zone siniri asildi",
+  "zone kaydedilemedi",
+  "zone komutu yalnizca cihaz topic'inden kabul edilir",
+]) {
+  check(`zone hata metni tanınıyor: "${raw}"`, describeDeviceError(raw).known);
+  check(`zone hata metni → sonuç kodu: "${raw}"`, resultCodeOf(raw) !== undefined);
+}
+same("resultCodeOf -14 / -5 / -10", [
+  resultCodeOf("cihaz mesgul, komut kuyrugu dolu"),
+  resultCodeOf("bilinmeyen action"),
+  resultCodeOf("bu efekt en az 3 lamba ister, hatta 1 lamba var"),
+], [-14, -5, -10]);
+check(
+  "zone komutu ret: 4 slug / all / büyük harf / 33 karakter / slug'sız add / slug'lı list",
+  throws(() => encodeCommand({ action: "zone_add", id: 1, zones: ["a", "b", "c", "d"] })) &&
+    throws(() => encodeCommand({ action: "zone_add", id: 1, zones: ["all"] })) &&
+    throws(() => encodeCommand({ action: "zone_add", id: 1, zones: ["Ekaldes"] })) &&
+    throws(() => encodeCommand({ action: "zone_add", id: 1, zones: ["a".repeat(33)] })) &&
+    throws(() => encodeCommand({ action: "zone_add", id: 1 })) &&
+    throws(() => encodeCommand({ action: "zone_list", id: 1, zones: ["ekaldes"] })),
+);
+check("32 karakterlik slug kabul", !throws(() => encodeCommand({ action: "zone_remove", id: 1, zones: ["a".repeat(32)] })));
 
 // ── Rapor aralıkları (0xB9 / 0xBA, yalnızca join'de) ─────────
 const rawJoin = encodeFrame("HEALTH", [

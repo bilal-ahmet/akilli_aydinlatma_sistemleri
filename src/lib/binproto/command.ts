@@ -15,7 +15,38 @@ import { COMMAND_ACTIONS } from "./fields";
  * `on`/`off` binary'de yoktur — çağıran önce `dim 100/0`'a çevirir (toWireCmd).
  */
 
-export type BinaryCommandAction = "dim" | "efekt" | "d4i_read" | "commission" | "ota_check";
+export type BinaryCommandAction =
+  | "dim"
+  | "efekt"
+  | "d4i_read"
+  | "commission"
+  | "ota_check"
+  | ZoneCommandAction;
+
+/**
+ * Dinamik bölge aboneliği (firmware "Dinamik zone ve bölgesel OTA" planı).
+ * YALNIZCA Meven:<MAC>/cmd'ye gider — cihaz başka topic'ten geleni -21 ile
+ * reddeder. Komutlar idempotent; ya hep ya hiç uygulanır.
+ */
+export type ZoneCommandAction = "zone_add" | "zone_remove" | "zone_clear" | "zone_list";
+export const ZONE_COMMAND_ACTIONS: readonly ZoneCommandAction[] = [
+  "zone_add",
+  "zone_remove",
+  "zone_clear",
+  "zone_list",
+];
+
+/** Bir pakette en fazla slug (cihazın 256 baytlık komut kuyruğu elemanı). */
+export const ZONES_PER_COMMAND = 3;
+/** Cihaz başına toplam bölge (firmware sabiti). */
+export const ZONES_PER_DEVICE = 16;
+/** Cihazın kabul ettiği slug: a-z, 0-9, '-', 1-32 karakter; `all` ayrılmış. */
+export const DEVICE_ZONE_SLUG_MAX = 32;
+const DEVICE_ZONE_SLUG_RE = /^[a-z0-9-]{1,32}$/;
+
+export function isDeviceZoneSlug(slug: string): boolean {
+  return DEVICE_ZONE_SLUG_RE.test(slug) && slug !== "all";
+}
 
 export type BinaryCommand = {
   action: BinaryCommandAction;
@@ -25,6 +56,8 @@ export type BinaryCommand = {
   value?: number;
   number?: number;
   text?: string;
+  /** Yalnızca zone_add / zone_remove: 1..3 slug (her biri ayrı 0xA9 alanı). */
+  zones?: readonly string[];
 };
 
 const ACTION_CODES: ReadonlyMap<string, number> = new Map(
@@ -41,6 +74,17 @@ export function encodeCommand(cmd: BinaryCommand): Uint8Array {
   if (cmd.id !== undefined && (!Number.isInteger(cmd.id) || cmd.id < 1 || cmd.id > 0xffff)) {
     throw new Error(`komut id'si 1..65535 olmalı: ${cmd.id}`);
   }
+  const zones = cmd.zones ?? [];
+  if (cmd.action === "zone_add" || cmd.action === "zone_remove") {
+    if (zones.length < 1 || zones.length > ZONES_PER_COMMAND) {
+      throw new Error(`${cmd.action} 1..${ZONES_PER_COMMAND} bölge ister: ${zones.length}`);
+    }
+  } else if (zones.length > 0) {
+    throw new Error(`${cmd.action} bölge almaz`);
+  }
+  for (const z of zones) {
+    if (!isDeviceZoneSlug(z)) throw new Error(`cihazın kabul etmeyeceği bölge slug'ı: "${z}"`);
+  }
   return encodeFrame("COMMAND", [
     ["COMMAND_ACTION", action],
     ["COMMAND_ID", cmd.id],
@@ -48,5 +92,6 @@ export function encodeCommand(cmd: BinaryCommand): Uint8Array {
     ["COMMAND_VALUE", cmd.value],
     ["COMMAND_EFFECT_NUMBER", cmd.number],
     ["COMMAND_EFFECT_TEXT", cmd.text ? cmd.text : undefined],
+    ...zones.map((z) => ["COMMAND_ZONE", z] as const),
   ]);
 }

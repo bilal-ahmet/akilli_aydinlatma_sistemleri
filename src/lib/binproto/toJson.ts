@@ -461,8 +461,17 @@ export function commissionJson(fields: Fields, ctx: ConvertContext): Json {
  * Komut ack'i: `{"action":"dim","id":7,"status":"ok"}` ya da
  * `{…,"status":"error","error":"<firmware metni>"}`. `action` ve `id` yalnızca
  * pakette varsa. Hata metinleri firmware'dekiyle aynı (deviceErrors.ts okur).
+ *
+ * Bölge komutlarının ack'i ek olarak `zone_count` (COMMAND_ZONE_COUNT) ve
+ * `zone_list`'te `zones` (tekrar eden COMMAND_ZONE) taşır. Tekrar eden alan Map'te
+ * tek değere ineceği için paket sırasındaki `entries`'ten okunur. Anahtar sırası
+ * köprü çıktısıyla aynı: action, id, status, [error], zone_count, [zones].
  */
-export function commandAckJson(fields: Fields, ctx: ConvertContext): Json {
+export function commandAckJson(
+  fields: Fields,
+  ctx: ConvertContext,
+  entries: readonly FieldEntry[] = [],
+): Json {
   const out: Json = {};
   const action = num(fields, "COMMAND_ACTION");
   if (action !== undefined) out.action = enumName(COMMAND_ACTIONS, action, ctx, "COMMAND_ACTION");
@@ -471,18 +480,22 @@ export function commandAckJson(fields: Fields, ctx: ConvertContext): Json {
   const result = num(fields, "COMMAND_RESULT") ?? 0;
   if (result === 0) {
     out.status = "ok";
-    return out;
-  }
-  out.status = "error";
-  if (result === COMMAND_RESULT_NOT_ENOUGH_LAMPS) {
-    out.error = `bu efekt en az ${num(fields, "COMMAND_LAMPS_NEEDED") ?? "?"} lamba ister, hatta ${
-      num(fields, "COMMAND_LAMPS_AVAILABLE") ?? "?"
-    } lamba var`;
   } else {
-    const text = COMMAND_RESULT_TEXTS[result];
-    if (text === undefined) ctx.warnings.push(`bilinmeyen COMMAND_RESULT değeri ${result}`);
-    out.error = text ?? `bilinmeyen hata kodu (${result})`;
+    out.status = "error";
+    if (result === COMMAND_RESULT_NOT_ENOUGH_LAMPS) {
+      out.error = `bu efekt en az ${num(fields, "COMMAND_LAMPS_NEEDED") ?? "?"} lamba ister, hatta ${
+        num(fields, "COMMAND_LAMPS_AVAILABLE") ?? "?"
+      } lamba var`;
+    } else {
+      const text = COMMAND_RESULT_TEXTS[result];
+      if (text === undefined) ctx.warnings.push(`bilinmeyen COMMAND_RESULT değeri ${result}`);
+      out.error = text ?? `bilinmeyen hata kodu (${result})`;
+    }
   }
+  const zoneCount = num(fields, "COMMAND_ZONE_COUNT");
+  if (zoneCount !== undefined) out.zone_count = zoneCount;
+  const zones = entries.filter(([name]) => name === "COMMAND_ZONE").map(([, v]) => String(v));
+  if (zones.length > 0) out.zones = zones;
   return out;
 }
 
@@ -641,7 +654,7 @@ export function toLegacy(
     case "COMMISSION_RESULT":
       return { suffix: "data", kind: "json", json: commissionJson(fields, ctx) };
     case "COMMAND_ACK":
-      return { suffix: "data", kind: "ack", json: commandAckJson(fields, ctx) };
+      return { suffix: "data", kind: "ack", json: commandAckJson(fields, ctx, frame.fields) };
     case "HELLO":
       return { suffix: "data", kind: "hello" };
     case "HEALTH":

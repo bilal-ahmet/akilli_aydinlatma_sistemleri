@@ -29,6 +29,10 @@ const EXAMPLES: Record<string, string> = {
   ack: "01 01 06 A0 02 A1 08 00 A6 F6 A7 03 A8 01 5C 74",
   crc: "01 01 01 02 02 03 01 10 00 11 FF 12 00 13 00 14 00 15 FE 16 55 17 64 20 00 00 00",
   lora: "02 10 20 30 40 50",
+  // Bölge aboneliği ack'leri (zone_plan örnekleri): ok + sayı, liste, -18 ret.
+  zoneack: "01 01 06 A0 06 A1 0D 00 A6 00 AA 03 EB 88",
+  zonelist: "01 01 06 A0 09 A1 10 00 A6 00 AA 02 A9 07 65 6B 61 6C 64 65 73 A9 0D 65 6B 61 6C 64 65 73 2D 68 61 74 2D 61 D9 46",
+  zoneerr: "01 01 06 A0 06 A1 11 00 A6 EE AA 02 9D 32",
 };
 // Tanımsız alan 0x05 (CRC'si doğru) — "firmware yeni alan ekledi" senaryosu.
 {

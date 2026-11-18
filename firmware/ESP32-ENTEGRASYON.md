@@ -226,6 +226,10 @@ Eski firmware'ler / geçersiz JSON yanıtı `action` ve `id` taşımaz:
 | `crc hatali, paket islenmedi` | Binary komutun CRC'si tutmadı | `bin-crc` |
 | `desteklenmeyen protokol versiyonu` | Binary komutun versiyon baytı tanınmıyor | `bin-version` |
 | `paket bicimi bozuk` | Binary komut çözülemedi | `bin-malformed` |
+| `zone gecersiz` | Zone slug'ı geçersiz (boş, >32, izin dışı karakter, `all`, slug yok) | `zone-invalid` |
+| `zone siniri asildi` | Pakette >3 slug ya da cihazda toplam 16 bölge aşılıyor | `zone-limit` |
+| `zone kaydedilemedi` | Bölge listesi NVS'e yazılamadı | `zone-store` |
+| `zone komutu yalnizca cihaz topic'inden kabul edilir` | Zone komutu MAC topic'i dışından geldi | `zone-topic` |
 
 Kod sütunu `src/lib/deviceErrors.ts` kataloğundan gelir: her metin okunur bir
 başlık + sebebe çevrilir, dashboard bunu gösterir. **Tanınmayan metin
