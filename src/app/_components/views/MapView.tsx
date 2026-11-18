@@ -10,7 +10,7 @@ import { useNow } from "@/app/_lib/useNow";
 import { openAlerts } from "@/app/_lib/alerts";
 import { deviceName } from "@/app/_lib/format";
 import { formatAgo } from "@/app/_lib/deviceHealth";
-import { deviceState, lampOn } from "@/app/_lib/selection";
+import { lampOn } from "@/app/_lib/selection";
 import {
   POLE_STATE_DOT,
   POLE_STATE_LABELS,
@@ -19,7 +19,7 @@ import {
 } from "@/app/_lib/poles";
 import { effectByNumber } from "@/lib/effects";
 import { faultCategoryLabel } from "@/lib/faults";
-import { BrightnessSlider } from "../BrightnessSlider";
+import { DeviceQuickControls } from "../DeviceQuickControls";
 import { useDialogs } from "../PanelDialogs";
 import type { MapPole } from "../PoleMap";
 
@@ -66,10 +66,9 @@ function PolePanel({
 }) {
   const technical = useTechnical();
   const { canWrite, customerSlug } = usePanel();
-  const { faults, devices, setTargetsPower, setTargetsBrightness } = useLighting();
+  const { faults, devices } = useLighting();
   const { openDevice, openPoleForm } = useDialogs();
   const alerts = device ? openAlerts(faults, devices, technical).filter((a) => a.deviceId === device.deviceId) : [];
-  const light = device ? deviceState(device) : null;
 
   return (
     <aside className="flex max-h-full flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-xl">
@@ -146,32 +145,8 @@ function PolePanel({
           )}
         </section>
 
-        {/* Hızlı kontrol */}
-        {device && canWrite && light ? (
-          <section className="flex flex-col gap-2.5">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setTargetsPower({ devices: [device.deviceId] }, true)}
-                className={`btn-line h-9 flex-1 text-[13px] ${light.isOn ? "!border-glow/60 !text-text" : ""}`}
-              >
-                Aç
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargetsPower({ devices: [device.deviceId] }, false)}
-                className={`btn-line h-9 flex-1 text-[13px] ${light.isOn === false ? "!border-border-strong !text-text" : ""}`}
-              >
-                Kapat
-              </button>
-            </div>
-            <BrightnessSlider
-              value={light.isOn ? light.brightness : 0}
-              onChange={(v) => setTargetsBrightness({ devices: [device.deviceId] }, v)}
-              label={`Direk ${pole.code} ışık şiddeti`}
-            />
-          </section>
-        ) : null}
+        {/* Hızlı kontrol: aç/kapa, şiddet, efekt */}
+        {device ? <DeviceQuickControls device={device} variant="panel" /> : null}
 
         {/* Armatürler */}
         {device ? (

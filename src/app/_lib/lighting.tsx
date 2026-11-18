@@ -900,7 +900,10 @@ export function LightingProvider({
     }
     for (const d of devices) {
       if (!devSet.has(d.deviceId)) continue;
-      const value = zoneBrightnessOf(d);
+      // Cihazın kendi son "Tüm cihaz" şiddeti (devices.master_brightness —
+      // cihaz panelindeki "Efekti durdur" ile aynı); yoksa ya da 0 ise (efekt
+      // durunca karanlık kalmasın) bölgeninki.
+      const value = d.masterBrightness ? d.masterBrightness : zoneBrightnessOf(d);
       setDevices((ds) =>
         ds.map((x) =>
           x.deviceId === d.deviceId

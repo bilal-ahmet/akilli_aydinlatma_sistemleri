@@ -23,6 +23,7 @@ import {
   toggleLamp,
   type Selection,
 } from "@/app/_lib/selection";
+import { DeviceQuickControls } from "../DeviceQuickControls";
 import { useDialogs } from "../PanelDialogs";
 import { StatusLabel } from "../PanelUi";
 import { RowMenu } from "../RowMenu";
@@ -93,6 +94,9 @@ export function DeviceTable({
   const select = (next: Selection) => onSelectionChange?.(next);
   const showLight = showLevel || selectable;
   const full = !compact;
+  // Yazma yetkisinde her cihaz satırının hemen altında o cihazın kontrol
+  // şeridi (aç/kapa, şiddet, efekt). Hedef seçici penceresinde (compact) yok.
+  const quick = canWrite && full;
 
   const th = "px-3 py-3 text-left font-semibold first:pl-[22px] last:pr-[22px]";
   const td = "px-3 py-[14px] align-middle first:pl-[22px] last:pr-[22px]";
@@ -100,6 +104,7 @@ export function DeviceTable({
   // ışık durumu Işık sütununa hizalanır; kalan sütunlar boş geçilir.
   const nameSpan = 1 + (full ? 1 : 0) + (showZone ? 1 : 0) + 1;
   const restSpan = (full ? 3 : 0) + (canWrite && full ? 1 : 0);
+  const totalCols = (selectable ? 1 : 0) + nameSpan + (showLight ? 1 : 0) + restSpan;
 
   const allSelected = devices.length > 0 && devices.every((d) => deviceSelState(sel, d) === "all");
   const someSelected = devices.some((d) => deviceSelState(sel, d) !== "none");
@@ -168,7 +173,10 @@ export function DeviceTable({
             const valueCls = measured ? "text-text" : "text-muted";
             const title = deviceName(d, technical);
             const state = deviceSelState(sel, d);
-            const multiLamp = selectable && d.lamps.length > 1;
+            // Armatür etiketi armatürü olan her cihazda görünür (tek armatürde de);
+            // seçim modunda tıklanınca armatür satırları açılır.
+            const multiLamp = selectable && d.lamps.length > 0;
+            const lampLabel = !selectable && full && d.lamps.length > 0;
             // Bölge / alt grup bilgisi cihaza henüz uygulanmadıysa (lib/zoneSync).
             const zs = zoneSyncLabel(d.zoneSync, technical);
             const isOpen = multiLamp && expanded.has(d.deviceId);
@@ -212,7 +220,7 @@ export function DeviceTable({
                           <span className="ml-1.5 text-xs font-normal text-muted">Direk {d.poleCode}</span>
                         ) : null}
                       </button>
-                      {multiLamp || faults?.length || d.lastError || zs || (m && full) ? (
+                      {multiLamp || lampLabel || faults?.length || d.lastError || zs || (m && full) ? (
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           {multiLamp ? (
                             <LampToggle
@@ -225,6 +233,11 @@ export function DeviceTable({
                               deviceTitle={title}
                               onToggle={() => toggleExpanded(d.deviceId)}
                             />
+                          ) : lampLabel ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-panel-2 px-2.5 py-[3px] text-[12px] font-medium text-ink-2">
+                              <BulbIcon className="text-accent" />
+                              {d.lamps.length} armatür
+                            </span>
                           ) : null}
                           {faults?.length ? (
                             <span className="text-xs text-danger">
@@ -243,7 +256,7 @@ export function DeviceTable({
                             >
                               {zs.text}
                             </span>
-                          ) : m && full && !multiLamp ? (
+                          ) : m && full && !multiLamp && !lampLabel ? (
                             // Lamba düğmesi zaten lamba sayısını gösteriyorsa tekrar yazılmaz.
                             <span className="text-xs text-muted">
                               {technical ? `${m.lamps} armatür raporluyor` : `${m.lamps} armatür veri gönderiyor`}
@@ -287,6 +300,14 @@ export function DeviceTable({
                     </td>
                   ) : null}
                 </tr>
+                {quick ? (
+                  <tr className={state !== "none" ? "bg-glow/[.07]" : ""}>
+                    {selectable ? <td aria-hidden /> : null}
+                    <td colSpan={totalCols - (selectable ? 1 : 0)} className="px-3 pb-3.5 pt-0 first:pl-[22px] last:pr-[22px]">
+                      <DeviceQuickControls device={d} variant="row" />
+                    </td>
+                  </tr>
+                ) : null}
                 {isOpen
                   ? d.lamps.map((l) => (
                       <LampRow
