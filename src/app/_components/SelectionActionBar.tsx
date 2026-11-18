@@ -75,6 +75,10 @@ export function SelectionActionBar({
 
   const sig = signature(selection);
   const count = countSelection(selection);
+  // Seçim boşalınca bildirim de biter: aynı cihazlar sonradan yeniden
+  // seçildiğinde (aynı imza) eski mesaj — ör. silinmiş gruba "eklendi" — geri
+  // gelmesin. Çubuk bu sırada mount'ta kaldığı için state kendiliğinden sıfırlanmaz.
+  if (selection.size === 0 && notice !== null) setNotice(null);
   if (!canWrite || selection.size === 0) return null;
 
   // Bir alt grubun bütün (senkron) üyeleri seçiliyse tek grup komutu gider.

@@ -261,7 +261,10 @@ export function GroupMembershipDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const chosen = slug || zoneGroups[0]?.slug || "";
+  // Seçili grup bu arada silinmişse (state'te eski slug kalır) ilk gruba düş;
+  // yoksa "Gruba ekle" sessizce hiçbir şey yapmazdı.
+  const chosen =
+    slug === "__new__" || zoneGroups.some((g) => g.slug === slug) ? slug : zoneGroups[0]?.slug || "";
   const creating = chosen === "" || slug === "__new__";
   const group = zoneGroups.find((g) => g.slug === chosen);
   const inGroup = group ? macs.filter((m) => group.members.includes(m)).length : 0;
