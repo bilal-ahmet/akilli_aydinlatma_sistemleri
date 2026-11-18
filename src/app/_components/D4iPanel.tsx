@@ -2,6 +2,8 @@
 
 import type { D4iSnapshot } from "@/app/_lib/types";
 import { useTechnical } from "@/app/_lib/panel";
+import { useNow } from "@/app/_lib/useNow";
+import { formatAgo } from "@/app/_lib/deviceHealth";
 import { formatDateTime } from "@/lib/dateFormat";
 import { MAX_ARC_LEVEL, levelToPercent } from "@/types/lighting";
 import {
@@ -547,9 +549,15 @@ export function D4iPanel({
   names,
   loading,
   updatedAt,
+  lastSeen,
+  onlineWindowMs,
   onRefresh,
 }: {
   rows: D4iSnapshot[];
+  /** Cihazdan son haber (`devices.last_seen`) — bağlantı durumu buna göre. */
+  lastSeen: string | null;
+  /** Cihazın çevrimiçi penceresi (lib/deviceWindows); listedeki "Bağlantı yok" ile aynı kural. */
+  onlineWindowMs: number;
   /** Kanal → dashboard'da girilen lamba adı (yoksa "Lamba <ch>" kullanılır). */
   names: Map<number, string | null>;
   loading: boolean;
@@ -560,6 +568,15 @@ export function D4iPanel({
   const faulty = rows.filter(isFaulty).length;
   const technical = useTechnical();
   const gear = technical ? "Sürücü" : "Sürücü ünitesi";
+  // Gösterilen ölçümler cihazın SON raporudur; panelin veriyi çekme saati
+  // (updatedAt) cihazın bağlı olduğunu göstermez. Rozet cihaz listesindeki
+  // "Bağlantı yok" ile aynı kurala (last_seen + çevrimiçi pencere) bakar.
+  const now = useNow(15_000);
+  const lastReport = rows.reduce<string | null>(
+    (max, r) => (r.recordedAt && (!max || r.recordedAt > max) ? r.recordedAt : max),
+    null,
+  );
+  const online = !!lastSeen && now !== null && now - Date.parse(lastSeen) < onlineWindowMs;
 
   return (
     <div>
@@ -574,25 +591,27 @@ export function D4iPanel({
           ) : null}
         </h3>
         <div className="flex items-center gap-2">
-          {/* Cihazdan her yeni rapor geldiğinde panel kendiliğinden tazelenir. */}
+          {/* Cihazın bağlantısı ve son ölçümünün yaşı. Panel yeni rapor geldikçe kendiliğinden tazelenir. */}
           <span
-            className="flex items-center gap-1.5 text-xs text-muted"
-            title={
-              updatedAt
-                ? `Son güncelleme: ${new Date(updatedAt).toLocaleTimeString("tr-TR")} — yeni ölçüm geldikçe kendiliğinden yenilenir`
-                : "Yeni ölçüm geldikçe kendiliğinden yenilenir"
-            }
+            className={`flex items-center gap-1.5 text-xs ${online ? "text-muted" : "text-danger"}`}
+            title={[
+              lastReport ? `Son ölçüm: ${formatDateTime(lastReport, { seconds: true })}` : "Henüz ölçüm yok",
+              lastSeen ? `Cihazdan son haber: ${formatDateTime(lastSeen, { seconds: true })}` : null,
+              updatedAt ? `Panel en son ${new Date(updatedAt).toLocaleTimeString("tr-TR")}'de yeniledi` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           >
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+              {online ? (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+              ) : null}
+              <span className={`relative inline-flex h-2 w-2 rounded-full ${online ? "bg-accent" : "bg-danger"}`} />
             </span>
-            canlı
-            {updatedAt ? (
-              <span className="hidden font-mono sm:inline">
-                {new Date(updatedAt).toLocaleTimeString("tr-TR")}
-              </span>
-            ) : null}
+            {online ? "canlı" : "bağlantı yok"}
+            <span className="hidden sm:inline">
+              · son ölçüm {lastReport ? formatAgo(lastReport, now) : "yok"}
+            </span>
           </span>
           <button
             type="button"

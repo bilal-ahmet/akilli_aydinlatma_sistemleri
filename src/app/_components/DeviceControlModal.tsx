@@ -628,6 +628,8 @@ export function DeviceControlModal({
             names={fixtureNames}
             loading={telemetryLoading}
             updatedAt={telemetryAt}
+            lastSeen={device.lastSeen}
+            onlineWindowMs={device.onlineWindowMs}
             onRefresh={() => {
               setTelemetryLoading(true);
               loadTelemetry();
