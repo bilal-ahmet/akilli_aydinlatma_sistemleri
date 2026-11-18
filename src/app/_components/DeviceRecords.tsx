@@ -172,7 +172,7 @@ export function DeviceRecords({ deviceId }: { deviceId: string }) {
             ? "Yükleniyor…"
             : kind === "data"
               ? "Bu cihazdan kayıtlı D4i raporu yok."
-              : "Bu cihaz için health geçmişi yok. Geçmiş, bu özellik devreye alındıktan sonra gelen /health mesajlarıyla dolar."}
+              : "Bu cihazdan henüz health mesajı alınmadı."}
         </p>
       ) : (
         <>

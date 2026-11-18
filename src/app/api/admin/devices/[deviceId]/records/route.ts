@@ -104,13 +104,29 @@ async function readData(mac: string, limit: number): Promise<DeviceRecord[]> {
 
 async function readHealth(mac: string, limit: number, kind: "health" | "rf"): Promise<DeviceRecord[]> {
   const t = schema.deviceHealthLog;
-  const rows = await db
-    .select()
-    .from(t)
-    .where(eq(t.deviceId, mac))
-    .orderBy(desc(t.recordedAt))
-    .limit(limit);
-  return rows.map((r) => {
+  const [rows, [device]] = await Promise.all([
+    db.select().from(t).where(eq(t.deviceId, mac)).orderBy(desc(t.recordedAt)).limit(limit),
+    db
+      .select({ health: schema.devices.health, healthAt: schema.devices.healthAt })
+      .from(schema.devices)
+      .where(eq(schema.devices.deviceId, mac))
+      .limit(1),
+  ]);
+
+  const list = rows.map((r) => ({ id: r.id, recordedAt: r.recordedAt, health: r.health }));
+  // Son bilinen health (`devices.health`) geçmişte yoksa başa eklenir: geçmiş
+  // tablosu bu özellikten önceki mesajları içermez, yazım da hata verebilir.
+  // Normalde en yeni geçmiş satırı ile aynı ana sahiptir ve atlanır.
+  const snap = device?.health as Record<string, unknown> | null | undefined;
+  if (snap && device?.healthAt) {
+    const newest = list[0]?.recordedAt.getTime() ?? -Infinity;
+    if (device.healthAt.getTime() > newest) {
+      list.unshift({ id: 0, recordedAt: device.healthAt, health: snap });
+      if (list.length > limit) list.length = limit;
+    }
+  }
+
+  return list.map((r) => {
     let payload: Record<string, unknown> | null = r.health;
     if (kind === "rf") {
       const thread = r.health?.thread;
