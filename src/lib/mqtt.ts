@@ -168,8 +168,13 @@ async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   mirrorJson(mac, result);
   // Bölge aboneliği: HELLO = cihaz (yeniden) bağlandı → listeyi doğrula; her
   // geçerli paket = cihaz ayakta → bekleyen zone işi varsa sürdür.
-  if (result.kind === "hello") zoneOnHello(mac);
-  else if (result.kind !== "skip") zoneOnUplink(mac);
+  // Yan iştir: hatası paketin işlenmesini (last_seen, telemetri) asla durdurmamalı.
+  try {
+    if (result.kind === "hello") zoneOnHello(mac);
+    else if (result.kind !== "skip") zoneOnUplink(mac);
+  } catch (err) {
+    console.error(`[zone] ${mac} uplink kancası hata verdi:`, err);
+  }
   if (result.kind === "json") {
     return routeUplink(`Meven:${mac}/bin`, { mac, suffix: result.suffix }, result.json, "bin");
   }
