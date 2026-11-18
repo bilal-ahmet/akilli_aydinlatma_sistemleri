@@ -16,6 +16,7 @@ import { EffectPicker } from "./EffectPicker";
 import { D4iPanel } from "./D4iPanel";
 import { FaultHistory } from "./FaultHistory";
 import { DeviceMaintenance } from "./DeviceMaintenance";
+import { DeviceRecords } from "./DeviceRecords";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
@@ -58,7 +59,7 @@ function fetchFaults(api: ApiFn, deviceId: string): Promise<FaultEvent[]> {
     .then((j) => (j.data ?? []) as FaultEvent[]);
 }
 
-type Tab = "control" | "telemetry" | "faults" | "maintenance";
+type Tab = "control" | "telemetry" | "faults" | "maintenance" | "records";
 
 const iconBtn =
   "shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text";
@@ -90,6 +91,8 @@ export function DeviceControlModal({
   const { canWrite, technical, role } = usePanel();
   // Bakım sekmesi: tarama admin + manager, OTA yalnızca admin (DeviceMaintenance).
   const showMaintenance = role === "admin" || role === "manager";
+  // Kayıtlar (son veri / health / RF + indirme) YALNIZCA admin; API de admin-only.
+  const showRecords = role === "admin";
   // Admin "Kanal 3 / ch3" görür, müşteri "Lamba 3" (DALI adresi terimi yok).
   const lampRef = (ch: number) => (technical ? `Kanal ${ch}` : `Armatür ${ch}`);
 
@@ -549,6 +552,7 @@ export function DeviceControlModal({
     { id: "telemetry", label: technical ? "Telemetri" : "Ölçümler" },
     { id: "faults", label: "Arıza geçmişi" },
     ...(showMaintenance ? [{ id: "maintenance" as const, label: "Bakım" }] : []),
+    ...(showRecords ? [{ id: "records" as const, label: "Kayıtlar" }] : []),
   ];
 
   return (
@@ -608,7 +612,9 @@ export function DeviceControlModal({
           ))}
         </div>
 
-        {tab === "maintenance" ? (
+        {tab === "records" && showRecords ? (
+          <DeviceRecords deviceId={deviceId} />
+        ) : tab === "maintenance" ? (
           <DeviceMaintenance
             device={device}
             onScanAccepted={() => {
