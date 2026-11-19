@@ -14,6 +14,14 @@
 export const DEFAULT_ONLINE_WINDOW_MS = 3 * 60_000;
 /** Aralık bildirmeyen cihazın ölçüm tazelik penceresi (eski sabit). */
 export const DEFAULT_FRESH_MS = 10 * 60_000;
+/**
+ * Armatürün son D4i raporu bundan eskiyse cihaz panelinde ölçümleri
+ * gösterilmez, yalnızca "N gündür ölçüm gelmiyor" uyarısı çıkar. Armatür
+ * kaydı silinmez; yeni rapor gelince ölçümler yeniden görünür.
+ */
+export const TELEMETRY_STALE_DAYS = 7;
+export const TELEMETRY_STALE_MS = TELEMETRY_STALE_DAYS * 86_400_000;
+
 /** Kaç rapor aralığı sessizlik "bağlantı yok" sayılır. */
 export const MISSED_REPORTS = 2.5;
 

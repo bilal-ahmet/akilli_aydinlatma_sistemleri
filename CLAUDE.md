@@ -787,9 +787,17 @@ GET    /api/devices/:deviceId/fixtures          → cihaza bağlı lambalar
 POST   /api/devices/:deviceId/fixtures          → manuel lamba ekle { channel, name? }
 PATCH  /api/devices/:deviceId/fixtures/:channel → isim / kanal güncelle { channel?, name? }
 DELETE /api/devices/:deviceId/fixtures/:channel → lamba kaydını sil
-GET    /api/devices/:deviceId/telemetry         → kanal başına son D4i raporu
+GET    /api/devices/:deviceId/telemetry         → kayıtlı armatür başına son D4i raporu (+ `stale`)
 GET    /api/devices/:deviceId/faults?limit=100  → arıza geçmişi (süren + çözülen)
 ```
+
+> **Panel telemetrisi yalnızca `fixtures`'ta kayıtlı kanalları** gösterir:
+> silinen armatürün `d4i_telemetry` geçmişi (raporlar için) kalır ama panelde
+> görünmez; silmede süren arızaları da kapatılır (`syncFaultEvents(…, [])`).
+> Son raporu **7 günden eski** (`TELEMETRY_STALE_DAYS`, `lib/deviceWindows.ts`)
+> armatürün ölçümleri `data`'ya girmez, `stale: [{channel, lastReportAt}]`
+> olarak döner; panel "N gündür ölçüm gelmediği için…" uyarısı gösterir. Kayıt
+> cihaza bağlı kalır, yeni rapor gelince ölçümler geri gelir.
 
 > **Lamba `channel`'ı = cihazın DALI adresi**, sadece bir etiket değil. PATCH ile
 > değiştirmek yalnızca yanlış girilmiş adresi düzeltmek içindir: eski adresin

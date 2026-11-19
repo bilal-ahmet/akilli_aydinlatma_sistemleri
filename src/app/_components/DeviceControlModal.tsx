@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeviceView, Fixture, D4iSnapshot, FaultEvent } from "@/app/_lib/types";
+import type { DeviceView, Fixture, D4iSnapshot, FaultEvent, StaleTelemetry } from "@/app/_lib/types";
 import { type Action, type LiveEvent, MAX_CHANNEL } from "@/types/lighting";
 import { useLiveStatus } from "@/app/_lib/useLiveStatus";
 import { useApi, usePanel } from "@/app/_lib/panel";
@@ -46,11 +46,20 @@ async function sendDeviceCommand(
   return json?.data?.seq;
 }
 
-/** Kanal başına son D4i raporu → GET /api/devices/:id/telemetry. */
-function fetchTelemetry(api: ApiFn, deviceId: string): Promise<D4iSnapshot[]> {
+/**
+ * Kayıtlı armatür başına son D4i raporu → GET /api/devices/:id/telemetry.
+ * `stale`: son raporu 7 günden eski armatürler (ölçüm yok, yalnızca zaman).
+ */
+function fetchTelemetry(
+  api: ApiFn,
+  deviceId: string,
+): Promise<{ rows: D4iSnapshot[]; stale: StaleTelemetry[] }> {
   return fetch(api(`/api/devices/${deviceId}/telemetry`))
     .then((r) => r.json())
-    .then((j) => (j.data ?? []) as D4iSnapshot[]);
+    .then((j) => ({
+      rows: (j.data ?? []) as D4iSnapshot[],
+      stale: (j.stale ?? []) as StaleTelemetry[],
+    }));
 }
 
 /** Arıza geçmişi (süren + çözülen) → GET /api/devices/:id/faults. */
@@ -120,6 +129,7 @@ export function DeviceControlModal({
   // D4i telemetrisi (kanal başına son rapor) — açılışta, cihazdan her yeni
   // rapor geldiğinde (SSE) ve "Yenile" ile çekilir.
   const [telemetry, setTelemetry] = useState<D4iSnapshot[]>([]);
+  const [staleTelemetry, setStaleTelemetry] = useState<StaleTelemetry[]>([]);
   const [telemetryLoading, setTelemetryLoading] = useState(true);
   const [telemetryAt, setTelemetryAt] = useState<number | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -213,8 +223,9 @@ export function DeviceControlModal({
    */
   const loadTelemetry = useCallback(() => {
     fetchTelemetry(api, deviceId)
-      .then((rows) => {
+      .then(({ rows, stale }) => {
         setTelemetry(rows);
+        setStaleTelemetry(stale);
         setTelemetryAt(Date.now());
       })
       .catch(() => {})
@@ -536,7 +547,12 @@ export function DeviceControlModal({
     const next = fixtures.filter((f) => f.channel !== ch);
     setFixtures(next);
     syncLamps(next);
-    fetch(api(`/api/devices/${deviceId}/fixtures/${ch}`), { method: "DELETE" }).catch(() => {});
+    // Silinen armatürün ölçümleri ve uyarısı panelden hemen kalksın.
+    setTelemetry((rows) => rows.filter((r) => r.channel !== ch));
+    setStaleTelemetry((rows) => rows.filter((r) => r.channel !== ch));
+    fetch(api(`/api/devices/${deviceId}/fixtures/${ch}`), { method: "DELETE" })
+      .then(() => loadFaults())
+      .catch(() => {});
   }
 
   // Telemetri kanal no ile gelir; başlıklarda dashboard'da girilen lamba adını
@@ -647,6 +663,7 @@ export function DeviceControlModal({
         ) : tab === "telemetry" ? (
           <D4iPanel
             rows={telemetry}
+            stale={staleTelemetry}
             names={fixtureNames}
             loading={telemetryLoading}
             updatedAt={telemetryAt}

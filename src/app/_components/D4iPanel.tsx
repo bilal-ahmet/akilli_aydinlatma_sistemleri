@@ -1,6 +1,6 @@
 "use client";
 
-import type { D4iSnapshot } from "@/app/_lib/types";
+import type { D4iSnapshot, StaleTelemetry } from "@/app/_lib/types";
 import { useTechnical } from "@/app/_lib/panel";
 import { useNow } from "@/app/_lib/useNow";
 import { formatAgo } from "@/app/_lib/deviceHealth";
@@ -544,8 +544,46 @@ function TechnicalDetail({ snapshot }: { snapshot: D4iSnapshot }) {
   );
 }
 
+/**
+ * Son raporu 7 günden eski armatür: ölçümleri sunucu göndermez, yalnızca ne
+ * zamandır veri gelmediği yazılır. Armatür kaydı cihaza bağlı kalır.
+ */
+function StaleCard({
+  item,
+  name,
+  now,
+  technical,
+}: {
+  item: StaleTelemetry;
+  name: string;
+  now: number | null;
+  technical: boolean;
+}) {
+  const days =
+    now === null ? null : Math.floor((now - Date.parse(item.lastReportAt)) / 86_400_000);
+  const since = days === null ? "Uzun süredir" : `${days} gündür`;
+  return (
+    <div className="rounded-xl border border-dashed border-warn/50 bg-panel-2 p-3.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-text">{name}</span>
+        {technical ? <span className="font-mono text-xs text-muted">ch{item.channel}</span> : null}
+        <span className="rounded-md bg-warn/15 px-2 py-0.5 text-xs font-semibold text-warn">
+          {technical ? "rapor yok" : "ölçüm yok"}
+        </span>
+      </div>
+      <p className="text-sm text-muted">
+        {technical
+          ? `${since} D4i raporu gelmediği için telemetri gösterilmiyor.`
+          : `${since} ölçüm gelmediği için ölçümler gösterilmiyor.`}{" "}
+        Son ölçüm: {formatDateTime(item.lastReportAt)}.
+      </p>
+    </div>
+  );
+}
+
 export function D4iPanel({
   rows,
+  stale,
   names,
   loading,
   updatedAt,
@@ -554,6 +592,8 @@ export function D4iPanel({
   onRefresh,
 }: {
   rows: D4iSnapshot[];
+  /** Son raporu 7 günden eski armatürler — ölçümsüz, yalnızca uyarı. */
+  stale: StaleTelemetry[];
   /** Cihazdan son haber (`devices.last_seen`) — bağlantı durumu buna göre. */
   lastSeen: string | null;
   /** Cihazın çevrimiçi penceresi (lib/deviceWindows); listedeki "Bağlantı yok" ile aynı kural. */
@@ -572,10 +612,10 @@ export function D4iPanel({
   // (updatedAt) cihazın bağlı olduğunu göstermez. Rozet cihaz listesindeki
   // "Bağlantı yok" ile aynı kurala (last_seen + çevrimiçi pencere) bakar.
   const now = useNow(15_000);
-  const lastReport = rows.reduce<string | null>(
-    (max, r) => (r.recordedAt && (!max || r.recordedAt > max) ? r.recordedAt : max),
-    null,
-  );
+  const lastReport = [
+    ...rows.map((r) => r.recordedAt),
+    ...stale.map((s) => s.lastReportAt),
+  ].reduce<string | null>((max, t) => (t && (!max || t > max) ? t : max), null);
   const online = !!lastSeen && now !== null && now - Date.parse(lastSeen) < onlineWindowMs;
 
   return (
@@ -583,7 +623,7 @@ export function D4iPanel({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold text-text">
           {technical ? "D4i telemetrisi" : "Armatür ölçümleri"}{" "}
-          <span className="text-sm font-normal text-muted">({rows.length} armatür)</span>
+          <span className="text-sm font-normal text-muted">({rows.length + stale.length} armatür)</span>
           {faulty > 0 ? (
             <span className="rounded-md bg-danger/15 px-2 py-0.5 text-xs font-semibold text-danger">
               {faulty} armatürde arıza
@@ -624,7 +664,7 @@ export function D4iPanel({
         </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && stale.length === 0 ? (
         technical ? (
           <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted">
             Bu cihazdan henüz D4i raporu gelmedi. Cihaz{" "}
@@ -836,6 +876,15 @@ export function D4iPanel({
               </div>
             );
           })}
+          {stale.map((s) => (
+            <StaleCard
+              key={`stale-${s.channel}`}
+              item={s}
+              name={names.get(s.channel) || `Armatür ${s.channel}`}
+              now={now}
+              technical={technical}
+            />
+          ))}
         </div>
       )}
     </div>

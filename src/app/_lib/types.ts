@@ -227,6 +227,16 @@ export interface D4iSnapshot {
 }
 
 /**
+ * Kayıtlı ama son raporu `TELEMETRY_STALE_DAYS`'ten eski armatür: ölçümleri
+ * gösterilmez, yalnızca son raporun zamanı (`GET /api/devices/:id/telemetry`
+ * yanıtındaki `stale`).
+ */
+export interface StaleTelemetry {
+  channel: number;
+  lastReportAt: string;
+}
+
+/**
  * `d4i_periodic` payload'ının ham gövdesi. `driver`/`led` blokları sayı, metin
  * ve boolean karışık taşır (`voltage_estimated_v`, `general_failure_count_text`,
  * `voltage_plausible`…), bu yüzden `D4iBlock` ile okunur — değer çekmek için

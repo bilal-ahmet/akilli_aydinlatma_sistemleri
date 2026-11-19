@@ -4,6 +4,7 @@ import { toFixture } from "@/lib/adapters";
 import { ok, fail, msg } from "@/lib/api/respond";
 import { authorizeDevice } from "@/lib/auth/guard";
 import { fixtureUpdateSchema } from "@/types/lighting";
+import { syncFaultEvents } from "@/lib/faultLog";
 
 export const runtime = "nodejs";
 
@@ -76,6 +77,8 @@ export async function PATCH(
 }
 
 // DELETE /api/devices/:deviceId/fixtures/:channel → lamba (kanal) kaydını sil.
+// D4i geçmişi (raporlar için) kalır; panel telemetrisi yalnızca kayıtlı
+// kanalları gösterir. Cihaz adresi raporlamayı sürdürürse kayıt geri açılır.
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ deviceId: string; channel: string }> },
@@ -97,6 +100,9 @@ export async function DELETE(
       )
       .returning({ id: schema.fixtures.id });
     if (deleted.length === 0) return fail("Armatür bulunamadı", 404);
+    // Silinen armatürden rapor gelmeyeceği için süren arızaları hiç kapanmaz,
+    // Arızalar sayfasında kalırdı. Geçmiş kalır; kayıtlar çözülmüş sayılır.
+    await syncFaultEvents(deviceId, ch, [], new Date());
     return ok({ deleted: true });
   } catch (err) {
     return fail("Armatür silinemedi", 500, String(err));
