@@ -92,7 +92,7 @@ kullanıcılar, denetim kaydı) · `/hesap` (şifre değiştirme; ilk girişte z
 Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
 `/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
 detay) · `/c/<slug>/harita[?bolge=&direk=]` (direk haritası) · `/c/<slug>/cihazlar` ·
-`/c/<slug>/arizalar[?bolge=]` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
+`/c/<slug>/arizalar[?bolge=]` · `/c/<slug>/raporlar` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
 `/c/<slug>/senaryolar` · `/c/<slug>/kullanicilar` (manager/admin).
 
 **Senaryolar** (`views/ScenariosView.tsx`): sahada müşteriye anlatım için
@@ -979,6 +979,35 @@ güncelleniyorsa ya da aynı bölgede başka bir cihaz güncelleniyor / son 3 dk
 içinde OTA isteği aldıysa **409** (bölge eşlemesi: tenancy `deviceZone`).
 Kayıt `commands` (`target_type:'device'`) + `audit_log` (`device.commission` /
 `device.ota_check`).
+
+### Raporlar
+
+```
+GET /api/reports?customer=<slug>&from=YYYY-MM-DD&to=YYYY-MM-DD[&zone=<slug>][&format=xlsx]
+```
+
+Dönemlik rapor, **en fazla 31 gün** (`REPORT_MAX_DAYS`), Türkiye takvim günleri
+(bugünü kapsıyorsa bitiş "şimdi"). Tüm roller (izleyici dahil) görür ve indirir;
+guard `authorizeScope(req, "read")`, başka müşterinin bölgesi 404, hatalı dönem 422.
+`format=xlsx` → Excel (exceljs; sayfalar: Özet, Cihazlar, Arıza türleri, Arıza
+kayıtları, Günlük, Bölgeler). Panel: `/c/<slug>/raporlar` (`views/ReportsView.tsx`).
+Yeni tablo yok; `fault_events` + `d4i_telemetry` üzerinden hesaplanır.
+
+- Kod: `lib/reports/range.ts` (saf; dönem + hazır seçenekler, istemci de kullanır),
+  `build.ts` (saf hesap), `query.ts` (sorgular), `xlsx.ts`. Test: `npm run check:reports`.
+- **Arıza** = armatür kaydı (`channel` dolu) ve `!isWarningCode`; **uyarı** ve
+  **komut hatası** (`channel` NULL) ayrı sayılır, "en sık arıza"ya girmez.
+  Sayı = dönemde **başlayan** kayıt; süre = kaydın dönemle kesişimi, cihazın
+  arızalı kalma süresinde aynı anda süren kayıtlar bir kez sayılır (birleşim).
+- **Enerji** = `energy_wh` birikimli sayacının armatür başına ardışık farkı (SQL
+  `LAG`), sonraki okumanın gününe yazılır. Negatif fark (sayaç sıfırlandı) 0,
+  `geçen saat × 1000 W` değerini aşan fark (sıçrama) sayılmaz. Dönem başı için
+  2 gün geriye bakılır. Sayaç farkı olmayan cihazın enerjisi null ("Veri yok").
+- **Yanma süresi** (yaklaşık): önceki okumada seviye > 0 ise aradaki süre, her
+  aralık `freshMs` ile sınırlı; cihazda armatür başına ortalama.
+- Cihazlar **bugünkü** bölgelerinde raporlanır (taşınan cihazın geçmişi yeni
+  bölgesine yazılır). `d4i_telemetry` için saklama politikası eklenirse rapor o
+  süreden eskiye gidemez.
 
 ### Cihaz kayıtları (yalnızca admin)
 

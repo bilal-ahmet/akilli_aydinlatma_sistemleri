@@ -23,12 +23,14 @@
     "check:tenancy": "tsx scripts/tenant-check.ts",
     "check:schedule": "tsx scripts/check-schedule.ts",
     "check:binproto": "tsx scripts/check-binproto.ts",
-    "check:zonesync": "tsx scripts/check-zonesync.ts"
+    "check:zonesync": "tsx scripts/check-zonesync.ts",
+    "check:reports": "tsx scripts/check-reports.ts"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.3",
     "@googlemaps/markerclusterer": "^2.6.2",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "jose": "^6.2.12",
     "maplibre-gl": "^5.24.0",
     "mqtt": "^5.15.1",
