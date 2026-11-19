@@ -1,6 +1,7 @@
 import type { ZoneSyncView } from "@/lib/zoneSync/plan";
 import type { D4iBlock } from "@/lib/d4i";
 import type { OtaStatus } from "@/types/lighting";
+import type { BrNeighbor, BrRoute } from "@/lib/binproto/brToJson";
 import type {
   ScheduleAction,
   ScheduleRepeat,
@@ -164,15 +165,40 @@ export interface GatewayView {
   lastSeen: string | null;
   /** false: LWT geldi (bağlantı koptu). */
   online: boolean | null;
-  /** Gateway'e bağlı (bu müşterinin) cihaz sayısı. */
+  /**
+   * Çevrimiçi penceresi (ms): gateway'in bildirdiği health aralığından,
+   * `max(2 dk, 2,5 × aralık)`; bildirmediyse 2 dk (lib/gateways.ts).
+   */
+  onlineWindowMs: number;
+  /** Gateway'e bağlı (bu müşterinin) cihaz sayısı — Thread partition eşleşmesi. */
   deviceCount: number;
   fields: { label: string; value: string }[];
+  /** Thread topolojisi (komşular / rotalar) — yalnızca admin'e. */
+  topology?: GatewayTopology;
   raw?: {
     health: Record<string, unknown> | null;
     healthAt: string | null;
     report: Record<string, unknown> | null;
     reportAt: string | null;
   };
+}
+
+/** Topoloji satırındaki RLOC16'nın eşleştiği lamba (aynı müşteri + Thread partition). */
+export type TopologyDevice = { mac: string; name: string | null } | null;
+
+/**
+ * Border Router'ın son topoloji turu (BR_NEIGHBORS / BR_ROUTES). `self` satırı
+ * gateway'in kendisidir (RLOC16'sı gateway health'iyle aynı).
+ */
+export interface GatewayTopology {
+  neighbors: {
+    at: string | null;
+    items: Array<BrNeighbor & { device: TopologyDevice }>;
+  } | null;
+  routes: {
+    at: string | null;
+    items: Array<BrRoute & { device: TopologyDevice; self: boolean }>;
+  } | null;
 }
 
 /** GET /api/schedules — zamanlanmış komut (saatler Türkiye saati). */

@@ -72,7 +72,24 @@ function peerBlocking(mac: string, now: number): boolean {
 
 export type OtaBlock =
   | { reason: "busy" }
-  | { reason: "zone-busy"; peer: string; retryAfterSec: number };
+  | { reason: "zone-busy"; peer: string; retryAfterSec: number }
+  | { reason: "recent"; retryAfterSec: number };
+
+/**
+ * Aynı hedefe art arda OTA isteği (ağ geçidi): hedef şu an güncelleniyorsa ya
+ * da son birkaç dakikada istek almış ve o zamandan beri "bitti" diyen bir
+ * health yollamamışsa engellenir. Ağ geçidinin bölgesi/komşusu yok; Thread
+ * ağını değil kendisini (ve arkasındaki armatürleri) yeniden başlatır.
+ */
+export function otaRepeatBlock(mac: string, now = Date.now()): OtaBlock | null {
+  if (busyNow(mac, now)) return { reason: "busy" };
+  if (!peerBlocking(mac, now)) return null;
+  const sent = otaSent.get(mac) ?? now;
+  return {
+    reason: "recent",
+    retryAfterSec: Math.max(30, Math.ceil((sent + OTA_ZONE_COOLDOWN_MS - now) / 1000)),
+  };
+}
 
 /**
  * OTA isteği şimdi gönderilebilir mi? `peers` = aynı bölgedeki diğer cihazlar.

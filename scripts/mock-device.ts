@@ -24,6 +24,11 @@
  * bağlantıdaki İLK health'te bildirir (`report_interval_s`,
  * `health_interval_s`; binary 0xBA / 0xB9), sonrakilerde göndermez.
  *
+ * `--partition <n>` / `--rloc <n>` (yalnızca `--bin`): health'teki Thread
+ * partition ID ve RLOC16 (varsayılan 0x1A2B3C4D / 0x5C01). Ağ geçidi bağı
+ * partition eşleşmesiyle kurulur: `npm run mock:gateway <GW> --partition <n>`
+ * ile aynı değeri verin (lib/gatewayLink.ts).
+ *
  * `--bin`: yeni firmware gibi d4i_periodic, health ve HELLO'yu binary olarak
  * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). Komutlarda iki biçim
  * de kabul edilir (firmware geçiş dönemi): ilk bayt 0x01-0x1F ise binary
@@ -65,7 +70,7 @@ import {
 
 const RAW_ARGS = process.argv.slice(2);
 /** Değer alan bayraklar — değerleri konumsal argüman sayılmaz. */
-const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones"]);
+const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones", "--partition", "--rloc"]);
 const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
 const BIN = RAW_ARGS.includes("--bin");
 function flagSeconds(name: string): number | undefined {
@@ -75,6 +80,14 @@ function flagSeconds(name: string): number | undefined {
 }
 const REPORT_INTERVAL_S = flagSeconds("--interval");
 const HEALTH_INTERVAL_S = flagSeconds("--health-interval");
+/** Thread kimliği (binary health): ağ geçidi bağı partition'dan, topoloji adı RLOC16'dan. */
+function flagNumber(name: string, fallback: number): number {
+  const i = RAW_ARGS.indexOf(name);
+  const v = i >= 0 ? Number(RAW_ARGS[i + 1]) : NaN;
+  return Number.isInteger(v) && v >= 0 ? v : fallback;
+}
+const THREAD_PARTITION = flagNumber("--partition", 0x1a2b3c4d);
+const THREAD_RLOC = flagNumber("--rloc", 0x5c01);
 /** Aralıklar bildirilecek mi (yeni firmware gibi) — bayraklardan biri verildiyse. */
 const ANNOUNCE_INTERVALS = REPORT_INTERVAL_S !== undefined || HEALTH_INTERVAL_S !== undefined;
 const MAC = (ARGS[0] ?? "A842E3123456")
@@ -420,8 +433,8 @@ function healthBinFields(): BinFields {
     ["THREAD_ATTACHED", 1],
     ["THREAD_PARENT_RSSI_AVG", -62],
     ["THREAD_PARENT_RSSI_LAST", -60],
-    ["THREAD_RLOC16", 0x5c01],
-    ["THREAD_PARTITION_ID", 0x1a2b3c4d],
+    ["THREAD_RLOC16", THREAD_RLOC],
+    ["THREAD_PARTITION_ID", THREAD_PARTITION],
     ["THREAD_CHANNEL", 15],
     ["THREAD_PAN_ID", 0x1234],
     ["OTA_STATE", codeOf(OTA_STATES, ota.state)],

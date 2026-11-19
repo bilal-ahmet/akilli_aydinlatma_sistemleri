@@ -5,7 +5,8 @@
  *   Meven:all/cmd     ← toplu komut (tüm cihazlar subscribe)
  *   Meven:<MAC>/data  ← veri/durum + komut yanıtı (cihaz publish, backend subscribe)
  *   Meven:<MAC>/health← ~30 sn'de bir sağlık/OTA durumu (cihaz publish, backend subscribe)
- *   Meven:<MAC>/bin   ← binary protokol v1: yeni firmware'in TÜM uplink'i (bkz. lib/binproto)
+ *   Meven:<MAC>/bin   ← binary protokol: yeni firmware'in (0x01) ve ağ geçidinin (0x03) TÜM uplink'i
+ *   Meven:<GW>/lwt    ← ağ geçidinin bağlantı durumu (retained {"online":…})
  *
  * Bölge topic'i sayesinde bölge komutu tek publish'tir: backend cihaz listesini
  * DB'den çözmez, publish hiçbir sorgu beklemez. Cihaz kendi bölge slug'ını
@@ -27,14 +28,25 @@ export const DATA_WILDCARD = "+/data";
 export const HEALTH_WILDCARD = "+/health";
 // Binary protokol v1 (lib/binproto): yeni firmware TÜM uplink'ini buraya basar
 // (/data ve /health'e artık yazmaz). Backend çözüp JSON yoluna verir.
+// Ağ geçitleri (Border Router, paket sürümü 0x03) de TÜM uplink'ini buraya basar.
 export const binTopic = (mac: string) => `${PREFIX}:${mac}/bin`;
 export const BIN_WILDCARD = "+/bin";
+// Ağ geçidinin bağlantı durumu: retained `{"online":true}` bağlanınca, MQTT
+// will ile `{"online":false}` bağlantı kopunca (firmware/GATEWAY-ENTEGRASYON.md).
+export const lwtTopic = (mac: string) => `${PREFIX}:${mac}/lwt`;
+export const LWT_WILDCARD = "+/lwt";
 
 export type UplinkSuffix = "data" | "health";
 
 /** "Meven:A842E3123456/bin" → "A842E3123456". Eşleşmezse null. */
 export function parseBinTopic(topic: string): string | null {
   const m = /^Meven:([0-9A-Fa-f]{12})\/bin$/.exec(topic);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** "Meven:404CCA544698/lwt" → "404CCA544698". Eşleşmezse null. */
+export function parseLwtTopic(topic: string): string | null {
+  const m = /^Meven:([0-9A-Fa-f]{12})\/lwt$/.exec(topic);
   return m ? m[1].toUpperCase() : null;
 }
 

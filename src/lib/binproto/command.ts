@@ -1,5 +1,6 @@
 import { encodeFrame } from "./codec";
 import { COMMAND_ACTIONS } from "./fields";
+import { BR_COMMAND_ACTIONS, BR_PROTOCOL_VERSION, type BrCommandAction } from "./brFields";
 
 /**
  * Sunucu → cihaz binary komutu (TYPE = COMMAND, 0x08). Saf; sunucu ve
@@ -94,4 +95,31 @@ export function encodeCommand(cmd: BinaryCommand): Uint8Array {
     ["COMMAND_EFFECT_TEXT", cmd.text ? cmd.text : undefined],
     ...zones.map((z) => ["COMMAND_ZONE", z] as const),
   ]);
+}
+
+// ── Border Router (paket sürümü 0x03) ────────────────────────
+
+const BR_ACTION_CODES: ReadonlyMap<string, number> = new Map(
+  Object.entries(BR_COMMAND_ACTIONS).map(([code, name]) => [name, Number(code)]),
+);
+
+/**
+ * Sunucu → Border Router komutu: `Meven:<GW_ID>/cmd`. Alan tablosu lambadan
+ * ayrı (bkz. brFields.ts); yalnızca COMMAND_ACTION + isteğe bağlı COMMAND_ID.
+ * Gateway yanıtı `/bin`'e 0x03 COMMAND_ACK olarak döner.
+ */
+export function encodeBrCommand(cmd: { action: BrCommandAction; id?: number }): Uint8Array {
+  const action = BR_ACTION_CODES.get(cmd.action);
+  if (action === undefined) throw new Error(`gateway komutunda olmayan action: ${cmd.action}`);
+  if (cmd.id !== undefined && (!Number.isInteger(cmd.id) || cmd.id < 1 || cmd.id > 0xffff)) {
+    throw new Error(`komut id'si 1..65535 olmalı: ${cmd.id}`);
+  }
+  return encodeFrame(
+    "COMMAND",
+    [
+      ["COMMAND_ACTION", action],
+      ["COMMAND_ID", cmd.id],
+    ],
+    { version: BR_PROTOCOL_VERSION },
+  );
 }

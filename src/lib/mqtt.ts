@@ -1,6 +1,6 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { binaryCommandsEnabled, getEnv, jsonMirrorEnabled } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
@@ -11,21 +11,24 @@ import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import { appendHealthLog } from "@/lib/healthLog";
-import { gatewayHealthFromBin, isGatewayPayload, nodeMacsFromReport } from "@/lib/gateways";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
-import { normalizeMac } from "@/lib/mac";
+import { linkDevicesByPartition } from "@/lib/gatewayLink";
 import { intervalSeconds } from "@/lib/deviceWindows";
 import {
   binActive,
   binCommandCapable,
   groupTakesBinary,
   decodeBinUplink,
+  forgetBrGateway,
   type BinUplinkResult,
   noteDuplicateJson,
   noteJsonUplink,
 } from "@/lib/binUplink";
-import { encodeCommand, type BinaryCommand } from "@/lib/binproto/command";
+import { encodeBrCommand, encodeCommand, type BinaryCommand } from "@/lib/binproto/command";
 import { ShortIdTable } from "@/lib/binproto/shortIds";
+import type { BrCommandAction } from "@/lib/binproto/brFields";
+import type { BrAck, BrMessage, BrTopologyPage } from "@/lib/binproto/brToJson";
+import { TopologyAssembler } from "@/lib/binproto/brTopology";
 import {
   noteFirmware as zoneNoteFirmware,
   onAck as zoneOnAck,
@@ -40,11 +43,13 @@ import {
   zoneCmdTopic,
   parseUplinkTopic,
   parseBinTopic,
+  parseLwtTopic,
   jsonMirrorTopic,
   ALL_CMD,
   BIN_WILDCARD,
   DATA_WILDCARD,
   HEALTH_WILDCARD,
+  LWT_WILDCARD,
   type UplinkSuffix,
 } from "@/lib/topics";
 import {
@@ -54,7 +59,7 @@ import {
   flagToBool,
   d4iIsOn,
   deviceHealthSchema,
-  gatewayUplinkSchema,
+  gatewayLwtSchema,
   isMaintenanceAction,
   isZoneAction,
   type Action,
@@ -65,6 +70,7 @@ import {
   type DataPayload,
   type DeviceHealth,
   type MaintenanceAction,
+  type OtaStatus,
 } from "@/types/lighting";
 
 /**
@@ -74,11 +80,12 @@ import {
  * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
  *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
  *  - subscribe "+/health"       → Meven:<MAC>/health (firmware sürümü, OTA durumu)
- *  - subscribe "+/bin"          → Meven:<MAC>/bin: binary protokol v1 (yeni
- *    firmware'in TÜM uplink'i). lib/binUplink.ts çözer, JSON karşılığı aşağıdaki
- *    JSON yoluyla (routeUplink) aynen işlenir.
- *  Gateway'ler de AYNI topic'leri kullanır (Meven:<GW_ID>/data|health); ayrım
- *  payload'daki `type` ile yapılır (bkz. routeUplink, lib/gateways.ts).
+ *  - subscribe "+/bin"          → Meven:<MAC>/bin: binary protokol (yeni
+ *    firmware'in TÜM uplink'i). lib/binUplink.ts çözer. İlk bayt 0x01 (lamba):
+ *    JSON karşılığı aşağıdaki JSON yoluyla (routeUplink) aynen işlenir. İlk bayt
+ *    0x03 (Thread Border Router): ağ geçidi yoluna gider (handleBrUplink).
+ *  - subscribe "+/lwt"          → Meven:<GW_ID>/lwt: ağ geçidinin bağlantı durumu.
+ *  Ağ geçitleri JSON göndermez; kayıtlı ağ geçidi kimliğinden gelen JSON atılır.
  *  - publish   Meven:<MAC>/cmd  → tekil komut
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
  *  - publish   Meven:all/cmd    → toplu komut
@@ -110,7 +117,12 @@ export function getMqttClient(): MqttClient {
     // /bin QoS 1: cihaz health'i QoS 2 ile basıyor; bir-kezlik alanlar
     // (idf_version, ağ adı) yalnızca bağlantı başına bir kez geliyor.
     client.subscribe(
-      { [DATA_WILDCARD]: { qos: 0 }, [HEALTH_WILDCARD]: { qos: 0 }, [BIN_WILDCARD]: { qos: 1 } },
+      {
+        [DATA_WILDCARD]: { qos: 0 },
+        [HEALTH_WILDCARD]: { qos: 0 },
+        [BIN_WILDCARD]: { qos: 1 },
+        [LWT_WILDCARD]: { qos: 1 },
+      },
       (err) => {
         if (err) console.error("[mqtt] subscribe error:", err.message);
       },
@@ -122,7 +134,12 @@ export function getMqttClient(): MqttClient {
 
   client.on("message", (topic, payload) => {
     const binMac = parseBinTopic(topic);
-    const task = binMac ? handleBinUplink(binMac, payload) : handleUplink(topic, payload);
+    const lwtMac = binMac ? null : parseLwtTopic(topic);
+    const task = binMac
+      ? handleBinUplink(binMac, payload)
+      : lwtMac
+        ? handleGatewayLwt(lwtMac, payload)
+        : handleUplink(topic, payload);
     void task.catch((err) => console.error("[mqtt] message handler error:", err));
   });
 
@@ -166,16 +183,10 @@ async function handleUplink(topic: string, raw: Buffer): Promise<void> {
 async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   const result = await decodeBinUplink(mac, payload);
   mirrorJson(mac, result);
-  // Kayıtlı gateway: binary HEALTH → gateway health'i, HELLO → yalnızca "haber
-  // aldık". Diğer tipler decodeBinUplink'te zaten atıldı. Bölge senkronu
-  // kancalarına girmez (gateway'e zone komutu gitmemeli).
-  if (peekTenancy()?.gatewayOwner.has(mac)) {
-    if (result.kind === "hello") return handleGatewayUplink(mac, "hello", {});
-    if (result.kind === "json" && result.suffix === "health") {
-      return handleGatewayUplink(mac, "health", gatewayHealthFromBin(result.json));
-    }
-    return;
-  }
+  // Ağ geçidi (0x03): kendi yolu. Bölge senkronu kancalarına girmez (gateway'e
+  // zone komutu gitmemeli). Kayıtlı ağ geçidinden gelen 0x01 paketi
+  // decodeBinUplink'te zaten atıldı (GATEWAY).
+  if (result.kind === "br") return handleBrUplink(mac, result.msg);
   // Bölge aboneliği: HELLO = cihaz (yeniden) bağlandı → listeyi doğrula; her
   // geçerli paket = cihaz ayakta → bekleyen zone işi varsa sürdür.
   // Yan iştir: hatası paketin işlenmesini (last_seen, telemetri) asla durdurmamalı.
@@ -218,7 +229,11 @@ function mirrorJson(mac: string, r: BinUplinkResult): void {
       ? ["reject", JSON.stringify({ reason: r.outcome, detail: r.detail, hex: r.hex })]
       : r.kind === "hello"
         ? ["data", HELLO_TEXT]
-        : [r.suffix, JSON.stringify(r.json)];
+        : r.kind === "br"
+          ? r.msg.kind === "health"
+            ? ["health", JSON.stringify(r.msg.json)]
+            : ["data", JSON.stringify(r.msg.kind === "ack" ? r.msg.ack : r.msg.page)]
+          : [r.suffix, JSON.stringify(r.json)];
   getMqttClient().publish(jsonMirrorTopic(mac, suffix), body, { qos: 0 });
 }
 
@@ -228,15 +243,11 @@ async function routeUplink(
   json: unknown,
   source: "json" | "bin",
 ): Promise<void> {
-  // Gateway'ler cihazlarla aynı topic'lere basar. Ayrım payload'dan (`type`
-  // gateway türü) ya da kimlik kayıtlı bir gateway'e aitse ondan yapılır —
-  // ikincisi kontrata uymayan (type'sız) bir gateway mesajını cihaz yoluna
-  // düşürmemek için.
-  if (
-    parsedTopic &&
-    (isGatewayPayload(json) || peekTenancy()?.gatewayOwner.has(parsedTopic.mac))
-  ) {
-    return handleGatewayUplink(parsedTopic.mac, parsedTopic.suffix, json);
+  // Ağ geçitleri yalnızca binary 0x03 basar (handleBrUplink). Kayıtlı ağ geçidi
+  // kimliğinden gelen JSON (eski gateway firmware'i) cihaz yoluna düşmesin.
+  if (parsedTopic && peekTenancy()?.gatewayOwner.has(parsedTopic.mac)) {
+    console.warn(`[mqtt] ağ geçidi ${parsedTopic.mac} JSON gönderdi (${topic}) — yalnızca binary 0x03 işlenir`);
+    return;
   }
 
   // Çift işleme koruması: binary gönderen cihazın JSON telemetrisi/health'i
@@ -651,9 +662,6 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   const now = new Date();
   const firmwareVersion = h.firmware_version?.slice(0, 32) ?? null;
   const ota = h.ota ?? null;
-  // Cihaz bağlı olduğu gateway'i kendisi bildirebilir (gateway `nodes`
-  // listesi veremiyorsa). Alan gelmezse mevcut bağ korunur.
-  const gatewayId = h.gateway ? normalizeMac(h.gateway) : null;
   // Rapor aralıkları yalnızca ilk kayıtta (join) gelir; gelmediği mesajda
   // sütun ezilmez (bkz. lib/deviceWindows.ts).
   const healthIntervalS = intervalSeconds((h as Record<string, unknown>).health_interval_s);
@@ -664,7 +672,6 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   const { device } = await touchDevice(mac, now, {
     // Sürüm alanı gelmediyse eski değer ezilmez.
     ...(firmwareVersion ? { firmwareVersion } : {}),
-    ...(gatewayId ? { gatewayId } : {}),
     ...(healthIntervalS !== undefined ? { healthIntervalS } : {}),
     ...(reportIntervalS !== undefined ? { reportIntervalS } : {}),
     health: h as Record<string, unknown>,
@@ -683,127 +690,182 @@ async function handleHealth(mac: string, h: DeviceHealth): Promise<void> {
   });
 }
 
-/**
- * Son yazılan `nodes` eşleşmesi (gateway başına) — rapor ~30 sn'de bir gelir,
- * liste değişmedikçe `devices` tablosuna yazılmaz.
- */
-const globalForGw = globalThis as unknown as { __fenerGwNodes?: Map<string, string> };
-const lastNodeSig = (globalForGw.__fenerGwNodes ??= new Map());
+// ── Ağ geçidi (Thread Border Router, binary 0x03) ────────────
+
+/** Sayfalı topoloji (BR_NEIGHBORS / BR_ROUTES) birleştiricisi — bellek içi. */
+const globalForGw = globalThis as unknown as { __fenerBrTopology?: TopologyAssembler };
+const brTopology = (globalForGw.__fenerBrTopology ??= new TopologyAssembler());
 
 /**
- * Gateway mesajı (Meven:<GW_ID>/health veya /data). Kayıtsız gateway DB'ye
- * yazılmaz, yalnızca admin'in "keşfedilen" listesine düşer. Kayıtlıysa
+ * Ağ geçidi paketi (Meven:<GW_ID>/bin, ilk bayt 0x03). Kayıtsız gateway DB'ye
+ * yazılmaz, yalnızca admin'in "Keşfedilen ağ geçitleri" listesine düşer — 0x03
+ * yalnızca Border Router'a ait olduğu için tür kesindir (thread_br). Kayıtlıysa
  * `gateways` satırı tek UPDATE ile güncellenir (mesaj başına satır yok):
- *   - health → firmware + son health; `online:false` (LWT) yalnızca durumu düşürür
- *   - data   → son rapor; `nodes` varsa cihaz ↔ gateway eşleşmesi
+ *   - health   → son health + firmware + son görülme; lamba bağı (partition)
+ *   - topology → tur tamamlanınca `report.neighbors` / `report.routes`
+ *   - ack      → gateway komutunun sonucu (commands + SSE)
  */
-async function handleGatewayUplink(
-  gatewayId: string,
-  suffix: UplinkSuffix | "hello",
-  json: unknown,
-): Promise<void> {
-  if (suffix === "hello") {
-    // Binary HELLO: gövde yok. Son health/data ezilmez, yalnızca görülme.
-    const ownerId = (await getTenancy()).gatewayOwner.get(gatewayId);
-    if (!ownerId) return;
-    const now = new Date();
-    await db
-      .update(schema.gateways)
-      .set({ lastSeen: now, online: true })
-      .where(eq(schema.gateways.gatewayId, gatewayId));
-    emitLiveEvent({
-      kind: "gateway",
-      gatewayId,
-      customerId: ownerId,
-      status: "ok",
-      online: true,
-      firmwareVersion: null,
-      at: now.toISOString(),
-    });
-    return;
-  }
-  const parsed = gatewayUplinkSchema.safeParse(json);
-  if (!parsed.success) {
-    console.warn(`[mqtt] bilinmeyen gateway payload (${gatewayId}/${suffix})`);
-    return;
-  }
-  const m = parsed.data;
+async function handleBrUplink(gatewayId: string, msg: BrMessage): Promise<void> {
   const now = new Date();
-  const firmwareVersion = m.fw?.slice(0, 32) ?? null;
-
   const ownerId = (await getTenancy()).gatewayOwner.get(gatewayId);
   if (!ownerId) {
-    noteDiscoveredGateway(gatewayId, { type: m.type ?? null, firmwareVersion }, now);
+    const fw = msg.kind === "health" && typeof msg.json.fw === "string" ? msg.json.fw : null;
+    noteDiscoveredGateway(gatewayId, { type: "thread_br", firmwareVersion: fw }, now);
     return;
   }
+  if (msg.kind === "health") return handleGatewayHealth(gatewayId, ownerId, msg.json, now);
+  if (msg.kind === "topology") return handleGatewayTopology(gatewayId, ownerId, msg.page, now);
+  return handleGatewayAck(gatewayId, ownerId, msg.ack, now);
+}
 
-  // LWT: bağlantı koptu. Son görülme ve son health ezilmez — panel "en son ne
-  // zaman haber aldık"ı göstermeye devam eder.
-  const lwt = m.online === false;
-  const patch: Partial<typeof schema.gateways.$inferInsert> = lwt
-    ? { online: false }
-    : {
-        lastSeen: now,
-        online: true,
-        ...(firmwareVersion ? { firmwareVersion } : {}),
-        ...(suffix === "health"
-          ? { health: m as Record<string, unknown>, healthAt: now }
-          : { report: m as Record<string, unknown>, reportAt: now }),
-      };
-  await db.update(schema.gateways).set(patch).where(eq(schema.gateways.gatewayId, gatewayId));
+async function handleGatewayHealth(
+  gatewayId: string,
+  ownerId: string,
+  health: Record<string, unknown>,
+  now: Date,
+): Promise<void> {
+  const firmwareVersion = typeof health.fw === "string" && health.fw ? health.fw.slice(0, 32) : null;
+  // OTA koruması (lib/otaGuard.ts) cihazlarla aynı bellek içi kopyayı kullanır.
+  noteHealth(gatewayId, { firmwareVersion, ota: (health.ota ?? null) as OtaStatus | null }, now.getTime());
+  await db
+    .update(schema.gateways)
+    .set({
+      lastSeen: now,
+      online: true,
+      health,
+      healthAt: now,
+      ...(firmwareVersion ? { firmwareVersion } : {}),
+    })
+    .where(eq(schema.gateways.gatewayId, gatewayId));
 
-  if (!lwt && suffix === "data") await syncGatewayNodes(gatewayId, ownerId, m);
+  // Lamba bağı yan iştir: hatası gateway'in durumunu yazmayı durdurmamalı.
+  const partition = (health.thread as Record<string, unknown> | null | undefined)?.partition_id;
+  try {
+    const r = await linkDevicesByPartition(gatewayId, ownerId, typeof partition === "string" ? partition : null);
+    if (r.linked || r.unlinked) {
+      console.log(`[gateway] ${gatewayId}: ${r.linked} cihaz bağlandı, ${r.unlinked} bağ kaldırıldı (partition ${partition})`);
+    }
+  } catch (err) {
+    console.error(`[gateway] ${gatewayId} lamba bağı güncellenemedi:`, err);
+  }
 
   emitLiveEvent({
     kind: "gateway",
     gatewayId,
     customerId: ownerId,
     status: "ok",
-    online: !lwt,
+    online: true,
     firmwareVersion,
     at: now.toISOString(),
   });
 }
 
-/**
- * `nodes` listesi → `devices.gateway_id`. Yalnızca gateway'in müşterisine ait
- * cihazlar eşlenir (başka müşterinin cihazı listede olsa bile ona gateway
- * bilgisi yazılmaz). Liste yetkilidir: listede olmayan cihazın bu gateway'e
- * bağı kaldırılır (Thread cihazı başka border router'a geçmiş olabilir).
- */
-async function syncGatewayNodes(gatewayId: string, ownerId: string, report: unknown) {
-  const macs = nodeMacsFromReport(report);
-  if (macs === null) return; // liste yok → bilgi yok, mevcut bağlar korunur
-  const idx = peekTenancy();
-  const own = macs.filter((mac) => idx?.deviceOwner.get(mac) === ownerId).sort();
-  const sig = own.join(",");
-  if (lastNodeSig.get(gatewayId) === sig) return;
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(schema.devices)
-      .set({ gatewayId: null })
-      .where(
-        own.length > 0
-          ? and(
-              eq(schema.devices.gatewayId, gatewayId),
-              notInArray(schema.devices.deviceId, own),
-            )
-          : eq(schema.devices.gatewayId, gatewayId),
-      );
-    if (own.length > 0) {
-      await tx
-        .update(schema.devices)
-        .set({ gatewayId })
-        .where(inArray(schema.devices.deviceId, own));
-    }
+async function handleGatewayTopology(
+  gatewayId: string,
+  ownerId: string,
+  page: BrTopologyPage,
+  now: Date,
+): Promise<void> {
+  const snap = brTopology.add(gatewayId, page, now.getTime());
+  if (!snap) return; // tur sürüyor
+  if (snap.mismatch) {
+    console.warn(
+      `[gateway] ${gatewayId} ${snap.kind} turu ${snap.snapshotId}: TOTAL ${snap.total}, gelen ${snap.items.length} kayıt`,
+    );
+  }
+  // Komşular ve rotalar ayrı turlarda tamamlanır; report'un diğer anahtarı korunur.
+  const block = { snapshot_id: snap.snapshotId, at: now.toISOString(), total: snap.total, items: snap.items };
+  await db
+    .update(schema.gateways)
+    .set({
+      report: sql`coalesce(${schema.gateways.report}, '{}'::jsonb) || ${JSON.stringify({ [snap.kind]: block })}::jsonb`,
+      reportAt: now,
+      lastSeen: now,
+      online: true,
+    })
+    .where(eq(schema.gateways.gatewayId, gatewayId));
+  emitLiveEvent({
+    kind: "gateway",
+    gatewayId,
+    customerId: ownerId,
+    status: "ok",
+    online: true,
+    at: now.toISOString(),
   });
-  lastNodeSig.set(gatewayId, sig);
 }
 
-/** Gateway silinince/taşınınca bir sonraki raporda eşleşme yeniden yazılsın. */
-export function forgetGatewayNodes(gatewayId: string): void {
-  lastNodeSig.delete(gatewayId);
+/**
+ * Gateway komutunun (report_now / ota_check) yanıtı. Kısa id komutun UUID'sine
+ * çevrilir; eşlenemezse tahmin yapılmaz. Lamba hatası değildir: rozete, arıza
+ * geçmişine ve bildirim akışına yazılmaz — yalnızca gateway satırında gösterilir.
+ */
+async function handleGatewayAck(gatewayId: string, ownerId: string, ack: BrAck, now: Date): Promise<void> {
+  const requestId = ack.id != null ? shortIds.resolve(ack.id) : undefined;
+  if (ack.id != null && !requestId) {
+    console.warn(`[mqtt] gateway ack (${gatewayId}) bilinmeyen komut id'si ${ack.id} — komut eşlenmedi`);
+  }
+  const flight = requestId ? inflight.get(requestId) : undefined;
+  if (requestId) await settleCommand(requestId, ack.status === "ok" ? "delivered" : "failed", now);
+  if (ack.error) console.warn(`[mqtt] gateway komutu reddedildi (${gatewayId}, ${ack.action}): ${ack.error}`);
+  emitLiveEvent({
+    kind: "gateway",
+    gatewayId,
+    customerId: ownerId,
+    status: ack.status,
+    online: true,
+    presenceOnly: true,
+    requestId,
+    gatewayCommand: {
+      requestId: requestId ?? null,
+      action: ack.action ?? flight?.gatewayCommand ?? null,
+      status: ack.status,
+      error: ack.error,
+      result: ack.result,
+    },
+    at: now.toISOString(),
+  });
+}
+
+/**
+ * Meven:<GW_ID>/lwt — retained `{"online":true}` (gateway bağlandı) ya da MQTT
+ * will ile `{"online":false}` (bağlantı koptu). Son görülme ilerletilmez: panel
+ * "en son ne zaman haber aldık"ı göstermeye devam eder; retained `true`
+ * backend her yeniden bağlandığında da gelir. Kayıtsız kimlik yok sayılır.
+ */
+async function handleGatewayLwt(gatewayId: string, payload: Buffer): Promise<void> {
+  const text = payload.toString().trim();
+  if (!text) return; // retained mesaj silindi
+  const ownerId = (await getTenancy()).gatewayOwner.get(gatewayId);
+  if (!ownerId) return;
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    console.warn(`[mqtt] gateway LWT çözülemedi (${gatewayId}): ${text.slice(0, 80)}`);
+    return;
+  }
+  const parsed = gatewayLwtSchema.safeParse(json);
+  if (!parsed.success) {
+    console.warn(`[mqtt] gateway LWT tanınmadı (${gatewayId}): ${text.slice(0, 80)}`);
+    return;
+  }
+  const online = parsed.data.online;
+  await db.update(schema.gateways).set({ online }).where(eq(schema.gateways.gatewayId, gatewayId));
+  emitLiveEvent({
+    kind: "gateway",
+    gatewayId,
+    customerId: ownerId,
+    status: "ok",
+    online,
+    presenceOnly: true,
+    at: new Date().toISOString(),
+  });
+}
+
+/** Gateway silinince bellekteki yarım topoloji ve bir-kezlik health alanları unutulsun. */
+export function forgetGatewayState(gatewayId: string): void {
+  brTopology.forget(gatewayId);
+  forgetBrGateway(gatewayId);
 }
 
 /** İlk kontrat (deviceId + brightness/relayStatus/channels): DB + bölge snapshot'ı + canlı event. */
@@ -1007,6 +1069,8 @@ type Inflight = {
   maintenance?: MaintenanceAction;
   /** Bölge aboneliği komutu (lib/zoneSync) — `commands`'a yazılmaz. */
   zoneOp?: ZoneOp["action"];
+  /** Ağ geçidi komutu (report_now / ota_check). */
+  gatewayCommand?: BrCommandAction;
   /** Satır yazılmadan gelen yanıtın sonucu. */
   outcome?: CommandOutcome;
   /** commands satırı yazıldı mı. */
@@ -1241,6 +1305,40 @@ function publishZoneOp(
   return { requestId, shortId };
 }
 registerZonePublisher(publishZoneOp);
+
+/**
+ * Ağ geçidi komutu (Border Router, binary 0x03): `report_now` (hemen health +
+ * topoloji gönder) ya da `ota_check`. YALNIZCA Meven:<GW_ID>/cmd; kısa id u16,
+ * yanıt `/bin`'e 0x03 COMMAND_ACK olarak döner (handleGatewayAck). Senkron,
+ * DB'ye dokunmaz (Kural #10); kayıt için recordGatewayCommand'ı after()'ta çağır.
+ */
+export function publishGatewayCommand(gatewayId: string, action: BrCommandAction): { requestId: string } {
+  const requestId = randomUUID();
+  const payload = Buffer.from(encodeBrCommand({ action, id: shortIds.issue(requestId) }));
+  getMqttClient().publish(cmdTopic(gatewayId), payload, { qos: 1 });
+  rememberInflight(requestId, { gatewayCommand: action });
+  if (action === "ota_check") noteOtaSent(gatewayId);
+  return { requestId };
+}
+
+/** publishGatewayCommand sonrası `commands` kaydı (target_type 'gateway'). */
+export async function recordGatewayCommand(
+  gatewayId: string,
+  requestId: string,
+  action: BrCommandAction,
+  meta: CommandMeta,
+): Promise<void> {
+  await insertCommandRow({
+    requestId,
+    targetType: "gateway",
+    targetId: gatewayId,
+    userId: meta.userId,
+    customerId: meta.customerId,
+    channel: null,
+    action,
+    value: null,
+  });
+}
 
 /** publishMaintenance sonrası `commands` kaydı (route'larda after() içinde). */
 export async function recordMaintenance(

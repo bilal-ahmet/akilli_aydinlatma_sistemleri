@@ -7,7 +7,8 @@
  *   npm run mock:bin A842E3123456 --ornek d4i      # dokümandaki örnek paket
  *
  * Örnekler: d4i (d4i_periodic, D4i'siz), dali, health, ack, crc (bozuk CRC),
- * alan (tanımsız alan → admin kartında alarm), lora (0x02).
+ * alan (tanımsız alan → admin kartında alarm), lora (0x02). Ağ geçidi
+ * (Border Router, 0x03) paketleri de oynatılabilir (firmware/BR-BINARY-PROTOKOL.md §4).
  *
  * Paket gönderilmeden önce yerel olarak çözülür ve sonucu yazdırılır (bozuk
  * paketler de bilerek gönderilebilir). Broker .env.local'dan okunur.
@@ -21,6 +22,8 @@ config({ path: ".env.local" });
 import mqtt from "mqtt";
 import { crc16, decodeFrame, parseHex, toHex } from "@/lib/binproto/codec";
 import { toLegacy } from "@/lib/binproto/toJson";
+import { BR_PROTOCOL_VERSION } from "@/lib/binproto/brFields";
+import { brToMessage } from "@/lib/binproto/brToJson";
 
 const EXAMPLES: Record<string, string> = {
   d4i: "01 01 01 02 02 03 01 10 00 11 FF 12 00 13 00 14 00 15 FE 16 55 17 64 20 00 C8 03",
@@ -78,6 +81,11 @@ if (!isLocal && !live) {
 const frame = decodeFrame(payload);
 if (!frame.ok) {
   console.log(`Yerel çözüm: REDDEDİLİR (${frame.reason}: ${frame.detail})`);
+} else if (frame.version === BR_PROTOCOL_VERSION) {
+  // Ağ geçidi (Thread Border Router) paketi.
+  const m = brToMessage(frame, {}, { warnings: [] });
+  const body = !m ? "atlanır" : m.kind === "health" ? m.json : m.kind === "ack" ? m.ack : m.page;
+  console.log(`Yerel çözüm (BR 0x03): ${frame.typeName ?? frame.type} → ${JSON.stringify(body)}`);
 } else {
   const r = toLegacy(frame, `Meven:${mac}`, {}, { warnings: [] });
   console.log(`Yerel çözüm: ${frame.typeName ?? frame.type} → ${r ? (r.kind === "hello" ? "hello" : `/${r.suffix} ${JSON.stringify(r.json)}`) : "atlanır"}`);

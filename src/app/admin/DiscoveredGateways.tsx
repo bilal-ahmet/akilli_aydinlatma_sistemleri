@@ -45,9 +45,9 @@ export function DiscoveredGateways({ customers }: { customers: { slug: string; n
     <section aria-label="Keşfedilen ağ geçitleri" className="rounded-2xl border border-border bg-panel p-5">
       <h2 className="font-display text-base font-semibold text-text">Keşfedilen ağ geçitleri</h2>
       <p className="mt-1 max-w-2xl text-xs text-muted">
-        MQTT&apos;ye gateway türüyle (<code className="font-mono">&quot;type&quot;: &quot;thread_br&quot;</code> vb.)
-        yayın yapan ama hiçbir müşteriye kayıtlı olmayan kimlikler (son 24 saat). Kayıt edilene
-        kadar verileri saklanmaz.
+        <code className="font-mono">Meven:&lt;GW_ID&gt;/bin</code>&apos;e ağ geçidi paketi (binary, ilk bayt{" "}
+        <code className="font-mono">0x03</code>) gönderen ama hiçbir müşteriye kayıtlı olmayan kimlikler
+        (son 24 saat). Kayıt edilene kadar verileri saklanmaz.
       </p>
 
       {registered.length > 0 ? (

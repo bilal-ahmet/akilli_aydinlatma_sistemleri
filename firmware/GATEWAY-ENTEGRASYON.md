@@ -1,108 +1,77 @@
 # Gateway entegrasyonu (MQTT kontratı)
 
-Sahadaki gateway'ler (Thread Border Router, 4G/WiFi router, ileride LoRaWAN
-gateway) backend'e cihazlarla **aynı topic şemasıyla** bağlanır. Bu belge
-gateway firmware'inin uyması gereken kontratı tanımlar. Cihaz (ESP32 lamba
-kontrolcüsü) kontratı için: `ESP32-ENTEGRASYON.md`.
+Sahadaki ağ geçitleri (Thread Border Router; ileride 4G/WiFi router, LoRaWAN
+gateway) backend'e lambalarla **aynı topic şemasıyla** bağlanır ve verilerini
+**yalnızca binary** gönderir. Paketin ilk baytı **0x03**'tür (lamba 0x01);
+backend ikisini bu baytla ayırır. Alan tablosu, mesaj tipleri ve örnek
+paketler: **`BR-BINARY-PROTOKOL.md`** (firmware ekibinin belgesi). Lamba
+kontratı: `ESP32-ENTEGRASYON.md`, `BINARY-ENTEGRASYON.md`.
+
+> JSON gateway kontratı (`/health` + `/data` içinde `"type":"thread_br"`)
+> **kaldırıldı**. Kayıtlı bir ağ geçidi kimliğinden gelen JSON ve lamba (0x01)
+> paketi atılır.
 
 ## 1) Topic'ler
 
 | Topic | Yön | Ne |
 |---|---|---|
-| `Meven:<GW_ID>/health` | gateway → backend | ~30 sn'de bir ortak bilgiler (zarf). LWT de buraya. |
-| `Meven:<GW_ID>/data`   | gateway → backend | ~30 sn'de bir türe özgü bilgi + bağlı cihaz listesi. |
-| `Meven:<GW_ID>/cmd`    | backend → gateway | Gateway komutları (henüz tanımlı komut yok, topic ayrıldı). |
+| `Meven:<GW_ID>/bin` | gateway → backend (QoS 1) | 0x03 paketleri: BR_HEALTH, BR_NEIGHBORS, BR_ROUTES, COMMAND_ACK |
+| `Meven:<GW_ID>/lwt` | gateway → backend (QoS 1, **retained**) | `{"online":true}` bağlanınca, MQTT will ile `{"online":false}` |
+| `Meven:<GW_ID>/cmd` | backend → gateway | 0x03 COMMAND: `report_now` (6), `ota_check` (5) |
 
-- **GW_ID** = gateway'in MAC adresi, iki noktasız, büyük harf (örn. `A1B2C3D4E5F6`).
-- QoS: health/data publish → 0 · cmd subscribe → 1.
+- **GW_ID** = gateway'in Wi-Fi STA MAC'i, iki noktasız, büyük harf (örn.
+  `404CCA544698`). `Meven:` öneki topic'in parçasıdır, kimliğe dahil değildir:
+  panele `404CCA544698` yazılır.
+- Gateway yalnızca kendi `Meven:<GW_ID>/cmd` topic'ine abone olur.
+  `Meven:all/cmd` ve bölge topic'leri (`Meven:<bölge>/cmd`) lambalarındır.
 
-## 2) İki zorunlu kural
+## 2) Backend ne yapar
 
-1. **Her mesajda (`/health`, `/data`, LWT) `"type"` alanı olmalı:**
-   `thread_br` | `cellular` | `wifi` | `lorawan`.
-   Topic'ler cihazlarla ortak olduğu için backend gateway'i lambadan
-   **yalnızca bu alanla** ayırır. Alan unutulursa ve gateway henüz panelde
-   kayıtlı değilse, mesaj lamba mesajı sanılıp atılır.
-2. **Gateway yalnızca kendi `Meven:<GW_ID>/cmd` topic'ine abone olur.**
-   `Meven:all/cmd` ve bölge topic'lerine (`Meven:<bölge>/cmd`) abone OLMAZ.
-   Bunlar lambalara gider ("Tüm Sistem", acil durum komutu).
+| Mesaj | Backend |
+|---|---|
+| BR_HEALTH (bağlanınca + ~300 sn) | `gateways.health` (son durum), `firmware_version`, `last_seen`, `online`. Bağlantı başına bir kez gelen alanlar (IDF, derleme, aralıklar, ağ adı) bellekte tutulup her health'e eklenir. Lamba bağı güncellenir (bkz. §4). |
+| BR_NEIGHBORS / BR_ROUTES (bağlanınca + ~900 sn, sayfalı) | Aynı `SNAPSHOT_ID`'li sayfalar toplanır; tur tamamlanınca `gateways.report.neighbors` / `.routes`. Tekrarlanan sayfa bir kez sayılır, 2 dk'da tamamlanmayan tur atılır. |
+| COMMAND_ACK | u16 id komutun UUID'sine çevrilir; `commands` satırı `delivered` / `failed`, panelde butonun altında sonuç. |
+| `/lwt` | `online` güncellenir; `last_seen` ilerlemez. |
 
-## 3) `/health` — ortak zarf (~30 sn)
+- **Kayıtsız GW_ID**: veri saklanmaz; 0x03 paketi geldiği için tür kesindir ve
+  yönetim ekranındaki **"Keşfedilen ağ geçitleri"** listesine `thread_br`
+  olarak düşer (son 24 saat). Oradan bir müşteriye kaydedilir.
+- **Çevrimiçi**: LWT `online:false` değilse ve son haber
+  `max(2 dk, 2,5 × health aralığı)` içindeyse. 300 sn'lik aralıkta 12,5 dk.
+- Tanımsız alan kodu taşıyan paket tamamen atılır ve admin'in "Binary protokol"
+  kartında kırmızı alarm çıkar. **Firmware yeni alan eklerse önce backend'deki
+  `src/lib/binproto/brFields.ts` güncellenip deploy edilir, sonra OTA.**
+- Aynı MAC hem cihaz (lamba) hem gateway olarak kaydedilemez.
 
-```json
-{
-  "type": "thread_br",
-  "fw": "0.1.0",
-  "uptime_s": 12345,
-  "online": true,
-  "uplink": { "kind": "ethernet", "rssi": -67, "ip": "10.0.0.5" }
-}
-```
+## 3) Komutlar
 
-- `uplink.kind`: `ethernet` | `wifi` | `cellular` (gateway'in internete çıkışı). `uplink` opsiyonel.
-- **LWT** (MQTT bağlantısında `will` olarak ayarlanır; bağlantı koparsa
-  broker yayınlar): topic `Meven:<GW_ID>/health`, payload
-  `{"type":"thread_br","online":false}`, retain yok. Panel gateway'i
-  2 dakika beklemeden "Bağlantı yok" gösterir.
+`POST /api/gateways/<GW_ID>/command` `{ "action": "report_now" | "ota_check" }`
 
-## 4) `/data` — türe özgü blok + bağlı cihazlar (~30 sn)
+- `report_now`: admin + müşteri yöneticisi. Gateway beklemeden health ve
+  topoloji gönderir.
+- `ota_check`: yalnızca admin. Gateway güncellemedeyse ya da son 3 dk içinde
+  istek aldıysa ve bitirdiğini bildirmediyse 409.
+- Yanıt kodları (COMMAND_RESULT): 0 ok, -2 action yok, -5 bilinmeyen action,
+  -12 OTA hazır değil, -15 CRC, -16 versiyon, -17 biçim bozuk.
 
-```json
-{
-  "type": "thread_br",
-  "thread": {
-    "role": "leader", "network_name": "fener-1", "channel": 15,
-    "pan_id": "0x1234", "ext_pan_id": "dead00beef00cafe",
-    "router_count": 2, "child_count": 12
-  },
-  "nodes": [ { "mac": "A842E3123456", "rssi": -70 } ]
-}
-```
+## 4) Lamba ↔ gateway bağı
 
-- Blok anahtarı türe göre değişir: `thread`, `cellular`, `wifi`, `lorawan`.
-  İçerik serbesttir. Panelde etiketli gösterilen alanlar aşağıda; ek alanlar
-  kaybolmaz, yönetici panelinde ham haliyle görünür.
+0x03'te bağlı cihaz listesi (`nodes`) yok. Backend bağı **Thread partition**
+eşleşmesiyle kurar: gateway health'indeki `THREAD_PARTITION_ID` ile lambanın
+binary health'indeki `THREAD_PARTITION_ID` aynıysa (ve lamba gateway'in
+müşterisine aitse) lamba o gateway'e bağlı sayılır. Admin topoloji tablosunda
+komşu/router satırları lambaların `THREAD_RLOC16`'sıyla adlandırılır.
 
-| Tür | Blok | Etiketli alanlar |
-|---|---|---|
-| `thread_br` | `thread` | `role`, `network_name`, `channel`, `pan_id`, `ext_pan_id`, `partition_id`, `router_count`, `child_count` |
-| `cellular` | `cellular` | `operator`, `network`, `rssi`, `rsrp`, `iccid` |
-| `wifi` | `wifi` | `ssid`, `rssi`, `clients` |
-| `lorawan` | `lorawan` | `gateway_eui`, `frequency_plan`, `rx_packets`, `tx_packets` |
-
-- **`nodes`** (opsiyonel): gateway'e bağlı lamba kontrolcüleri. `mac`,
-  ESP32'nin **WiFi MAC'i** olmalı (cihazın topic'lerinde kullandığı kimlik,
-  Thread EUI-64 değil). Liste yetkilidir: listede olmayan cihazın bu gateway'e
-  bağı kaldırılır. Liste hiç gönderilmezse mevcut bağlar korunur.
-- `nodes` verilemiyorsa alternatif: lamba kontrolcüsü kendi
-  `Meven:<MAC>/health` mesajına `"gateway": "<GW_ID>"` ekler.
-
-## 5) Backend davranışı
-
-- Panelde **kayıtlı olmayan** bir GW_ID'nin verisi saklanmaz. Kimlik yönetim
-  ekranındaki "Keşfedilen ağ geçitleri" listesinde görünür ve oradan bir
-  müşteriye kaydedilir.
-- Kayıtlı gateway'de her mesaj tek satırı günceller (geçmiş tutulmaz): son
-  health, son data, firmware sürümü, son görülme.
-- Aynı MAC hem cihaz hem gateway olarak kaydedilemez.
-
-## 6) Binary protokol v1 ile çalışan gateway
-
-Gateway cihazlarla aynı codec'i (`msg_codec`) kullanıyorsa `Meven:<GW_ID>/bin`'e
-HEALTH (tip 5) ve HELLO (tip 7) basabilir. Backend, **panelde kayıtlı** bir
-GW_ID'den gelen bu iki tipi gateway health'i olarak işler (firmware sürümü,
-çalışma süresi, Thread rolü/kanal/PAN/ağ adı, OTA). Diğer tipler atılır.
-
-- Binary protokolde gateway türü, `uplink` ve `nodes` alanı **yok**. Tür
-  kayıttan alınır; bağlı cihaz eşleşmesi binary'de kurulamaz.
-- Kayıtsız GW_ID'nin binary paketi lambadan ayırt edilemez → "Keşfedilen ağ
-  geçitleri" listesine düşmez. GW_ID panelde önce elle kaydedilmeli.
-
-## 7) Donanımsız test
+## 5) Donanımsız test
 
 ```
-npm run mock:gateway A1B2C3D4E5F6 thread_br A842E3123456
+npm run mock:gateway 404CCA544698 --partition 305419896 --interval 30
+npm run mock:device A842E3123456 2 <bölge> --bin --partition 305419896 --rloc 23553
 ```
 
-Sanal gateway health + data basar, LWT kurar ve `nodes` içine verilen
-MAC'leri koyar. Ctrl+C bağlantıyı koparır ve LWT tetiklenir.
+Sanal gateway 0x03 BR_HEALTH / BR_NEIGHBORS (iki sayfa) / BR_ROUTES basar,
+`/lwt`'yi retained kurar ve `report_now` / `ota_check` komutlarına ack döner.
+Ctrl+C bağlantıyı koparır, broker will'i (`online:false`) yayınlar. Yerel
+olmayan broker'da `--canli` bayrağı olmadan çalışmaz. Sahadan yakalanan paket
+`npm run mock:bin <GW_ID> <hex…>` ile yeniden oynatılabilir.

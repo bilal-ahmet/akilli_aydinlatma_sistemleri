@@ -31,7 +31,10 @@ import { deviceHealthSchema, parseUplink } from "../src/types/lighting";
 import { activeFaultCodes } from "../src/lib/faults";
 import { readMeasurement, type D4iBlock } from "../src/lib/d4i";
 import { describeDeviceError } from "../src/lib/deviceErrors";
-import { encodeCommand } from "../src/lib/binproto/command";
+import { encodeBrCommand, encodeCommand } from "../src/lib/binproto/command";
+import { BR_FIELD_DEFS } from "../src/lib/binproto/brFields";
+import { brToMessage, type BrBuildInfo, type BrMessage, type BrNeighbor, type BrRoute } from "../src/lib/binproto/brToJson";
+import { TopologyAssembler } from "../src/lib/binproto/brTopology";
 import { ShortIdTable } from "../src/lib/binproto/shortIds";
 import { commandAckSchema } from "../src/types/lighting";
 
@@ -410,7 +413,7 @@ const reason = (b: Uint8Array) => {
   return r.ok ? "ok" : r.reason;
 };
 check("ret: çok kısa", reason(hex("01 01 01")) === "TOO_SHORT");
-check("ret: versiyon", reason(withCrc([0x03, 0x01, 0x01])) === "VERSION");
+check("ret: versiyon (0x04)", reason(withCrc([0x04, 0x01, 0x01])) === "VERSION");
 const badCrc = hex(examples.dim);
 badCrc[badCrc.length - 1] ^= 0xff;
 check("ret: CRC", reason(badCrc) === "CRC");
@@ -783,6 +786,258 @@ check(
   laterHealth.health_interval_s === null && laterHealth.report_interval_s === null,
 );
 check("aralıklı health şemadan geçer", deviceHealthSchema.safeParse(joinHealth).success);
+
+// ── Border Router (paket sürümü 0x03) ────────────────────────
+// Kaynak: firmware/BR-BINARY-PROTOKOL.md §4 (firmware codec'iyle üretilip
+// C tablosuyla doğrulanmış paketler).
+check(
+  "BR alan tablosu: kodlar ve adlar benzersiz",
+  new Set(BR_FIELD_DEFS.map((f) => f.code)).size === BR_FIELD_DEFS.length &&
+    new Set(BR_FIELD_DEFS.map((f) => f.name)).size === BR_FIELD_DEFS.length,
+  String(BR_FIELD_DEFS.length),
+);
+
+const brDoc = {
+  command: "03 01 08 A0 06 A1 07 00 AE 52",
+  ack: "03 01 06 A0 06 A1 07 00 A6 00 30 15",
+  neighbors:
+    "03 01 09 02 0C 00 03 00 05 01 60 00 08 61 08 1A 2B 3C 4D 5E 6F 70 81 62 00 63 C3 64 C1 65 23 66 03 67 03 68 04 00 69 48 01 6A 00 00 6B 04 04 01 E9 95",
+  routes:
+    "03 01 0A 02 0C 00 03 00 05 02 70 01 71 00 04 72 3F 73 00 74 00 75 00 76 00 77 00 70 02 71 00 08 72 02 73 01 74 03 75 03 76 05 77 01 04 01 DB 5A",
+  health:
+    "03 01 05 B0 10 0E 00 00 B1 48 EE 00 00 B5 10 A4 00 00 B2 00 02 01 B3 00 00 06 B4 40 93 FD 6A B9 2C 01 00 00 BA 84 03 00 00 B6 01 B7 01 00 B8 00 00 00 00 10 01 11 C6 12 06 16 06 0E 00 00 13 00 00 00 00 15 00 00 00 00 C0 04 C6 00 04 C7 78 56 34 12 C8 0F C9 34 12 CA 05 4D 65 76 65 6E CC 01 00 CD 01 00 20 01 24 05 25 03 21 03 22 00 23 02 26 01 00 27 01 00 28 03 29 01 2A 12 03 3F 10 0E 00 00 30 C8 00 00 00 31 96 00 00 00 32 96 00 00 00 33 93 00 00 00 34 0A 00 00 00 35 02 00 00 00 36 00 00 00 00 37 00 00 00 00 38 90 01 00 00 39 01 00 00 00 3A 03 00 00 00 3B 00 00 00 00 3C 00 00 00 00 3D 05 00 00 00 3E 00 00 00 00 40 63 00 00 00 41 01 00 00 00 42 B4 00 00 00 43 00 00 00 00 E0 00 E1 00 E2 00 E3 01 00 00 00 E4 1E 00 00 00 E5 00 00 00 00 9D EA",
+};
+for (const [name, text] of Object.entries(brDoc)) {
+  const r = decodeFrame(hex(text));
+  check(`BR örnek paket çözülür: ${name}`, r.ok && r.version === 0x03, r.ok ? "" : `${r.reason}: ${r.detail}`);
+}
+check("BR health örneği 248 bayt", hex(brDoc.health).length === 248, String(hex(brDoc.health).length));
+check(
+  "BR komut kodlaması (report_now, id 7) belgeyle bayt bayt aynı",
+  toHex(encodeBrCommand({ action: "report_now", id: 7 })) === brDoc.command,
+  toHex(encodeBrCommand({ action: "report_now", id: 7 })),
+);
+check("BR komut: bilinmeyen action ret", throws(() => encodeBrCommand({ action: "dim" as never, id: 1 })));
+
+function brMsg(text: string | Uint8Array, cache: BrBuildInfo = {}): BrMessage {
+  const frame = decoded(typeof text === "string" ? hex(text) : text);
+  const c = ctx();
+  const m = brToMessage(frame, cache, c);
+  if (!m) throw new Error("BR mesajı üretilmedi");
+  if (c.warnings.length) console.log("  uyarı:", c.warnings.join("; "));
+  return m;
+}
+
+const brAck = brMsg(brDoc.ack);
+same("BR ack: report_now, id 7, ok", brAck.kind === "ack" ? brAck.ack : null, {
+  action: "report_now",
+  id: 7,
+  result: 0,
+  status: "ok",
+  error: null,
+});
+const brAckErr = brMsg(encodeFrame("COMMAND_ACK", [["COMMAND_RESULT", -12]], { version: 0x03 }));
+check(
+  "BR ack hatası: -12 metni, action/id yok",
+  brAckErr.kind === "ack" &&
+    brAckErr.ack.status === "error" &&
+    brAckErr.ack.error === "ota servisi henuz hazir degil" &&
+    brAckErr.ack.action === null &&
+    brAckErr.ack.id === null,
+);
+
+const brCache: BrBuildInfo = {};
+const brHealth = brMsg(brDoc.health, brCache);
+const bh = brHealth.kind === "health" ? brHealth.json : {};
+same("BR health: belge örneği", bh, {
+  type: "thread_br",
+  fw: "1.2.0",
+  uptime_s: 3600,
+  free_heap_bytes: 61000,
+  min_free_heap_bytes: 42000,
+  reset_reason: "power_on",
+  mqtt_connects: 1,
+  mqtt_publish_fails: 0,
+  idf_version: "v6.0",
+  build_date: bh.build_date,
+  build_time: bh.build_time,
+  health_interval_s: 300,
+  topology_interval_s: 900,
+  uplink: {
+    kind: "wifi",
+    connected: true,
+    rssi: -58,
+    channel: 6,
+    connected_s: 3590,
+    disconnects: 0,
+    last_disconnect_reason: null,
+    beacon_timeouts: 0,
+  },
+  thread: {
+    role: "leader",
+    rloc16: 0x0400,
+    partition_id: "305419896",
+    channel: 15,
+    pan_id: "0x1234",
+    network_name: "Meven",
+    leader_router_id: 1,
+    router_count: 3,
+    child_count: 0,
+    neighbor_count: 2,
+    netdata_version: 5,
+    stable_netdata_version: 3,
+    detached_count: 1,
+    leader_count: 1,
+    border_routing_state: "running",
+    border_agent_active: true,
+    cca_failure_pct: 1.2,
+    partition_id_changes: 1,
+    attach_attempts: 1,
+  },
+  counters: {
+    period_s: 3600,
+    mac_tx_total: 200,
+    mac_tx_unicast: 150,
+    mac_tx_ack_requested: 150,
+    mac_tx_acked: 147,
+    mac_tx_retry: 10,
+    mac_tx_err_cca: 2,
+    mac_tx_err_abort: 0,
+    mac_tx_err_busy_channel: 0,
+    mac_rx_total: 400,
+    mac_rx_duplicated: 1,
+    mac_rx_err_fcs: 3,
+    mac_rx_err_sec: 0,
+    mac_rx_err_no_frame: 0,
+    mac_rx_err_unknown_neighbor: 5,
+    mac_rx_err_other: 0,
+    ip_tx_success: 99,
+    ip_tx_failure: 1,
+    ip_rx_success: 180,
+    ip_rx_failure: 0,
+  },
+  ota: {
+    state: "idle",
+    last_result: "up_to_date",
+    busy: false,
+    check_count: 1,
+    last_check_uptime_s: 30,
+    last_success_uptime_s: 0,
+    last_target_version: null,
+    last_error: null,
+  },
+});
+check(
+  "BR health: derleme zamanı çözülür",
+  typeof bh.build_date === "string" && /^\w{3} [ \d]\d \d{4}$/.test(bh.build_date as string),
+  JSON.stringify([bh.build_date, bh.build_time]),
+);
+// Bağlantı başına bir kez gelen alanlar (B3, B4, B9, BA, CA) sonraki health'te önbellekten.
+const brLater = brMsg(
+  encodeFrame("BR_HEALTH", [["HEALTH_UPTIME_S", 4000], ["THREAD_ROLE", 3]], { version: 0x03 }),
+  brCache,
+);
+const bl = brLater.kind === "health" ? brLater.json : {};
+const blThread = bl.thread as Record<string, unknown>;
+check(
+  "BR health: bir-kezlik alanlar önbellekten (ağ adı, IDF, aralıklar)",
+  blThread.network_name === "Meven" &&
+    bl.idf_version === "v6.0" &&
+    bl.health_interval_s === 300 &&
+    bl.topology_interval_s === 900 &&
+    blThread.role === "router",
+);
+check(
+  "BR health: eksik alan null (fw, partition, wifi)",
+  bl.fw === null && blThread.partition_id === null && (bl.uplink as Record<string, unknown>).rssi === null,
+);
+
+const nb = brMsg(brDoc.neighbors);
+same("BR neighbors: belge örneği", nb.kind === "topology" ? nb.page : null, {
+  kind: "neighbors",
+  snapshotId: 12,
+  page: 0,
+  lastPage: true,
+  total: 1,
+  items: [
+    {
+      rloc16: 0x0800,
+      router_id: 2,
+      ext_addr: "1A2B3C4D5E6F7081",
+      role: "router",
+      rssi_avg_dbm: -61,
+      rssi_last_dbm: -63,
+      link_margin_db: 35,
+      lq_in: 3,
+      lq_out: 3,
+      age_s: 4,
+      frame_error_pct: 0.5,
+      message_error_pct: 0,
+      thread_version: 4,
+    },
+  ],
+});
+const rt = brMsg(brDoc.routes);
+same("BR routes: belge örneği (63 = yol yok → null)", rt.kind === "topology" ? rt.page : null, {
+  kind: "routes",
+  snapshotId: 12,
+  page: 0,
+  lastPage: true,
+  total: 2,
+  items: [
+    { router_id: 1, rloc16: 0x0400, next_hop: null, path_cost: 0, lq_in: 0, lq_out: 0, age_s: 0, link_established: false },
+    { router_id: 2, rloc16: 0x0800, next_hop: 2, path_cost: 1, lq_in: 3, lq_out: 3, age_s: 5, link_established: true },
+  ],
+});
+
+// Topoloji birleştirici: sırasız, tekrarlı, eksik sayfa, yeni tur, zaman aşımı.
+const nbPage = (snapshot: number, page: number, last: boolean, rlocs: number[], total: number) =>
+  encodeFrame(
+    "BR_NEIGHBORS",
+    [
+      ["SNAPSHOT_ID", snapshot],
+      ["PAGE", page],
+      ["TOTAL", total],
+      ...rlocs.flatMap((r) => [["NB_RLOC16", r] as const, ["NB_IS_CHILD", 1] as const]),
+      ["LAST_PAGE", last ? 1 : 0],
+    ],
+    { version: 0x03 },
+  );
+const pageOf = (b: Uint8Array) => {
+  const m = brMsg(b);
+  if (m.kind !== "topology") throw new Error("topoloji değil");
+  return m.page;
+};
+const asm = new TopologyAssembler(60_000);
+check("birleştirici: son sayfa önce gelirse bekler", asm.add("GW", pageOf(nbPage(5, 1, true, [0x0801], 3)), 0) === null);
+check("birleştirici: aynı sayfa tekrar", asm.add("GW", pageOf(nbPage(5, 1, true, [0x0801], 3)), 1) === null);
+const done = asm.add("GW", pageOf(nbPage(5, 0, false, [0x0802, 0x0803], 3)), 2);
+check(
+  "birleştirici: tamamlanınca sayfa sırasıyla birleşir, tekrar bir kez",
+  !!done &&
+    !done.mismatch &&
+    (done.items as BrNeighbor[]).map((n) => n.rloc16).join(",") === [0x0802, 0x0803, 0x0801].join(",") &&
+    asm.size === 0,
+  JSON.stringify(done),
+);
+asm.add("GW", pageOf(nbPage(6, 0, false, [0x0801], 2)), 3);
+const fresh = asm.add("GW", pageOf(nbPage(7, 0, true, [0x0c01], 1)), 4);
+check("birleştirici: yeni tur eski yarımı atar", !!fresh && fresh.snapshotId === 7 && asm.size === 0);
+asm.add("GW", pageOf(nbPage(8, 1, true, [0x0801], 2)), 10);
+check("birleştirici: yarım tur bekler", asm.size === 1);
+asm.add("GW2", pageOf(nbPage(1, 0, true, [], 0)), 70_000);
+check("birleştirici: eksik sayfalı tur zaman aşımında atılır", asm.size === 0);
+const short = new TopologyAssembler().add("GW", pageOf(nbPage(9, 0, true, [0x0801], 2)), 0);
+check("birleştirici: TOTAL tutmazsa mismatch", !!short && short.mismatch);
+const routesAsm = new TopologyAssembler().add("GW", pageOf(hex(brDoc.routes)), 0);
+check(
+  "birleştirici: rotalar ayrı tür",
+  !!routesAsm && routesAsm.kind === "routes" && (routesAsm.items as BrRoute[]).length === 2,
+);
+check(
+  "0x03 paketi BR tablosuyla okunur (TYPE 9 lambada tanımsız)",
+  decoded(hex(brDoc.neighbors)).typeName === "BR_NEIGHBORS",
+);
 
 console.log(failures ? `\n${failures} kontrol başarısız` : "\nHepsi geçti");
 process.exit(failures ? 1 : 0);

@@ -7,7 +7,8 @@ import type {
   GatewayRow,
   PoleRow,
 } from "@/lib/db/schema";
-import { gatewayTypeLabel, summarizeGateway } from "@/lib/gateways";
+import { gatewayOnlineWindowMs, gatewayTypeLabel, summarizeGateway } from "@/lib/gateways";
+import type { BrNeighbor, BrRoute } from "@/lib/binproto/brToJson";
 import type { CustomerUser } from "@/types/admin";
 import { deviceHealthSchema } from "@/types/lighting";
 import type { CustomerRole } from "@/lib/auth/roles";
@@ -20,8 +21,10 @@ import type {
   D4iSnapshot,
   D4iRaw,
   FaultEvent,
+  GatewayTopology,
   GatewayView,
   PoleView,
+  TopologyDevice,
 } from "@/app/_lib/types";
 
 /**
@@ -135,9 +138,61 @@ export function toPoleView(
  * `technical`: admin teknik alanları ve ham mesajları görür; müşteri yalnızca
  * sade alanları (IP, SIM numarası gibi ayrıntılar ona gönderilmez).
  */
+/** Müşterinin lambası, Thread kimliğiyle (topoloji satırlarını adlandırmak için). */
+export type ThreadDevice = { mac: string; name: string | null; rloc16: number; partitionId: string | null };
+
+function topologyBlock(v: unknown): { at: string | null; items: unknown[] } | null {
+  if (typeof v !== "object" || v === null) return null;
+  const b = v as { at?: unknown; items?: unknown };
+  if (!Array.isArray(b.items)) return null;
+  return { at: typeof b.at === "string" ? b.at : null, items: b.items };
+}
+
+/**
+ * `gateways.report` (son topoloji turu) → panel görünümü. RLOC16 yalnızca
+ * Thread bölümü (partition) içinde tekildir: lamba eşleşmesi gateway'le aynı
+ * partition'daki lambalarla yapılır.
+ */
+function toGatewayTopology(
+  report: Record<string, unknown> | null,
+  health: Record<string, unknown> | null,
+  devices: ThreadDevice[],
+): GatewayTopology | undefined {
+  if (!report) return undefined;
+  const thread = (health?.thread ?? null) as Record<string, unknown> | null;
+  const partition = typeof thread?.partition_id === "string" ? thread.partition_id : null;
+  const selfRloc = typeof thread?.rloc16 === "number" ? thread.rloc16 : null;
+  const byRloc = new Map<number, TopologyDevice>();
+  for (const d of devices) {
+    if (partition !== null && d.partitionId !== null && d.partitionId !== partition) continue;
+    byRloc.set(d.rloc16, { mac: d.mac, name: d.name });
+  }
+  const nb = topologyBlock(report.neighbors);
+  const rt = topologyBlock(report.routes);
+  return {
+    neighbors: nb
+      ? {
+          at: nb.at,
+          items: (nb.items as BrNeighbor[]).map((n) => ({ ...n, device: byRloc.get(n.rloc16) ?? null })),
+        }
+      : null,
+    routes: rt
+      ? {
+          at: rt.at,
+          items: (rt.items as BrRoute[]).map((r) => ({
+            ...r,
+            device: r.rloc16 !== null ? (byRloc.get(r.rloc16) ?? null) : null,
+            self: selfRloc !== null && r.rloc16 === selfRloc,
+          })),
+        }
+      : null,
+  };
+}
+
 export function toGatewayView(
   row: GatewayRow & { zoneSlug: string | null; zoneName: string | null; deviceCount: number },
   technical: boolean,
+  threadDevices: ThreadDevice[] = [],
 ): GatewayView {
   const view: GatewayView = {
     id: row.id,
@@ -152,13 +207,12 @@ export function toGatewayView(
     firmwareVersion: row.firmwareVersion,
     lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,
     online: row.online,
+    onlineWindowMs: gatewayOnlineWindowMs(row.health),
     deviceCount: row.deviceCount,
-    fields: summarizeGateway(
-      { type: row.type, health: row.health, report: row.report },
-      { technical },
-    ),
+    fields: summarizeGateway({ type: row.type, health: row.health }, { technical }),
   };
   if (technical) {
+    view.topology = toGatewayTopology(row.report, row.health, threadDevices);
     view.raw = {
       health: row.health,
       healthAt: row.healthAt ? row.healthAt.toISOString() : null,

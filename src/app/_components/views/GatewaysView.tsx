@@ -14,6 +14,8 @@ import { gatewayState, type GatewayState } from "@/lib/gateways";
 import { formatMac } from "@/lib/mac";
 import { ConfirmDelete } from "../PanelDialogs";
 import { GatewayDialog } from "../GatewayForm";
+import { GatewayMaintenance } from "../GatewayMaintenance";
+import { GatewayTopology } from "../GatewayTopology";
 import { EmptyBox, PageHeader, PlusIcon, StatusLabel } from "../PanelUi";
 
 const STATE_LABEL: Record<GatewayState, { label: string; tone: HealthTone }> = {
@@ -86,8 +88,8 @@ export function GatewaysView() {
             ? {
                 ...g,
                 online: e.online ?? true,
-                // LWT son görülmeyi ilerletmez.
-                lastSeen: e.online === false ? g.lastSeen : e.at,
+                // LWT / komut yanıtı son görülmeyi ilerletmez.
+                lastSeen: e.presenceOnly || e.online === false ? g.lastSeen : e.at,
                 firmwareVersion: e.firmwareVersion ?? g.firmwareVersion,
               }
             : g,
@@ -298,7 +300,7 @@ function GatewayDetail({
           {g.lastSeen
             ? "Ağ geçidi henüz ayrıntılı bilgi göndermedi."
             : technical
-              ? "Gateway henüz yayın yapmadı. MQTT'de Meven:<GW_ID>/bin (binary HEALTH/HELLO) ya da Meven:<GW_ID>/health (JSON) bekleniyor."
+              ? "Gateway henüz yayın yapmadı. MQTT'de Meven:<GW_ID>/bin'e binary 0x03 BR_HEALTH bekleniyor (bağlanınca hemen, sonra ~5 dk'da bir)."
               : "Ağ geçidinden henüz veri gelmedi."}
         </p>
       )}
@@ -312,11 +314,15 @@ function GatewayDetail({
         ) : (
           <p className="mt-1 text-[13px] text-muted">
             {technical
-              ? "Eşleşme yok: gateway `nodes` listesi göndermiyor ya da cihazlar health'te `gateway` bildirmiyor."
+              ? "Eşleşme yok: aynı Thread partition'ını bildiren cihaz yok (cihaz health'inde thread.partition_id, gateway health'inde thread.partition_id)."
               : "Bu ağ geçidine bağlı cihaz bilgisi alınmadı."}
           </p>
         )}
       </div>
+
+      {technical && g.topology ? <GatewayTopology topology={g.topology} /> : null}
+
+      {canWrite ? <GatewayMaintenance gateway={g} /> : null}
 
       {g.notes ? (
         <div>
@@ -329,8 +335,8 @@ function GatewayDetail({
         <details className="rounded-[10px] border border-border bg-panel px-3 py-2">
           <summary className="cursor-pointer text-[13px] font-medium text-ink-2">Teknik detay</summary>
           <div className="mt-2 grid gap-3 lg:grid-cols-2">
-            <RawBlock title="Son health" at={g.raw.healthAt} value={g.raw.health} />
-            <RawBlock title="Son data" at={g.raw.reportAt} value={g.raw.report} />
+            <RawBlock title="Son health (BR_HEALTH)" at={g.raw.healthAt} value={g.raw.health} />
+            <RawBlock title="Son topoloji (BR_NEIGHBORS / BR_ROUTES)" at={g.raw.reportAt} value={g.raw.report} />
           </div>
         </details>
       ) : null}

@@ -6,7 +6,7 @@ import { normalizeMac } from "@/lib/mac";
 import { authorizeGateway } from "@/lib/auth/guard";
 import { refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
-import { forgetGatewayNodes } from "@/lib/mqtt";
+import { forgetGatewayState } from "@/lib/mqtt";
 import { listGateways, resolveGatewayZone } from "@/lib/gatewayStore";
 
 export const runtime = "nodejs";
@@ -96,7 +96,7 @@ export async function DELETE(req: Request, { params }: Params) {
       await tx.delete(schema.gateways).where(eq(schema.gateways.gatewayId, gatewayId));
     });
     await refreshTenancy();
-    forgetGatewayNodes(gatewayId);
+    forgetGatewayState(gatewayId);
     await audit({
       req,
       user: ctx.user,

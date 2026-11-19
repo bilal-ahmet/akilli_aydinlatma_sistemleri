@@ -1,7 +1,11 @@
 /**
- * Binary MQTT protokolü v1 — paket doğrulama, çözme ve kodlama.
+ * Binary MQTT protokolü — paket doğrulama, çözme ve kodlama.
  *
- *   [0x01 versiyon] [alan kodu][değer] … [CRC16 alt bayt][CRC16 üst bayt]
+ *   [versiyon] [alan kodu][değer] … [CRC16 alt bayt][CRC16 üst bayt]
+ *
+ * İlk bayt alan tablosunu seçer: 0x01 lamba (`fields.ts`), 0x03 Thread Border
+ * Router (`brFields.ts`). Çerçeve, CRC ve değer kodlaması ikisinde aynıdır;
+ * alan kodları değildir. 0x02 (LoRa gateway) henüz desteklenmez.
  *
  * - İlk alan her zaman TYPE (0x01).
  * - Değerin boyu alan tablosundan okunur (1-4 bayt, little-endian; i8/i32
@@ -19,9 +23,42 @@ import {
   MESSAGE_TYPE_NAMES,
   MESSAGE_TYPES,
   PROTOCOL_VERSION,
+  type EnumTable,
   type FieldDef,
   type MessageTypeName,
 } from "./fields";
+import {
+  BR_FIELDS_BY_CODE,
+  BR_FIELDS_BY_NAME,
+  BR_MESSAGE_TYPE_NAMES,
+  BR_MESSAGE_TYPES,
+  BR_PROTOCOL_VERSION,
+  type BrMessageTypeName,
+} from "./brFields";
+
+/** Paket sürümü başına alan tablosu ve mesaj tipleri. */
+interface ProtocolTable {
+  byCode: ReadonlyMap<number, FieldDef>;
+  byName: ReadonlyMap<string, FieldDef>;
+  typeNames: EnumTable;
+  types: Readonly<Record<string, number>>;
+}
+
+const PROTOCOLS: ReadonlyMap<number, ProtocolTable> = new Map([
+  [
+    PROTOCOL_VERSION,
+    { byCode: FIELDS_BY_CODE, byName: FIELDS_BY_NAME, typeNames: MESSAGE_TYPE_NAMES, types: MESSAGE_TYPES },
+  ],
+  [
+    BR_PROTOCOL_VERSION,
+    {
+      byCode: BR_FIELDS_BY_CODE,
+      byName: BR_FIELDS_BY_NAME,
+      typeNames: BR_MESSAGE_TYPE_NAMES,
+      types: BR_MESSAGE_TYPES,
+    },
+  ],
+]);
 
 export type FieldValue = number | number[] | Uint8Array | string;
 /** Paketteki sırasıyla alanlar; aynı ad birden fazla geçebilir (health komşuları). */
@@ -29,10 +66,12 @@ export type FieldEntry = readonly [name: string, value: FieldValue];
 
 export interface DecodedFrame {
   ok: true;
-  /** TYPE değeri (1-8; bilinmeyen değer de olabilir). */
+  /** Paket sürümü (ilk bayt): 0x01 lamba, 0x03 Border Router. */
+  version: number;
+  /** TYPE değeri (bilinmeyen değer de olabilir). */
   type: number;
-  /** MESSAGE_TYPES adı; tanınmayan tipte undefined. */
-  typeName: MessageTypeName | undefined;
+  /** Sürümün mesaj tipi adı (MESSAGE_TYPES / BR_MESSAGE_TYPES); tanınmayan tipte undefined. */
+  typeName: MessageTypeName | BrMessageTypeName | undefined;
   fields: FieldEntry[];
   length: number;
 }
@@ -116,7 +155,8 @@ export function decodeFrame(input: Uint8Array): DecodeResult {
   if (bytes.length < MIN_FRAME) {
     return { ok: false, reason: "TOO_SHORT", detail: `${bytes.length} bayt` };
   }
-  if (bytes[0] !== PROTOCOL_VERSION) {
+  const table = PROTOCOLS.get(bytes[0]);
+  if (!table) {
     return { ok: false, reason: "VERSION", detail: `versiyon 0x${hex2(bytes[0])}` };
   }
   const end = bytes.length - 2;
@@ -138,7 +178,7 @@ export function decodeFrame(input: Uint8Array): DecodeResult {
   while (i < end) {
     const start = i;
     const code = bytes[i++];
-    const def = FIELDS_BY_CODE.get(code);
+    const def = table.byCode.get(code);
     if (!def) {
       return {
         ok: false,
@@ -165,8 +205,9 @@ export function decodeFrame(input: Uint8Array): DecodeResult {
   const type = fields[0][1] as number;
   return {
     ok: true,
+    version: bytes[0],
     type,
-    typeName: MESSAGE_TYPE_NAMES[type] as MessageTypeName | undefined,
+    typeName: table.typeNames[type] as MessageTypeName | BrMessageTypeName | undefined,
     fields,
     length: bytes.length,
   };
@@ -187,15 +228,21 @@ function writeInt(out: number[], value: number, size: number): void {
 /**
  * Bir paketi kodlar. `type` mesaj tipi adı ya da sayısı; TYPE alanı otomatik
  * eklenir. Değeri `undefined`/`null` olan alan pakete yazılmaz (protokol kuralı).
+ * `version` alan tablosunu seçer (varsayılan 0x01 lamba; 0x03 Border Router).
  */
 export function encodeFrame(
-  type: MessageTypeName | number,
+  type: MessageTypeName | BrMessageTypeName | number,
   fields: ReadonlyArray<readonly [name: string, value: FieldValue | null | undefined]>,
+  { version = PROTOCOL_VERSION }: { version?: number } = {},
 ): Uint8Array {
-  const out: number[] = [PROTOCOL_VERSION, 0x01, typeof type === "number" ? type : MESSAGE_TYPES[type]];
+  const table = PROTOCOLS.get(version);
+  if (!table) throw new Error(`Desteklenmeyen paket sürümü: ${version}`);
+  const typeCode = typeof type === "number" ? type : table.types[type];
+  if (typeCode === undefined) throw new Error(`Bu sürümde olmayan mesaj tipi: ${type}`);
+  const out: number[] = [version, 0x01, typeCode];
   for (const [name, value] of fields) {
     if (value === undefined || value === null) continue;
-    const def = FIELDS_BY_NAME.get(name);
+    const def = table.byName.get(name);
     if (!def) throw new Error(`Bilinmeyen alan: ${name}`);
     out.push(def.code);
     if (def.size === 0) {

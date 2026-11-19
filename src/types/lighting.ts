@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EFFECT_MAX_NUMBER, MORSE_TEXT_MAX, normalizeMorseText } from "@/lib/effects";
 import { GATEWAY_TYPES } from "@/lib/gateways";
+import { BR_COMMAND_ACTION_LIST } from "@/lib/binproto/brFields";
 import type { ZoneSyncView } from "@/lib/zoneSync/plan";
 import {
   SCHEDULE_ACTIONS,
@@ -287,28 +288,20 @@ export const deviceHealthSchema = z
     firmware_version: nstr,
     reset_reason: nstr,
     ota: otaStatusSchema.nullable().optional(),
-    // Cihazın bağlı olduğu gateway'in GW_ID'si (opsiyonel; gateway `nodes`
-    // listesi veremiyorsa cihaz kendisi bildirir).
-    gateway: nstr,
   })
   .passthrough();
 export type DeviceHealth = z.infer<typeof deviceHealthSchema>;
 
-// ── Gateway (Meven:<GW_ID>/health ve /data) ──────────────────
-// Cihazlarla aynı topic'ler; ayrım payload'daki `type` ile (lib/gateways.ts
-// isGatewayPayload). Türe özgü blok (`thread`, `cellular`…) şemasızdır —
-// passthrough ile olduğu gibi saklanır. `type` burada string: kayıtlı bir
-// gateway kontrata uymayan tür gönderse de mesajı kaybolmasın.
-export const gatewayUplinkSchema = z
-  .object({
-    type: nstr,
-    fw: nstr,
-    uptime_s: z.number().nullable().optional(),
-    // Health'te ve LWT'de: false = gateway'in bağlantısı koptu (LWT).
-    online: z.boolean().nullable().optional(),
-  })
-  .passthrough();
-export type GatewayUplink = z.infer<typeof gatewayUplinkSchema>;
+// ── Gateway LWT (Meven:<GW_ID>/lwt, retained) ────────────────
+// Gateway verisi yalnızca binary 0x03'tür (lib/binproto/brToJson); burada
+// yalnızca bağlantı durumu JSON'u var.
+export const gatewayLwtSchema = z.object({ online: z.boolean() }).passthrough();
+
+// POST /api/gateways/:gatewayId/command
+export const gatewayCommandSchema = z.object({
+  action: z.enum(BR_COMMAND_ACTION_LIST),
+});
+export type GatewayCommandRequest = z.infer<typeof gatewayCommandSchema>;
 
 // ── API request body (dashboard → backend) ───────────────────
 // { action, value?, number? } — value "dim" için, number "efekt" için zorunlu.
@@ -650,6 +643,20 @@ export type LiveEvent = {
   gatewayId?: string;
   /** kind:"gateway" — false: LWT geldi (bağlantı koptu). */
   online?: boolean;
+  /**
+   * kind:"gateway" — olay `last_seen`'i ilerletmez (yalnızca LWT / bağlantı
+   * durumu). Yoksa olay anı gateway'in son görülmesidir.
+   */
+  presenceOnly?: boolean;
+  /** kind:"gateway" — gateway komutunun (report_now / ota_check) yanıtı. */
+  gatewayCommand?: {
+    requestId: string | null;
+    action: string | null;
+    status: "ok" | "error";
+    /** Ham hata metni (lib/gateways.ts → describeGatewayCommandError ile okunur). */
+    error: string | null;
+    result: number;
+  };
   /** Komut kimliği (commands.request_id) — ack/maintenance olaylarında, cihaz geri yolladıysa. */
   requestId?: string;
   /** kind:"maintenance" — yanıtın ait olduğu bakım komutu. */

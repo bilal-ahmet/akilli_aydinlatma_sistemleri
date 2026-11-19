@@ -196,6 +196,8 @@ Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
 Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri + komut yanıtı)
 Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürümü, OTA durumu)
 Meven:<MAC>/bin    ← ESP32 (yeni firmware) publish, Backend subscribe (QoS 1): binary protokol v1, TÜM uplink
+Meven:<GW>/bin     ← Ağ geçidi (Border Router) publish: binary 0x03 (bkz. "Gateway'ler")
+Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (abonelik +/lwt)
 ```
 
 - **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
@@ -369,41 +371,64 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   reddettirir (Python'da köprü çöküyor). Maskeli `load_power` `value: null`
   olur (Python 4294967295 W yazıyor).
 
-### Gateway'ler (ağ geçitleri)
+### Gateway'ler (ağ geçitleri) — binary 0x03
 
-Sahadaki gateway'ler (Thread Border Router, 4G/WiFi router, ileride LoRaWAN)
-cihazlarla **aynı topic şemasını** kullanır (firmware ekibinin tercihi):
-`Meven:<GW_ID>/health` (~30 sn ortak zarf + LWT), `Meven:<GW_ID>/data` (türe
-özgü blok + `nodes`), `Meven:<GW_ID>/cmd` (ayrıldı, komut yok). GW_ID = MAC.
-Tam kontrat: `firmware/GATEWAY-ENTEGRASYON.md`.
+Sahadaki Thread Border Router'lar (ileride 4G/WiFi/LoRaWAN) lambalarla **aynı
+topic şemasını** kullanır ama verilerini **yalnızca binary** basar: paketin
+ilk baytı **0x03** (lamba 0x01). GW_ID = Wi-Fi STA MAC (`Meven:` öneki kimliğe
+dahil değil). Kontrat: `firmware/GATEWAY-ENTEGRASYON.md`; alan tablosu ve
+örnek paketler: `firmware/BR-BINARY-PROTOKOL.md` (firmware ekibinin belgesi).
+**JSON gateway kontratı kaldırıldı**: kayıtlı gateway kimliğinden gelen
+JSON `/data|/health` uyarıyla atılır, 0x01 paketi `GATEWAY` ile reddedilir.
 
-- **Ayrım payload'dan:** `type` gateway türüyse (`thread_br | cellular | wifi |
-  lorawan`, `lib/gateways.ts → isGatewayPayload`) ya da kimlik kayıtlı bir
-  gateway'e aitse (`tenancy.gatewayOwner`) mesaj `handleGatewayUplink`'e gider,
-  cihaz yoluna girmez. Abonelikler değişmedi (`+/data`, `+/health`).
-- **Gateway `Meven:all/cmd`'ye ve bölge topic'lerine abone olmaz** (firmware
-  kuralı; lambalara giden toplu komutlar).
-- **Binary (`Meven:<GW_ID>/bin`):** protokol v1'de gateway'e özgü tip yok;
-  aynı codec'li Border Router cihazlarla ortak HEALTH/HELLO basar. Kayıtlı
-  gateway kimliğinden gelen HEALTH `gatewayHealthFromBin` ile zarfa çevrilip
-  `handleGatewayUplink`'e gider (`firmware_version`→`fw`, `pan_id`→"0x…"),
-  HELLO yalnızca `last_seen`'i ilerletir, diğer tipler `GATEWAY` ile atılır.
-  Zone sync kancalarına girmez. Binary'de `nodes`/`uplink` yok; kayıtsız
-  binary gateway "keşfedilen" listesine düşmez (kimlik önce kaydedilmeli).
-- Kayıtsız GW_ID'nin verisi yazılmaz; `lib/gatewayDiscovery.ts` (bellek içi)
-  admin'in "Keşfedilen ağ geçitleri" listesine düşer. Kayıtlıysa `gateways`
-  satırı tek UPDATE ile güncellenir (geçmiş yok). LWT (`online:false`) yalnızca
-  durumu düşürür, `last_seen`'i ilerletmez.
-- `nodes` → `devices.gateway_id` (yalnızca gateway'in müşterisinin cihazları;
-  liste yetkili, değişmedikçe yazılmaz). Alternatif: cihaz health'inde
-  `"gateway": "<GW_ID>"`.
-- Türe özgü alanlar `lib/gateways.ts → GATEWAY_TYPE_INFO` kataloğundan
-  `summarizeGateway` ile **sunucuda** role göre (teknik/sade) üretilir
-  (`GatewayView.fields`); ham mesajlar (`raw`) yalnızca admin'e gider.
-  Tanınmayan alanlar admin'e ham gösterilir, yutulmaz.
+```
+Meven:<GW_ID>/bin  ← 0x03: BR_HEALTH (bağlanınca + ~300 sn), BR_NEIGHBORS + BR_ROUTES
+                     (bağlanınca + ~900 sn, sayfalı, aynı SNAPSHOT_ID), COMMAND_ACK
+Meven:<GW_ID>/lwt  ← retained {"online":true}; MQTT will {"online":false}  (abonelik +/lwt, QoS 1)
+Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa id
+```
+
+- **Çözücü:** `binproto/codec.ts` ilk bayta göre tablo seçer (0x01 `fields.ts`,
+  0x03 `brFields.ts`). `binUplink.ts → decodeBrUplink` sayaç/alarmı lambayla
+  paylaşır ama cihaz binary durumuna (`binActive`, `binCommandCapable`)
+  yazmaz; BR retleri "BR" önekli. Çeviri `brToJson.ts` (saf): health zarfı
+  (`fw`, `uptime_s`, `uplink{kind:"wifi",…}`, `thread{…, partition_id: metin,
+  pan_id:"0x…"}`, `counters` (son health'ten fark), `ota`), topoloji sayfası,
+  ack. Bağlantı başına bir kez gelen alanlar (B3, B4, B9, BA, CA) gateway
+  başına bellekte; boşsa `gateways.health`'ten tohumlanır.
+- **Akış:** `mqtt.ts → handleBrUplink`. Kayıtsız GW_ID → veri yazılmaz,
+  `lib/gatewayDiscovery.ts` "Keşfedilen ağ geçitleri"ne `thread_br` olarak
+  düşer (tür sürüm baytından kesin). Kayıtlıysa: health → `gateways.health`,
+  `firmware_version`, `last_seen`, `online:true`, `noteHealth` (OTA koruması),
+  lamba bağı; topoloji → `brTopology.ts` birleştiricisi (tekrar sayfa bir kez,
+  yarım tur 2 dk'da atılır) tamamlanınca `gateways.report.{neighbors,routes}`;
+  ack → `settleCommand` + SSE `kind:"gateway"` `gatewayCommand` (lamba
+  hatası değil: rozet/arıza/toast yok). LWT yalnızca `online`'ı yazar,
+  `last_seen`'i ilerletmez (`presenceOnly`). Zone sync kancalarına girmez.
+- **Lamba bağı (`lib/gatewayLink.ts`):** 0x03'te `nodes` yok. Gateway health'indeki
+  `thread.partition_id` = lambanın `devices.health.thread.partition_id` →
+  `devices.gateway_id` (yalnızca gateway'in müşterisi; aynı partition'ı
+  bildiren başka gateway'e bağlı cihaza dokunulmaz; partition'ı değişen ya da
+  müşteri değiştiren cihazın bağı kalkar; partition'sız cihazın bağı kalır).
+  Her gateway health'inde iki UPDATE, yalnızca değişen satır.
+- **Çevrimiçi:** `gatewayOnlineWindowMs(health)` = `max(2 dk, 2,5 ×
+  health_interval_s)`, `GatewayView.onlineWindowMs`; `gatewayState` bunu kullanır.
+- **Komutlar:** `publishGatewayCommand` (senkron, DB'siz) + `recordGatewayCommand`
+  (`commands.target_type = 'gateway'`). `report_now` admin + manager,
+  `ota_check` yalnızca admin + `otaRepeatBlock` (meşgul / son 3 dk → 409).
+  UI: `GatewayMaintenance.tsx`. Hata metni `gatewayCommandErrorText` (teknik/sade).
+- **Panel:** alanlar `summarizeGateway` ile sunucuda role göre (müşteri:
+  çalışma süresi, internet bağlantısı, sinyal, armatür ağı; admin: Thread,
+  sistem, sayaçlar, OTA). Admin'e `GatewayView.topology` (`GatewayTopology.tsx`;
+  RLOC16 aynı müşteri + partition'daki lambanın health'indeki `thread.rloc16`
+  ile adlandırılır) ve ham `raw`.
+- Gateway `Meven:all/cmd`'ye ve bölge topic'lerine abone olmaz.
 - Aynı MAC hem cihaz hem gateway olamaz (iki yönde 409). Ağ geçidi olan müşteri
   silinemez; bölge başka müşteriye taşınınca o bölgenin gateway/cihaz bağları
   kaldırılır.
+- Test: `npm run check:binproto` (belgedeki 5 örnek paket, komut baytları,
+  birleştirici), `npm run mock:gateway <GW_ID> --partition <n> [--interval s]
+  [--rlocs 5C01,…]`, `npm run mock:device <MAC> 2 <bölge> --bin --partition <n> --rloc <n>`.
 
 ### QoS Seviyeleri
 
@@ -856,15 +881,16 @@ durumu da `activeFaultCodes`'tan karar verir — arıza geçmişiyle aynı liste
 ```
 GET/POST         /api/gateways?customer=<slug>   # liste / kayıt { gatewayId, type, name?, zoneSlug?, location?, notes? }
 GET/PATCH/DELETE /api/gateways/:gatewayId        # PATCH: type, name, zoneSlug ("" = bağı kaldır), location, notes
+POST             /api/gateways/:gatewayId/command # { action: report_now | ota_check } → 202 { requestId }
 GET              /api/admin/gateways/discovered  # (admin) yayın yapan kayıtsız GW_ID'ler, bellek içi, 24 sa
 ```
 
 Guard: `authorizeScope` / `authorizeGateway` (başka müşterinin gateway'i → 404).
 CRUD admin + manager, viewer okur. Kimlik (GW_ID) ve müşteri değiştirilemez.
-Audit: `gateway.create` / `gateway.update` / `gateway.delete`. Panel:
+Audit: `gateway.create` / `gateway.update` / `gateway.delete` / `gateway.report_now` / `gateway.ota_check`. Panel:
 `/c/<slug>/ag-gecitleri` (`views/GatewaysView.tsx`, liste bu sayfaya özel;
 canlı durum SSE `kind:"gateway"` olayıyla). Donanımsız test:
-`npm run mock:gateway <GW_ID> <tür> [MAC…]`.
+`npm run mock:gateway <GW_ID> --partition <n>` (binary 0x03).
 
 ### Direkler ve harita
 
@@ -1487,10 +1513,10 @@ MQTT_ZONE_SYNC=
 13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
-16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (2 dk penceresi + LWT) kopyalanmalı.
+16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (`GatewayView.onlineWindowMs ?? 2 dk` + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
-18. **Gateway mesajı `type` ile ayrılır.** Gateway'ler cihazlarla aynı `Meven:<ID>/data|health` topic'lerini kullanır; `routeUplink` cihaz ayrıştırmasından ÖNCE `isGatewayPayload` / `gatewayOwner` kontrolü yapar. Cihaz payload'ına gateway tür adlarından biriyle `type` eklenmemeli; yeni gateway türü `GATEWAY_TYPES`'a eklenir.
-19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` firmware'in `msg_fields.h` kopyasıdır; tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: toplu topic'te (bölge, `all`) kayıtlı dinleyenlerden en az biri binary gönderiyor ve hiçbiri JSON'cu değilse binary (u16 kısa id), değilse JSON; sessiz kayıtlar kararı etkilemez. Bkz. "Binary protokol v1".
+18. **Gateway mesajı paket sürüm baytıyla ayrılır.** Ağ geçitleri yalnızca binary basar, ilk bayt 0x03 (lamba 0x01). `decodeBinUplink` 0x03'ü `handleBrUplink`'e verir; kayıtlı gateway kimliğinden gelen JSON ve 0x01 paketi atılır (cihaz yoluna girmez). Gateway'e lamba / zone komutu gitmez; yalnızca `report_now` ve `ota_check` (`publishGatewayCommand`).
+19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` (lamba, 0x01) ve `brFields.ts` (Border Router, 0x03) firmware'in `msg_fields.h` kopyalarıdır; iki tablo ayrıdır (aynı kod farklı anlam taşıyabilir); tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: toplu topic'te (bölge, `all`) kayıtlı dinleyenlerden en az biri binary gönderiyor ve hiçbiri JSON'cu değilse binary (u16 kısa id), değilse JSON; sessiz kayıtlar kararı etkilemez. Bkz. "Binary protokol v1".
 20. **Cihazın dinlediği bölge topic'leri panelden yönetilir (yeni firmware).** Zone komutları yalnızca binary ve yalnızca `Meven:<MAC>/cmd`'ye gider; backend istenen durumu (bölge + alt gruplar) tutar, cihazı ona getirir (`lib/zoneSync`). Bölge/alt grup/cihaz silmek yalnızca DB işi değildir: üyelere `zone_remove`/`zone_clear` gider. Grup komutu yalnızca bütün üyeler senkronsa tek publish'tir; değilse üyelere cihaz komutu.
 
 ---

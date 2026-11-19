@@ -9,6 +9,8 @@ import {
   type ConvertContext,
   type LegacyMessage,
 } from "@/lib/binproto/toJson";
+import { BR_PROTOCOL_VERSION } from "@/lib/binproto/brFields";
+import { brToMessage, type BrBuildInfo, type BrMessage } from "@/lib/binproto/brToJson";
 
 /**
  * Meven:<MAC>/bin alım katmanı (sunucu). Binary paketi doğrular, çözer ve
@@ -33,7 +35,7 @@ export type BinOutcome =
   | "MISSING_FIELD"
   | "LORA" // LoRa gateway protokolü (0x02) — henüz desteklenmiyor, hata değil
   | "UNKNOWN_TYPE" // tanınmayan mesaj tipi — dokümana göre loglanıp atlanır
-  | "GATEWAY"; // kayıtlı bir gateway kimliğinden gelen v1 paketi
+  | "GATEWAY"; // kayıtlı bir gateway kimliğinden gelen v1 (lamba) paketi
 
 /** Alan tablosu uyuşmazlığı: cihaz backend'in bilmediği bir tablo kullanıyor. */
 const ALARM_OUTCOMES: ReadonlySet<BinOutcome> = new Set(["FIELD", "MISSING_FIELD"]);
@@ -72,6 +74,8 @@ type Store = {
   recent: RejectInfo[];
   lastAlarm: RejectInfo | null;
   buildInfo: Map<string, BuildInfo>;
+  /** Border Router (0x03) başına, MQTT bağlantısı başına bir kez gelen health alanları. */
+  brBuildInfo: Map<string, BrBuildInfo>;
   duplicateJson: number;
   logged: Map<string, number>;
   /** MAC → son JSON telemetri/health zamanı (binary hiç görülmemiş cihazlar dahil). */
@@ -86,11 +90,13 @@ const store: Store = (g.__fenerBin ??= {
   recent: [],
   lastAlarm: null,
   buildInfo: new Map(),
+  brBuildInfo: new Map(),
   duplicateJson: 0,
   logged: new Map(),
   jsonSeen: new Map(),
 });
 store.jsonSeen ??= new Map(); // HMR: eski store nesnesinde alan yok
+store.brBuildInfo ??= new Map();
 
 /** Aynı anahtar için saatte en fazla bir log (cihaz her 30 sn aynı paketi basabilir). */
 function logOnce(key: string, level: "warn" | "error", message: string, now: number): void {
@@ -115,18 +121,23 @@ function count(outcome: BinOutcome): void {
   store.counts.set(outcome, (store.counts.get(outcome) ?? 0) + 1);
 }
 
+/**
+ * Paketi atar ve sayar. `dev` null = Border Router paketi (0x03): cihaz binary
+ * durumuna yazılmaz, retin ayrıntısı "BR" önekini taşır.
+ */
 function reject(
   mac: string,
-  dev: DeviceBinState,
+  dev: DeviceBinState | null,
   outcome: BinOutcome,
   detail: string,
   payload: Uint8Array,
   now: number,
 ): BinSkip {
   count(outcome);
+  if (!dev) detail = `BR ${detail}`;
   const info: RejectInfo = { mac, at: now, outcome, detail, hex: toHex(payload.subarray(0, 64)) };
   if (outcome !== "LORA" && outcome !== "GATEWAY") {
-    dev.lastReject = info;
+    if (dev) dev.lastReject = info;
     store.recent.unshift(info);
     if (store.recent.length > MAX_RECENT) store.recent.length = MAX_RECENT;
   }
@@ -135,8 +146,9 @@ function reject(
     logOnce(
       `${mac}:${outcome}:${detail}`,
       "error",
-      `[bin] ALARM ${mac}: ${detail} — paket atıldı. Cihaz backend'den yeni bir alan tablosu ` +
-        `kullanıyor; src/lib/binproto/fields.ts güncellenmeli. ${info.hex}`,
+      `[bin] ALARM ${mac}: ${detail} — paket atıldı. ${dev ? "Cihaz" : "Ağ geçidi"} backend'den yeni ` +
+        `bir alan tablosu kullanıyor; src/lib/binproto/${dev ? "fields.ts" : "brFields.ts"} ` +
+        `güncellenmeli. ${info.hex}`,
       now,
     );
   } else if (outcome === "LORA") {
@@ -180,7 +192,9 @@ async function buildInfoFor(mac: string): Promise<BuildInfo> {
 
 /** Atlanan/reddedilen paket: neden + ilk 64 baytın hex'i (JSON aynası için). */
 export type BinSkip = { kind: "skip"; outcome: BinOutcome; detail: string; hex: string };
-export type BinUplinkResult = LegacyMessage | BinSkip;
+/** Border Router (0x03) mesajı — cihaz yolundan ayrı işlenir (lib/mqtt.ts → handleBrUplink). */
+export type BrUplink = { kind: "br"; msg: BrMessage };
+export type BinUplinkResult = LegacyMessage | BinSkip | BrUplink;
 
 /**
  * Bir `/bin` paketini işler. Dönen JSON, cihaz onu doğrudan JSON olarak
@@ -189,6 +203,7 @@ export type BinUplinkResult = LegacyMessage | BinSkip;
  */
 export async function decodeBinUplink(mac: string, payload: Uint8Array): Promise<BinUplinkResult> {
   const now = Date.now();
+  if (payload.length > 0 && payload[0] === BR_PROTOCOL_VERSION) return decodeBrUplink(mac, payload, now);
   const dev = touch(mac, now);
 
   const frame = decodeFrame(payload);
@@ -198,15 +213,9 @@ export async function decodeBinUplink(mac: string, payload: Uint8Array): Promise
   if (!frame.typeName || frame.typeName === "COMMAND") {
     return reject(mac, dev, "UNKNOWN_TYPE", `bilinmeyen mesaj tipi ${frame.type}`, payload, now);
   }
-  // Kayıtlı gateway (aynı codec'li ESP32 Border Router) yalnızca HEALTH ve
-  // HELLO basabilir; bunlar lib/mqtt.ts'te gateway yoluna gider. Lambaya özgü
-  // tipler (d4i, ack, commission) gateway kimliğinden gelirse cihaz yoluna
-  // düşmesin diye atılır.
-  if (
-    peekTenancy()?.gatewayOwner.has(mac) &&
-    frame.typeName !== "HEALTH" &&
-    frame.typeName !== "HELLO"
-  ) {
+  // Ağ geçitleri yalnızca 0x03 basar. Kayıtlı bir ağ geçidi kimliğinden gelen
+  // lamba paketi cihaz yoluna düşmesin (aynı MAC hem cihaz hem gateway olamaz).
+  if (peekTenancy()?.gatewayOwner.has(mac)) {
     return reject(mac, dev, "GATEWAY", `kayıtlı gateway kimliği (${frame.typeName})`, payload, now);
   }
 
@@ -229,6 +238,70 @@ export async function decodeBinUplink(mac: string, payload: Uint8Array): Promise
   count("accepted");
   dev.lastValidAt = now;
   return result;
+}
+
+/** Ağ geçidinin bir-kezlik health alanları; önbellekte yoksa son kayıtlı health'ten. */
+async function brBuildInfoFor(mac: string): Promise<BrBuildInfo> {
+  const cached = store.brBuildInfo.get(mac);
+  if (cached) return cached;
+  const info: BrBuildInfo = {};
+  if (peekTenancy()?.gatewayOwner.has(mac)) {
+    try {
+      const [row] = await db
+        .select({ health: schema.gateways.health })
+        .from(schema.gateways)
+        .where(eq(schema.gateways.gatewayId, mac))
+        .limit(1);
+      const h = (row?.health ?? null) as Record<string, unknown> | null;
+      const thread = (h?.thread ?? null) as Record<string, unknown> | null;
+      const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : undefined);
+      const pos = (v: unknown) => (typeof v === "number" && v > 0 ? v : undefined);
+      const seeded: BrBuildInfo = {
+        idf_version: str(h?.idf_version),
+        build_date: str(h?.build_date),
+        build_time: str(h?.build_time),
+        network_name: str(thread?.network_name),
+        health_interval_s: pos(h?.health_interval_s),
+        topology_interval_s: pos(h?.topology_interval_s),
+      };
+      for (const [k, v] of Object.entries(seeded)) {
+        if (v !== undefined) (info as Record<string, unknown>)[k] = v;
+      }
+    } catch (err) {
+      console.warn(`[bin] BR health önbelleği tohumlanamadı (${mac}):`, err instanceof Error ? err.message : err);
+    }
+  }
+  const raced = store.brBuildInfo.get(mac);
+  if (raced) return raced;
+  store.brBuildInfo.set(mac, info);
+  return info;
+}
+
+/**
+ * Border Router paketi (ilk bayt 0x03). Sayaçlar, son retler ve alan tablosu
+ * alarmı lamba paketleriyle ortaktır (admin kartı); cihaz binary durumuna
+ * (binActive, binCommandCapable, admin cihaz listesi) yazılmaz.
+ */
+async function decodeBrUplink(mac: string, payload: Uint8Array, now: number): Promise<BrUplink | BinSkip> {
+  const frame = decodeFrame(payload);
+  if (!frame.ok) return reject(mac, null, frame.reason, frame.detail, payload, now);
+  if (!frame.typeName || frame.typeName === "COMMAND") {
+    return reject(mac, null, "UNKNOWN_TYPE", `bilinmeyen mesaj tipi ${frame.type}`, payload, now);
+  }
+  const cache: BrBuildInfo = frame.typeName === "BR_HEALTH" ? await brBuildInfoFor(mac) : {};
+  const ctx: ConvertContext = { warnings: [] };
+  const msg = brToMessage(frame, cache, ctx);
+  for (const w of ctx.warnings) {
+    logOnce(`${mac}:enum:${w}`, "warn", `[bin] BR ${mac} ${frame.typeName}: ${w} — "unknown" yazıldı`, now);
+  }
+  if (!msg) return reject(mac, null, "UNKNOWN_TYPE", `çevrilemeyen tip ${frame.typeName}`, payload, now);
+  count("accepted");
+  return { kind: "br", msg };
+}
+
+/** Ağ geçidi silinince bellekteki bir-kezlik alanları unut (MAC başka yere kaydedilebilir). */
+export function forgetBrGateway(mac: string): void {
+  store.brBuildInfo.delete(mac);
 }
 
 /**

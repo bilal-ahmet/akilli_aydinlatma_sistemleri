@@ -1,13 +1,13 @@
 import "server-only";
-import { and, asc, count, eq, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { toGatewayView } from "@/lib/adapters";
+import { toGatewayView, type ThreadDevice } from "@/lib/adapters";
 import type { GatewayView } from "@/app/_lib/types";
 
 /**
  * Bir müşterinin gateway'leri (bölge adı + bağlı cihaz sayısıyla). `gatewayId`
  * verilirse yalnızca o gateway. Bağlı cihaz sayısı yalnızca bu müşterinin
- * cihazlarından sayılır.
+ * cihazlarından sayılır (bağ: lib/gatewayLink.ts, Thread partition eşleşmesi).
  */
 export async function listGateways(
   customerId: string,
@@ -34,6 +34,27 @@ export async function listGateways(
     .groupBy(schema.devices.gatewayId);
   const byGw = new Map(counts.map((c) => [c.gatewayId, c.n]));
 
+  // Topoloji (yalnızca admin): RLOC16 → lamba adı. Lambanın Thread kimliği son
+  // health'inden (binary firmware her health'te yazar).
+  const threadDevices: ThreadDevice[] = [];
+  if (opts.technical && rows.some((r) => r.g.report)) {
+    const rloc = sql<string | null>`${schema.devices.health} -> 'thread' ->> 'rloc16'`;
+    const devs = await db
+      .select({
+        mac: schema.devices.deviceId,
+        name: schema.devices.name,
+        rloc16: rloc,
+        partitionId: sql<string | null>`${schema.devices.health} -> 'thread' ->> 'partition_id'`,
+      })
+      .from(schema.devices)
+      .innerJoin(schema.zones, eq(schema.devices.zoneId, schema.zones.id))
+      .where(and(eq(schema.zones.customerId, customerId), sql`${rloc} IS NOT NULL`));
+    for (const d of devs) {
+      const n = Number(d.rloc16);
+      if (Number.isInteger(n)) threadDevices.push({ mac: d.mac, name: d.name, rloc16: n, partitionId: d.partitionId });
+    }
+  }
+
   return rows.map((r) =>
     toGatewayView(
       {
@@ -43,6 +64,7 @@ export async function listGateways(
         deviceCount: byGw.get(r.g.gatewayId) ?? 0,
       },
       opts.technical,
+      threadDevices,
     ),
   );
 }
