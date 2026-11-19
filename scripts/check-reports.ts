@@ -83,9 +83,9 @@ const input: ReportInput = {
     { slug: "b", name: "B Bölgesi" },
   ],
   devices: [
-    { mac: "AAAAAAAAAAA1", name: "Direk 1", zoneSlug: "a", zoneName: "A Bölgesi" },
-    { mac: "AAAAAAAAAAA2", name: null, zoneSlug: "a", zoneName: "A Bölgesi" },
-    { mac: "BBBBBBBBBBB1", name: "Direk 3", zoneSlug: "b", zoneName: "B Bölgesi" },
+    { mac: "AAAAAAAAAAA1", name: "Direk 1", zoneSlug: "a", zoneName: "A Bölgesi", firstReportAt: at("2026-08-01T00:00:00Z") },
+    { mac: "AAAAAAAAAAA2", name: null, zoneSlug: "a", zoneName: "A Bölgesi", firstReportAt: at("2026-08-15T00:00:00Z") },
+    { mac: "BBBBBBBBBBB1", name: "Direk 3", zoneSlug: "b", zoneName: "B Bölgesi", firstReportAt: null },
   ],
   faults: [
     // Dönemden önce başladı, içinde bitti: sayılmaz, süresi 1 Ekim 00:00'dan (TR) itibaren.
@@ -178,6 +178,32 @@ const outside = buildReport({
   faults: [{ mac: "AAAAAAAAAAA1", channel: 0, code: "lamp_failure", detail: null, startedAt: at("2026-09-01T00:00:00Z"), resolvedAt: at("2026-09-02T00:00:00Z") }],
 });
 check("dönem dışı kayıt yok sayılır", outside.faultTypes.length === 0 && outside.totals.faults === 0);
+
+// ── Veri kapsaması ──────────────────────────────────────────
+check("tam kapsama: kayıt dışı gün yok", rep.coverage.uncoveredDays === 0 && rep.daily.every((d) => d.covered));
+check("hiç ölçümü olmayan cihaz", rep.coverage.noDataDevices === 1 && rep.coverage.partialDevices === 0);
+check("cihaz kısmi değil", !dev.AAAAAAAAAAA1.partial && dev.AAAAAAAAAAA1.dataFrom === "2026-08-01T00:00:00.000Z");
+
+// Sistem 15 Ekim 12:00 (TR) devreye girdi: 1-14 Ekim veri yok, ortalama 17 güne bölünür.
+const late = buildReport({
+  ...input,
+  devices: input.devices.map((d) => ({ ...d, firstReportAt: d.firstReportAt ? at("2026-10-15T09:00:00Z") : null })),
+});
+check("kayıt öncesi 14 gün", late.coverage.uncoveredDays === 14, String(late.coverage.uncoveredDays));
+check("kayıt başlangıç günü kapsamda", late.daily.find((d) => d.date === "2026-10-15")!.covered);
+check("öncesi kapsam dışı", !late.daily.find((d) => d.date === "2026-10-14")!.covered);
+check("kısmi cihaz sayısı", late.coverage.partialDevices === 2 && late.devices.filter((d) => d.partial).length === 2);
+check("ortalama kayıtlı günlere bölünür", Math.abs((late.totals.avgDailyKwh ?? 0) - 12 / 17) < 1e-9, String(late.totals.avgDailyKwh));
+check("veri başlangıcı", late.coverage.dataFrom === "2026-10-15T09:00:00.000Z");
+
+// Ölçümü dönemden SONRA başlayan cihaz: dönem için verisi yok.
+const after = buildReport({
+  ...input,
+  devices: input.devices.map((d) => ({ ...d, firstReportAt: at("2026-11-05T00:00:00Z") })),
+  energy: [],
+});
+check("dönem sonrası başlayan: kapsama yok", after.coverage.dataFrom === null && after.coverage.uncoveredDays === 31);
+check("dönem sonrası başlayan: veri yok sayılır", after.coverage.noDataDevices === 3 && after.coverage.partialDevices === 0);
 
 console.log(failures === 0 ? "\nTüm kontroller geçti." : `\n${failures} kontrol başarısız.`);
 process.exit(failures === 0 ? 0 : 1);

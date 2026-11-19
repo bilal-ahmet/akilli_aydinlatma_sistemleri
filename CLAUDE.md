@@ -1013,6 +1013,10 @@ Yeni tablo yok; `fault_events` + `d4i_telemetry` üzerinden hesaplanır.
   2 gün geriye bakılır. Sayaç farkı olmayan cihazın enerjisi null ("Veri yok").
 - **Yanma süresi** (yaklaşık): önceki okumada seviye > 0 ise aradaki süre, her
   aralık `freshMs` ile sınırlı; cihazda armatür başına ortalama.
+- **Veri kapsaması:** cihazın ilk D4i raporundan (`loadFirstReports`) önceki
+  günler sıfır değil "veri yok"tur (`ReportDay.covered`, `coverage`). Panel
+  uyarı + grafikte gri bant gösterir, günlük ortalama yalnızca kayıtlı günlere
+  bölünür; dönemde hiç ölçüm yoksa sayılar yerine "ölçüm kaydı yok" çıkar.
 - Cihazlar **bugünkü** bölgelerinde raporlanır (taşınan cihazın geçmişi yeni
   bölgesine yazılır). `d4i_telemetry` için saklama politikası eklenirse rapor o
   süreden eskiye gidemez.

@@ -104,6 +104,9 @@ export async function reportWorkbook(report: ReportData, events: ReportEvent[]):
     ],
     ["Gün sayısı", period.days, FMT_INT],
     ["Oluşturulma", trWall(report.generatedAt), FMT_DATETIME],
+    ["Ölçüm kaydı başlangıcı", report.coverage.dataFrom ? trWall(report.coverage.dataFrom) : "Bu dönemde ölçüm yok", FMT_DATETIME],
+    ["Kayıt öncesi gün (veri yok)", report.coverage.uncoveredDays, FMT_INT],
+    ["Ölçümü dönem içinde başlayan cihaz", report.coverage.partialDevices, FMT_INT],
     ["", ""],
     ["Toplam enerji (kWh)", totals.energyKwh ?? "Ölçüm yok", FMT_KWH],
     ["Günlük ortalama enerji (kWh)", totals.avgDailyKwh ?? "—", FMT_KWH],
@@ -126,6 +129,7 @@ export async function reportWorkbook(report: ReportData, events: ReportEvent[]):
   }
   summary.addRow([]);
   const notes = [
+    "Veri silinmez; ancak ölçüm kaydı başlamadan önceki günler sıfır değil \"veri yok\" sayılır. Günlük ortalama yalnızca kayıtlı günlere bölünür.",
     "Enerji, armatür sayaçlarındaki artıştan hesaplanır; ölçüm göndermeyen cihazlar toplama girmez.",
     "Yanma süresi raporlardaki ışık seviyesinden çıkarılan yaklaşık değerdir (armatür başına ortalama).",
     "Arızalı kalma süresinde aynı anda süren arızalar bir kez sayılır. Uyarılar (ısınma, güç sınırlama) arıza sayısına girmez.",
@@ -156,6 +160,8 @@ export async function reportWorkbook(report: ReportData, events: ReportEvent[]):
       { header: "Enerji (kWh)", key: "kwh", width: 14, numFmt: FMT_KWH },
       { header: "Yanma süresi (saat, armatür başına)", key: "burn", width: 18, numFmt: FMT_HOURS },
       { header: "Ölçüm", key: "measured", width: 10 },
+      { header: "Ölçüm başlangıcı", key: "dataFrom", width: 17, numFmt: FMT_DATETIME },
+      { header: "Dönemi tam kapsıyor", key: "full", width: 12 },
     ],
     report.devices.map((d) => ({
       name: d.name,
@@ -170,6 +176,8 @@ export async function reportWorkbook(report: ReportData, events: ReportEvent[]):
       kwh: d.energyKwh,
       burn: d.burnHours,
       measured: d.measured ? "Var" : "Yok",
+      dataFrom: d.dataFrom ? trWall(d.dataFrom) : null,
+      full: !d.measured ? "Hayır" : d.partial ? "Hayır" : "Evet",
     })),
   );
 
@@ -247,12 +255,15 @@ export async function reportWorkbook(report: ReportData, events: ReportEvent[]):
       { header: "Enerji (kWh)", key: "kwh", width: 14, numFmt: FMT_KWH },
       { header: "Yeni arıza", key: "faults", width: 12, numFmt: FMT_INT },
       { header: "Yeni uyarı", key: "warnings", width: 12, numFmt: FMT_INT },
+      { header: "Veri", key: "covered", width: 16 },
     ],
     report.daily.map((d) => ({
       date: dayDate(d.date),
       kwh: d.energyKwh,
-      faults: d.faults,
-      warnings: d.warnings,
+      // Kayıt öncesi günde sayılar boş kalır (0 yazmak "arıza yok" gibi okunur).
+      faults: d.covered || d.faults > 0 ? d.faults : null,
+      warnings: d.covered || d.warnings > 0 ? d.warnings : null,
+      covered: d.covered ? "Var" : "Kayıt öncesi",
     })),
   );
 

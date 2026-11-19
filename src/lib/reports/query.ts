@@ -53,23 +53,51 @@ export async function loadReportRows(opts: {
       .orderBy(asc(z.name), asc(d.name), asc(d.deviceId)),
   ]);
 
-  const devices: ReportDeviceRow[] = deviceRows.map((r) => ({
-    mac: r.mac,
-    name: r.name,
-    zoneSlug: r.zoneSlug,
-    zoneName: r.zoneName,
-  }));
-  if (deviceRows.length === 0) return { zones, devices, faults: [], energy: [] };
+  if (deviceRows.length === 0) return { zones, devices: [], faults: [], energy: [] };
 
   const macs = deviceRows.map((r) => r.mac);
-  const [faults, energy] = await Promise.all([
+  const [firstReports, faults, energy] = await Promise.all([
+    loadFirstReports(macs),
     loadFaults(macs, period),
     loadEnergy(
       deviceRows.map((r) => ({ mac: r.mac, capS: Math.round(freshMs(r) / 1000) })),
       period,
     ),
   ]);
+  const devices: ReportDeviceRow[] = deviceRows.map((r) => ({
+    mac: r.mac,
+    name: r.name,
+    zoneSlug: r.zoneSlug,
+    zoneName: r.zoneName,
+    firstReportAt: firstReports.get(r.mac) ?? null,
+  }));
   return { zones, devices, faults, energy };
+}
+
+/**
+ * Cihazın bilinen İLK D4i raporu — ölçüm kaydının başladığı an. Rapor bu
+ * tarihten önceki günleri "veri yok" sayar (sıfır değil): sistem ya da cihaz
+ * dönemin ortasında devreye girdiyse toplamlar ayın tamamı sanılmasın.
+ * Cihaz başına `(device_id, recorded_at)` index'inden tek satır okunur.
+ */
+async function loadFirstReports(macs: string[]): Promise<Map<string, Date>> {
+  const t = schema.d4iTelemetry;
+  const list = sql.join(
+    macs.map((m) => sql`(${m}::varchar)`),
+    sql`, `,
+  );
+  const result = await db.execute<{ mac: string; first_at: string | Date | null }>(sql`
+    SELECT m.mac,
+           (SELECT ${t.recordedAt} FROM ${t}
+             WHERE ${t.deviceId} = m.mac AND ${t.recordedAt} IS NOT NULL
+             ORDER BY ${t.recordedAt} ASC LIMIT 1) AS first_at
+    FROM (VALUES ${list}) AS m(mac)
+  `);
+  const out = new Map<string, Date>();
+  for (const r of result.rows) {
+    if (r.first_at) out.set(r.mac, new Date(r.first_at));
+  }
+  return out;
 }
 
 /** Dönemle kesişen arıza kayıtları (dönemden önce başlayıp süren dahil). */

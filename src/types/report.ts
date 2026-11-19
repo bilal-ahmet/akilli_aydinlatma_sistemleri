@@ -37,7 +37,7 @@ export interface ReportTotals {
   measuredDevices: number;
   /** Toplam enerji; hiçbir cihazdan sayaç farkı alınamadıysa null. */
   energyKwh: number | null;
-  /** Günlük ortalama enerji (geçen gün sayısına göre). */
+  /** Günlük ortalama enerji (dönemin ölçüm kaydı olan kısmına göre). */
   avgDailyKwh: number | null;
   /** Dönemde başlayan armatür arızası (uyarılar hariç). */
   faults: number;
@@ -64,6 +64,23 @@ export interface ReportDay {
   faults: number;
   /** O gün başlayan uyarı. */
   warnings: number;
+  /** Gün ölçüm kaydının kapsamında mı (kapsamdaki ilk ölçümden sonra). Değilse "veri yok". */
+  covered: boolean;
+}
+
+/**
+ * Veri kapsaması: ölçüm kaydı ne zaman başladı. Veri SİLİNMEZ ama sistem ya da
+ * cihaz dönemin ortasında devreye girmiş olabilir; öncesi sıfır değil "veri yok".
+ */
+export interface ReportCoverage {
+  /** Kapsamdaki cihazların en eski ölçümü (ISO); hiç ölçüm yoksa null. */
+  dataFrom: string | null;
+  /** Dönemin ölçüm kaydı öncesinde kalan gün sayısı (0 = dönemin tamamı kayıtlı). */
+  uncoveredDays: number;
+  /** Ölçümü dönem içinde başlayan cihaz (toplamları dönemin yalnızca bir kısmını kapsar). */
+  partialDevices: number;
+  /** Dönem sonuna kadar hiç ölçüm göndermemiş cihaz. */
+  noDataDevices: number;
 }
 
 export interface ReportFaultType {
@@ -107,6 +124,10 @@ export interface ReportDevice {
   lamps: number;
   /** Dönemde en az bir ölçüm geldi mi. */
   measured: boolean;
+  /** Cihazın bilinen ilk ölçümü (ISO); hiç yoksa null. */
+  dataFrom: string | null;
+  /** Ölçümü dönem içinde başladı (dönemin başı için verisi yok). */
+  partial: boolean;
 }
 
 export interface ReportZone {
@@ -129,6 +150,7 @@ export interface ReportData {
   technical: boolean;
   generatedAt: string;
   totals: ReportTotals;
+  coverage: ReportCoverage;
   daily: ReportDay[];
   faultTypes: ReportFaultType[];
   devices: ReportDevice[];

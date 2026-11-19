@@ -13,8 +13,9 @@ import { faultCategory, faultCategoryLabel, faultLabel, isWarningCode } from "@/
 import { describeDeviceError } from "@/lib/deviceErrors";
 import { deviceName } from "@/app/_lib/format";
 import { localDateString } from "@/lib/scheduleTime";
-import { eachDay, type ReportPeriod } from "./range";
+import { dayStart, eachDay, type ReportPeriod } from "./range";
 import type {
+  ReportCoverage,
   ReportData,
   ReportDay,
   ReportDevice,
@@ -30,6 +31,8 @@ export interface ReportDeviceRow {
   name: string | null;
   zoneSlug: string;
   zoneName: string;
+  /** Cihazın bilinen ilk D4i raporu; hiç yoksa null. */
+  firstReportAt: Date | null;
 }
 
 export interface ReportZoneRow {
@@ -225,8 +228,24 @@ export function buildReport(input: ReportInput): ReportData {
       burnHours: e && e.lamps > 0 ? e.onS / e.lamps / 3600 : null,
       lamps: e?.lamps ?? 0,
       measured: (e?.samples ?? 0) > 0,
+      dataFrom: d.firstReportAt ? d.firstReportAt.toISOString() : null,
+      // Ölçümü dönem içinde, ilk günden SONRA başladıysa dönemin başı için verisi yok.
+      // Dönemden sonra başlayan cihaz kısmi değil, "veri yok"tur (noDataDevices).
+      partial:
+        d.firstReportAt !== null &&
+        d.firstReportAt.getTime() < period.end.getTime() &&
+        localDateString(d.firstReportAt) > period.from,
     };
   });
+
+  // Veri kapsaması: kapsamdaki en eski ölçümden önceki günler "veri yok".
+  const endMs = period.end.getTime();
+  const firsts = input.devices
+    .map((d) => d.firstReportAt?.getTime())
+    .filter((t): t is number => t !== undefined && t < endMs);
+  const dataFromMs = firsts.length > 0 ? Math.min(...firsts) : null;
+  const coveredFrom = dataFromMs === null ? null : localDateString(new Date(dataFromMs));
+  const isCovered = (date: string) => coveredFrom !== null && date >= coveredFrom;
 
   // Arıza türleri (bütün türler; uyarılar ve komut hataları etiketli)
   const types = new Map<string, ReportFaultType & { macs: Set<string>; lampKeys: Set<string> }>();
@@ -281,13 +300,23 @@ export function buildReport(input: ReportInput): ReportData {
       energyKwh: e && e.pairs > 0 ? kwh(e.wh) : null,
       faults: c?.faults ?? 0,
       warnings: c?.warnings ?? 0,
+      covered: isCovered(date),
     };
   });
 
   // Toplamlar
   const measuredEnergy = devices.filter((d) => d.energyKwh !== null);
   const energyKwh = measuredEnergy.length > 0 ? measuredEnergy.reduce((s, d) => s + d.energyKwh!, 0) : null;
-  const elapsedDays = Math.max(1, (period.end.getTime() - period.start.getTime()) / 86_400_000);
+  // Günlük ortalama yalnızca ölçüm kaydı olan kısma bölünür (kayıt öncesi günler sıfır sayılmaz).
+  const avgFrom =
+    coveredFrom === null ? period.start.getTime() : Math.max(period.start.getTime(), dayStart(coveredFrom).getTime());
+  const elapsedDays = Math.max(1, (endMs - avgFrom) / 86_400_000);
+  const coverage: ReportCoverage = {
+    dataFrom: dataFromMs === null ? null : new Date(dataFromMs).toISOString(),
+    uncoveredDays: daily.filter((d) => !d.covered).length,
+    partialDevices: devices.filter((d) => d.partial).length,
+    noDataDevices: devices.filter((d) => d.dataFrom === null || Date.parse(d.dataFrom) >= endMs).length,
+  };
 
   const zones: ReportZone[] = input.zone
     ? []
@@ -332,6 +361,7 @@ export function buildReport(input: ReportInput): ReportData {
       faultDurationMs: devices.reduce((s, d) => s + d.faultDurationMs, 0),
       topFault: pickTop(allCounts),
     },
+    coverage,
     daily,
     faultTypes,
     devices,

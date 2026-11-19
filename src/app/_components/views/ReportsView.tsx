@@ -6,9 +6,10 @@ import { useLighting } from "@/app/_lib/lighting";
 import { useApi, useTechnical } from "@/app/_lib/panel";
 import { formatDuration } from "@/app/_lib/format";
 import { formatMac } from "@/lib/mac";
-import { isoDateToDisplay } from "@/lib/dateFormat";
+import { formatDate, isoDateToDisplay } from "@/lib/dateFormat";
 import {
   REPORT_MAX_DAYS,
+  REPORT_TZ,
   parseReportRange,
   rangeErrorText,
   reportPresets,
@@ -72,7 +73,14 @@ function DailyBars({
   const max = Math.max(0, ...values.map((v) => v ?? 0));
   const total = values.reduce<number>((s, v) => s + (v ?? 0), 0);
   const shown = hover !== null ? days[hover] : null;
-  const shownValue = hover !== null ? values[hover] : null;
+  // Ölçüm kaydı öncesi gün: sıfır değil "veri yok" — gri bantla gösterilir.
+  const noRecord = (i: number) => !days[i].covered && values[i] === null;
+  const anyNoRecord = days.some((_, i) => noRecord(i));
+  const dayText = (i: number) => {
+    const v = values[i];
+    if (v !== null) return `${format(v)} ${unit}`;
+    return noRecord(i) ? "ölçüm kaydı öncesi, veri yok" : "veri yok";
+  };
   const tickIdx = days.length > 1 ? [0, Math.floor((days.length - 1) / 2), days.length - 1] : [0];
 
   return (
@@ -81,7 +89,7 @@ function DailyBars({
         <h2 className="text-[15px] font-semibold text-text">{label}</h2>
         <p className="text-[12.5px] tabular-nums text-muted" aria-live="polite">
           {shown
-            ? `${isoDateToDisplay(shown.date)} · ${shownValue === null ? "veri yok" : `${format(shownValue)} ${unit}`}`
+            ? `${isoDateToDisplay(shown.date)} · ${dayText(hover!)}`
             : max > 0
               ? `en yüksek ${format(max)} ${unit}`
               : ""}
@@ -103,19 +111,27 @@ function DailyBars({
                     key={d.date}
                     type="button"
                     role="listitem"
-                    aria-label={`${isoDateToDisplay(d.date)}: ${v === null ? "veri yok" : `${format(v)} ${unit}`}`}
+                    aria-label={`${isoDateToDisplay(d.date)}: ${dayText(i)}`}
                     onMouseEnter={() => setHover(i)}
                     onMouseLeave={() => setHover(null)}
                     onFocus={() => setHover(i)}
                     onBlur={() => setHover(null)}
                     className="group flex h-full min-w-0 flex-1 items-end focus-visible:outline-none"
                   >
-                    <span
-                      className={`block w-full rounded-t-[4px] transition-opacity ${barClass} ${
-                        hover !== null && hover !== i ? "opacity-45" : ""
-                      } group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-accent`}
-                      style={{ height: `${h}%` }}
-                    />
+                    {noRecord(i) ? (
+                      <span
+                        className={`block h-full w-full rounded-t-[4px] bg-panel-2 ${
+                          hover === i ? "bg-track" : ""
+                        } group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-accent`}
+                      />
+                    ) : (
+                      <span
+                        className={`block w-full rounded-t-[4px] transition-opacity ${barClass} ${
+                          hover !== null && hover !== i ? "opacity-45" : ""
+                        } group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-accent`}
+                        style={{ height: `${h}%` }}
+                      />
+                    )}
                   </button>
                 );
               })}
@@ -138,9 +154,74 @@ function DailyBars({
               </span>
             ))}
           </div>
+          {anyNoRecord ? (
+            <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-[3px] bg-panel-2 ring-1 ring-border" />
+              Ölçüm kaydı öncesi (veri yok)
+            </p>
+          ) : null}
         </div>
       )}
     </section>
+  );
+}
+
+/** Gün sayısı yazımı: "1 gün", "14 gün". */
+const daysText = (n: number) => `${n} gün`;
+
+/**
+ * Veri kapsaması uyarısı. Veri silinmez ama ölçüm kaydı dönemin ortasında
+ * başlamış olabilir (sistem ya da cihaz sonradan devreye girdi): o kısım sıfır
+ * değil "veri yok"tur ve toplamlar dönemin tamamı sanılmamalı.
+ */
+function CoverageNote({ report }: { report: ReportData }) {
+  const c = report.coverage;
+  const lines: string[] = [];
+  if (c.dataFrom && c.uncoveredDays > 0) {
+    lines.push(
+      `Ölçüm kaydı ${formatDate(c.dataFrom, REPORT_TZ)} tarihinde başlıyor. Dönemin ilk ${daysText(c.uncoveredDays)} için veri yok; toplamlar ve ortalamalar yalnızca kayıtlı günleri kapsar.`,
+    );
+  }
+  if (c.partialDevices > 0) {
+    lines.push(
+      `${c.partialDevices} cihazın ölçümü dönem içinde başladı; bu cihazların değerleri dönemin tamamını kapsamaz.`,
+    );
+  }
+  if (c.noDataDevices > 0) {
+    lines.push(`${c.noDataDevices} cihazdan bu dönemde hiç ölçüm alınmadı.`);
+  }
+  if (lines.length === 0) return null;
+  return (
+    <div role="note" className="flex gap-3 rounded-[12px] border border-glow/40 bg-accent-soft px-4 py-3 text-[13px] text-text">
+      <span aria-hidden className="mt-px font-semibold text-accent">
+        ⓘ
+      </span>
+      <div className="flex flex-col gap-1">
+        <p className="font-semibold">Veri kapsaması</p>
+        {lines.map((l) => (
+          <p key={l} className="text-ink-2">
+            {l}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Dönemde hiç ölçüm kaydı yoksa sayıların yerine bu gösterilir (0 arıza / 0 kWh yanıltır). */
+function NoRecordBox({ report }: { report: ReportData }) {
+  const later = report.devices
+    .map((d) => d.dataFrom)
+    .filter((x): x is string => x !== null)
+    .sort()[0];
+  return (
+    <EmptyBox>
+      <p className="font-semibold text-text">Bu dönem için ölçüm kaydı yok</p>
+      <p className="mt-1">
+        Seçilen tarihlerde bu cihazlardan rapor alınmamış; arıza ve enerji bilgisi gösterilemez.
+        {later ? ` İlk ölçüm ${formatDate(later, REPORT_TZ)} tarihinde alındı.` : ""}
+      </p>
+    </EmptyBox>
   );
 }
 
@@ -357,6 +438,8 @@ export function ReportsView() {
         !error ? <EmptyBox>Rapor hazırlanıyor…</EmptyBox> : null
       ) : report.totals.devices === 0 ? (
         <EmptyBox>Bu kapsamda kayıtlı cihaz yok.</EmptyBox>
+      ) : report.coverage.dataFrom === null ? (
+        <NoRecordBox report={report} />
       ) : (
         <div className={`flex flex-col gap-6 transition-opacity ${loading ? "opacity-60" : ""}`}>
           <p className="-mb-2 text-[13px] text-muted">
@@ -364,6 +447,8 @@ export function ReportsView() {
             {report.period.partial ? " (bugün dahil)" : ""} · {report.zone?.name ?? "Tüm bölgeler"} ·{" "}
             {report.totals.devices} cihaz
           </p>
+
+          <CoverageNote report={report} />
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
@@ -415,7 +500,7 @@ export function ReportsView() {
             />
             <DailyBars
               days={report.daily}
-              value={(d) => d.faults}
+              value={(d) => (d.covered || d.faults > 0 ? d.faults : null)}
               format={(v) => trInt.format(v)}
               unit="arıza"
               barClass="bg-ink-2"
@@ -552,6 +637,11 @@ export function ReportsView() {
                             ) : (
                               <span className="text-muted">{d.measured ? "—" : "Veri yok"}</span>
                             )}
+                            {d.partial && d.measured && d.dataFrom ? (
+                              <span className="block text-[11.5px] text-muted">
+                                {formatDate(d.dataFrom, REPORT_TZ)} tarihinden itibaren
+                              </span>
+                            ) : null}
                           </td>
                           <td className={`${tdNum} text-ink-2`}>
                             {d.burnHours !== null ? `${trHours.format(d.burnHours)} sa` : <span className="text-muted">—</span>}
