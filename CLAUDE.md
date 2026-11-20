@@ -218,8 +218,8 @@ Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (a
 - Backend veri aboneliği `+/bin` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
   gömülemez); MAC topic'ten okunur (`parseBinTopic`). `+/data` ve `+/health`'e
   yalnızca **görünürlük için** abone olunur: eski (JSON) firmware'in mesajı
-  işlenmez, admin "Binary protokol" kartında "JSON gönderen cihaz" olarak
-  listelenir (`noteRejectedJson`).
+  işlenmez, "JSON gönderen cihaz" olarak sayılır (`noteRejectedJson`,
+  `GET /api/admin/binproto → jsonRejected`).
 - **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
   topic'lerine ayrıca fanout yapmaz. Eski firmware bölgesini `ZONE_SLUG`'tan
   bilir (flash'lanmamış cihaz bölge komutu almaz); yeni firmware listeyi
@@ -262,7 +262,7 @@ saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
   `commands`'a yazılmaz (`mqtt.ts → handleZoneAck`); SSE `kind:"zone_sync"`
   (`zoneSync: {status, error}`) ile yayınlanır, toast olmaz.
 - Mod `MQTT_ZONE_SYNC`: boş/`on` (varsayılan) · `observe` (yalnızca `zone_list`,
-  fark admin kartında) · `off` (hiç zone komutu yok).
+  fark `GET /api/admin/zone-sync`'te) · `off` (hiç zone komutu yok).
 - **Alt grup** (`zone_groups`, `zone_group_members`): bölgenin cihazlarından ek
   topic. Slug = `<bölge>-<ad>` ASCII, **≤32**, bölgelerle aynı ad alanında global
   benzersiz, silinince `retired_zone_slugs`'a yazılır, değişmez (ad değişir).
@@ -274,12 +274,12 @@ saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
   (`runPlan`) tüm üyeler `synced` ise grup komutu, değilse üyelere cihaz komutu
   gönderir. Zamanlama hedefi `groups` saklar (karar çalışma anında).
 - Yeni bölge slug'ları da **≤32** (`allocateZoneSlug`); 32'yi aşan eski slug
-  cihaza gönderilemez, admin kartında uyarılır.
+  cihaza gönderilemez, `GET /api/admin/zone-sync`'te listelenir.
 - Panel: bölge detayında "Alt gruplar" kartı (`ZoneGroups.tsx`), seçim
   çubuğunda "Alt grup" (toplu ekle/çıkar), hızlı seçimde grup çipleri, cihaz
   satırında "Bölge bilgisi gönderiliyor/uygulanamadı", Bakım sekmesinde "Bölge
-  bilgisi" + "Şimdi doğrula" (`DeviceZoneSync.tsx`), admin'de "Bölge aboneliği"
-  kartı (`admin/ZoneSync.tsx`).
+  bilgisi" + "Şimdi doğrula" (`DeviceZoneSync.tsx`). Admin sayfasında kart yok
+  (kaldırıldı); genel durum `GET /api/admin/zone-sync`.
 - Test: `npm run check:zonesync` (saf), `npm run mock:device <MAC> 2`
   (varsayılan 3 bölgeli NVS; `--zones a,b`, `--no-zones` = eski binary firmware).
 - OTA bölge filtresi (`metadata.json → zones`) firmware/release aracındadır;
@@ -317,8 +317,8 @@ edilen biçim budur**; JSON firmware desteği kaldırıldı (bkz. "JSON reddi").
   bu iç biçimdir, kabloda değil.
 - **Alan tablosu önce, OTA sonra.** `binproto/fields.ts`, firmware'deki
   `msg_fields.h`'nin kopyasıdır. Tanımsız alan kodu taşıyan paket tamamen
-  atılır ve admin sayfasında kırmızı alarm çıkar (`GET /api/admin/binproto`,
-  `admin/BinaryProtocol.tsx`). Firmware yeni alan eklerse önce tablo +
+  atılır; sayaç ve alarm `GET /api/admin/binproto`'dadır (admin sayfasındaki
+  kart kaldırıldı). Firmware yeni alan eklerse önce tablo +
   `npm run check:binproto` + deploy, sonra OTA.
 - **Bütün komutlar binary** (`publishCommand`, `publishMaintenance`,
   zone ve gateway komutları; `lib/binproto/command.ts → encodeCommand`).
@@ -328,7 +328,7 @@ edilen biçim budur**; JSON firmware desteği kaldırıldı (bkz. "JSON reddi").
 - **JSON reddi:** `Meven:<MAC>/data` ve `/health`'e gelen JSON (eski firmware)
   işlenmez: `last_seen`, telemetri, ack, health yazılmaz; cihaz panelde
   bağlantısız görünür. `lib/binUplink.ts → noteRejectedJson` MAC'i sayar,
-  admin "Binary protokol" kartı uyarı olarak listeler (`jsonRejected`), sunucu
+  `GET /api/admin/binproto` `jsonRejected` olarak listeler, sunucu
   logu saatte bir uyarır. HELLO metni (`"data"`) sayılmaz. Böyle bir cihaz
   komut da alamaz (binary komutu çözemez): firmware güncellenmeli.
 - **Kısa komut id'si:** binary'de `COMMAND_ID` u16'dır, UUID kabloya çıkmaz.
@@ -371,7 +371,7 @@ ilk baytı **0x03** (lamba 0x01). GW_ID = Wi-Fi STA MAC (`Meven:` öneki kimliğ
 dahil değil). Kontrat: `firmware/GATEWAY-ENTEGRASYON.md`; alan tablosu ve
 örnek paketler: `firmware/BR-BINARY-PROTOKOL.md` (firmware ekibinin belgesi).
 **JSON gateway kontratı kaldırıldı**: `/data|/health`'e gelen JSON işlenmez
-(admin kartında "JSON gönderen cihaz"), kayıtlı gateway kimliğinden gelen 0x01
+("JSON gönderen cihaz" sayılır), kayıtlı gateway kimliğinden gelen 0x01
 paketi `GATEWAY` ile reddedilir. `/lwt` JSON'u (`{"online":…}`) veri değil,
 MQTT will mesajıdır; kalır.
 
@@ -1481,7 +1481,7 @@ MQTT_ZONE_SYNC=
 18. **Gateway mesajı paket sürüm baytıyla ayrılır.** Ağ geçitleri yalnızca binary basar, ilk bayt 0x03 (lamba 0x01). `decodeBinUplink` 0x03'ü `handleBrUplink`'e verir; kayıtlı gateway kimliğinden gelen 0x01 paketi atılır (cihaz yoluna girmez). Gateway'e lamba / zone komutu gitmez; yalnızca `report_now` ve `ota_check` (`publishGatewayCommand`).
 19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` (lamba, 0x01) ve `brFields.ts` (Border Router, 0x03) firmware'in `msg_fields.h` kopyalarıdır; iki tablo ayrıdır (aynı kod farklı anlam taşıyabilir); tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Bkz. "Binary protokol v1".
 20. **Cihazın dinlediği bölge topic'leri panelden yönetilir (yeni firmware).** Zone komutları yalnızca binary ve yalnızca `Meven:<MAC>/cmd`'ye gider; backend istenen durumu (bölge + alt gruplar) tutar, cihazı ona getirir (`lib/zoneSync`). Bölge/alt grup/cihaz silmek yalnızca DB işi değildir: üyelere `zone_remove`/`zone_clear` gider. Grup komutu yalnızca bütün üyeler senkronsa tek publish'tir; değilse üyelere cihaz komutu.
-21. **Yalnızca binary protokol.** Cihazdan JSON kabul edilmez, cihaza JSON gönderilmez (komut, bakım, zone, gateway hepsi binary). `/data` ve `/health` aboneliği yalnızca eski firmware'i admin kartında göstermek içindir; oraya gelen mesaj işlenmez. JSON yolu geri eklenmez; binary'de karşılığı olmayan bir ihtiyaç çıkarsa önce firmware ekibiyle alan tablosu (`fields.ts`) genişletilir.
+21. **Yalnızca binary protokol.** Cihazdan JSON kabul edilmez, cihaza JSON gönderilmez (komut, bakım, zone, gateway hepsi binary). `/data` ve `/health` aboneliği yalnızca eski firmware'i saymak içindir (`GET /api/admin/binproto`); oraya gelen mesaj işlenmez. JSON yolu geri eklenmez; binary'de karşılığı olmayan bir ihtiyaç çıkarsa önce firmware ekibiyle alan tablosu (`fields.ts`) genişletilir.
 
 ---
 
