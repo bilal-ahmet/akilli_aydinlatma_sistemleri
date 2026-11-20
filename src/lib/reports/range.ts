@@ -3,11 +3,11 @@
  *
  * Dönem Türkiye takvim günleriyle verilir: `from` günü 00:00'dan `to` gününün
  * ertesi 00:00'a kadar. Bugünü kapsıyorsa bitiş "şimdi"dir (`partial`).
- * En fazla 31 gün; gelecek gün seçilemez.
+ * En fazla 90 gün (3 ay, telemetri saklama süresiyle aynı); gelecek gün seçilemez.
  */
 import { localDateString, localToUtc, SCHEDULE_TZ } from "@/lib/scheduleTime";
 
-export const REPORT_MAX_DAYS = 31;
+export const REPORT_MAX_DAYS = 90;
 /** Gün anahtarlarının ve gün sınırlarının saat dilimi. */
 export const REPORT_TZ = SCHEDULE_TZ;
 
@@ -103,7 +103,7 @@ export function rangeErrorText(error: RangeError): string {
   }
 }
 
-export type ReportPresetKey = "7d" | "30d" | "month" | "prev_month";
+export type ReportPresetKey = "7d" | "30d" | "90d" | "month" | "prev_month";
 
 export interface ReportPreset {
   key: ReportPresetKey;
@@ -121,6 +121,7 @@ export function reportPresets(now: Date = new Date()): ReportPreset[] {
   return [
     { key: "7d", label: "Son 7 gün", from: addDaysIso(today, -6), to: today },
     { key: "30d", label: "Son 30 gün", from: addDaysIso(today, -29), to: today },
+    { key: "90d", label: "Son 3 ay", from: addDaysIso(today, -89), to: today },
     { key: "month", label: "Bu ay", from: monthStart, to: today },
     { key: "prev_month", label: "Geçen ay", from: prevStart, to: prevEnd },
   ];

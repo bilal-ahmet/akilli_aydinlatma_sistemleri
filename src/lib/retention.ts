@@ -11,7 +11,9 @@ import { db } from "@/lib/db";
  * uyanık; Neon'u ekstra uyandırmaz). Silme `BATCH` satırlık parçalarla yapılır
  * — ilk çalışmada aylarca birikmiş satır tek dev DELETE'le kilitlenmesin.
  *
- * Raporlar en fazla 31 gün + 2 gün geriye baktığı için 90 gün onları etkilemez.
+ * Rapor dönemi en fazla 90 gün (`REPORT_MAX_DAYS`) — saklama süresiyle aynı; en eski
+ * günün enerji farkı için bakılan 2 günlük geri pencere silinmiş olabilir, o gün
+ * için fark hesaplanamaz ("veri yok" gibi davranır).
  */
 export const RECORD_RETENTION_DAYS = 90;
 

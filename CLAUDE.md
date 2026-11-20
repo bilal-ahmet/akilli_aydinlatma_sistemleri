@@ -1001,7 +1001,7 @@ Kayıt `commands` (`target_type:'device'`) + `audit_log` (`device.commission` /
 GET /api/reports?customer=<slug>&from=YYYY-MM-DD&to=YYYY-MM-DD[&zone=<slug>][&format=xlsx]
 ```
 
-Dönemlik rapor, **en fazla 31 gün** (`REPORT_MAX_DAYS`), Türkiye takvim günleri
+Dönemlik rapor, **en fazla 90 gün / 3 ay** (`REPORT_MAX_DAYS`, saklama süresiyle aynı), Türkiye takvim günleri
 (bugünü kapsıyorsa bitiş "şimdi"). Tüm roller (izleyici dahil) görür ve indirir;
 guard `authorizeScope(req, "read")`, başka müşterinin bölgesi 404, hatalı dönem 422.
 `format=xlsx` → Excel (exceljs; sayfalar: Özet, Cihazlar, Arıza türleri, Arıza
@@ -1026,7 +1026,7 @@ Yeni tablo yok; `fault_events` + `d4i_telemetry` üzerinden hesaplanır.
   bölünür; dönemde hiç ölçüm yoksa sayılar yerine "ölçüm kaydı yok" çıkar.
 - Cihazlar **bugünkü** bölgelerinde raporlanır (taşınan cihazın geçmişi yeni
   bölgesine yazılır). `d4i_telemetry` 90 gün saklanır (`lib/retention.ts`);
-  rapor dönemi (≤31 gün) bunun içinde kalır.
+  rapor dönemi (≤90 gün) tam olarak bu süreye eşittir.
 
 ### Cihaz kayıtları (yalnızca admin)
 

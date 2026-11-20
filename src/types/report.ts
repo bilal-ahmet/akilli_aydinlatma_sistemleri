@@ -14,7 +14,7 @@ export interface ReportPeriodInfo {
   from: string;
   /** Son gün (dahil), YYYY-MM-DD. */
   to: string;
-  /** Takvim günü sayısı (1-31). */
+  /** Takvim günü sayısı (1-90). */
   days: number;
   /** Dönemin başladığı an (ilk gün 00:00, Türkiye). */
   startAt: string;

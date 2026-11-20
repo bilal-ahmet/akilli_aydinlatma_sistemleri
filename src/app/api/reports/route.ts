@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 /**
  * GET /api/reports?customer=<slug>&from=YYYY-MM-DD&to=YYYY-MM-DD[&zone=<slug>][&format=xlsx]
  *
- * Dönemlik rapor (en fazla 31 gün): arıza sıklığı ve türleri, arızalı kalma
+ * Dönemlik rapor (en fazla 90 gün): arıza sıklığı ve türleri, arızalı kalma
  * süresi, enerji (sayaç farkı) ve yaklaşık yanma süresi — cihaz, bölge ve gün
  * kırılımıyla. Salt okunur; tüm roller (izleyici dahil).
  *

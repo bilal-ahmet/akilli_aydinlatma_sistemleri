@@ -270,7 +270,7 @@ function SortTh({
 }
 
 /**
- * Raporlar: seçilen dönemde (en fazla 31 gün) arıza sıklığı ve türleri,
+ * Raporlar: seçilen dönemde (en fazla 90 gün) arıza sıklığı ve türleri,
  * arızalı kalma süresi, enerji ve yaklaşık yanma süresi; Excel'e aktarma.
  * Hesap sunucuda (`GET /api/reports`, lib/reports/build.ts).
  */

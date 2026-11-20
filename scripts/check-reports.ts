@@ -28,7 +28,9 @@ const now = new Date("2026-11-19T12:00:00Z");
 // ── Dönem ───────────────────────────────────────────────────
 const r31 = parseReportRange("2026-10-01", "2026-10-31", now);
 check("31 gün kabul", r31.ok && r31.period.days === 31);
-check("32 gün reddedilir", !parseReportRange("2026-10-01", "2026-11-01", now).ok);
+const r90 = parseReportRange("2026-08-22", "2026-11-19", now);
+check("90 gün kabul", r90.ok && r90.period.days === 90);
+check("91 gün reddedilir", !parseReportRange("2026-08-21", "2026-11-19", now).ok);
 const rev = parseReportRange("2026-10-10", "2026-10-09", now);
 check("ters aralık reddedilir", !rev.ok && rev.error === "order");
 const fut = parseReportRange("2026-11-19", "2026-11-20", now);
@@ -53,6 +55,7 @@ check("dayStart", dayStart("2026-11-19").toISOString() === "2026-11-18T21:00:00.
 const presets = Object.fromEntries(reportPresets(now).map((p) => [p.key, p]));
 check("Son 7 gün", presets["7d"].from === "2026-11-13" && presets["7d"].to === "2026-11-19");
 check("Son 30 gün", presets["30d"].from === "2026-10-21" && presets["30d"].to === "2026-11-19");
+check("Son 3 ay", presets["90d"].from === "2026-08-22" && presets["90d"].to === "2026-11-19");
 check("Bu ay", presets.month.from === "2026-11-01" && presets.month.to === "2026-11-19");
 check("Geçen ay", presets.prev_month.from === "2026-10-01" && presets.prev_month.to === "2026-10-31");
 const march = Object.fromEntries(reportPresets(new Date("2026-03-05T10:00:00Z")).map((p) => [p.key, p]));
