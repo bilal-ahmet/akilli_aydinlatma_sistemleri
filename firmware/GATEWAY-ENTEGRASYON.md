@@ -15,8 +15,8 @@ kontratı: `ESP32-ENTEGRASYON.md`, `BINARY-ENTEGRASYON.md`.
 
 | Topic | Yön | Ne |
 |---|---|---|
-| `Meven:<GW_ID>/bin` | gateway → backend (QoS 1) | 0x03 paketleri: BR_HEALTH, BR_NEIGHBORS, BR_ROUTES, COMMAND_ACK |
-| `Meven:<GW_ID>/lwt` | gateway → backend (QoS 1, **retained**) | `{"online":true}` bağlanınca, MQTT will ile `{"online":false}` |
+| `Meven:<GW_ID>/bin` | gateway → backend (QoS 2) | 0x03 paketleri: BR_HEALTH, BR_NEIGHBORS, BR_ROUTES, COMMAND_ACK |
+| `Meven:<GW_ID>/lwt` | gateway → backend (QoS 2, **retained**) | `{"online":true}` bağlanınca, MQTT will ile `{"online":false}` |
 | `Meven:<GW_ID>/cmd` | backend → gateway | 0x03 COMMAND: `report_now` (6), `ota_check` (5) |
 
 - **GW_ID** = gateway'in Wi-Fi STA MAC'i, iki noktasız, büyük harf (örn.

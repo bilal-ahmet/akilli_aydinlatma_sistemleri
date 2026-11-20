@@ -43,6 +43,8 @@ import {
   jsonMirrorTopic,
   ALL_CMD,
   BIN_WILDCARD,
+  CMD_QOS,
+  UPLINK_QOS,
   JSON_DATA_WILDCARD,
   JSON_HEALTH_WILDCARD,
   LWT_WILDCARD,
@@ -107,14 +109,15 @@ export function getMqttClient(): MqttClient {
 
   client.on("connect", () => {
     console.log("[mqtt] connected (HiveMQ Cloud, TLS)");
-    // /bin QoS 1: cihaz health'i QoS 2 ile basıyor; bir-kezlik alanlar
-    // (idf_version, ağ adı) yalnızca bağlantı başına bir kez geliyor.
+    // /bin ve /lwt QoS 2 (UPLINK_QOS, bkz. topics.ts): tekrar ve kayıp yok;
+    // bir-kezlik health alanları (idf_version, ağ adı) yalnızca bağlantı
+    // başına bir kez geliyor. Etkin QoS cihazın yayın QoS'uyla sınırlıdır.
     client.subscribe(
       {
         [JSON_DATA_WILDCARD]: { qos: 0 },
         [JSON_HEALTH_WILDCARD]: { qos: 0 },
-        [BIN_WILDCARD]: { qos: 1 },
-        [LWT_WILDCARD]: { qos: 1 },
+        [BIN_WILDCARD]: { qos: UPLINK_QOS },
+        [LWT_WILDCARD]: { qos: UPLINK_QOS },
       },
       (err) => {
         if (err) console.error("[mqtt] subscribe error:", err.message);
@@ -1029,7 +1032,7 @@ export function publishCommand(
   const client = getMqttClient();
   if (topics.length > 0) {
     const payload = Buffer.from(encodeCommand(toBinaryCommand(wire, shortIds.issue(requestId))));
-    for (const topic of topics) client.publish(topic, payload, { qos: 1 });
+    for (const topic of topics) client.publish(topic, payload, { qos: CMD_QOS });
   }
   rememberInflight(requestId, { channel: wireChannel(cmd) });
 
@@ -1045,7 +1048,7 @@ export function publishCommand(
 export function publishMaintenance(mac: string, action: MaintenanceAction): { requestId: string } {
   const requestId = randomUUID();
   const payload = Buffer.from(encodeCommand({ action, id: shortIds.issue(requestId) }));
-  getMqttClient().publish(cmdTopic(mac), payload, { qos: 1 });
+  getMqttClient().publish(cmdTopic(mac), payload, { qos: CMD_QOS });
   rememberInflight(requestId, { maintenance: action });
   if (action === "ota_check") noteOtaSent(mac);
   return { requestId };
@@ -1065,7 +1068,7 @@ function publishZoneOp(
   const requestId = reuse?.requestId ?? randomUUID();
   const shortId = reuse?.shortId ?? shortIds.issue(requestId);
   const payload = Buffer.from(encodeCommand({ action: op.action, id: shortId, zones: op.zones }));
-  getMqttClient().publish(cmdTopic(mac), payload, { qos: 1 });
+  getMqttClient().publish(cmdTopic(mac), payload, { qos: CMD_QOS });
   rememberInflight(requestId, { zoneOp: op.action });
   return { requestId, shortId };
 }
@@ -1080,7 +1083,7 @@ registerZonePublisher(publishZoneOp);
 export function publishGatewayCommand(gatewayId: string, action: BrCommandAction): { requestId: string } {
   const requestId = randomUUID();
   const payload = Buffer.from(encodeBrCommand({ action, id: shortIds.issue(requestId) }));
-  getMqttClient().publish(cmdTopic(gatewayId), payload, { qos: 1 });
+  getMqttClient().publish(cmdTopic(gatewayId), payload, { qos: CMD_QOS });
   rememberInflight(requestId, { gatewayCommand: action });
   if (action === "ota_check") noteOtaSent(gatewayId);
   return { requestId };

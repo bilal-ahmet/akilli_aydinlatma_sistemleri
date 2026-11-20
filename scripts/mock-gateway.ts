@@ -77,14 +77,14 @@ const client = mqtt.connect({
   password: process.env.MQTT_PASS,
   rejectUnauthorized: true,
   clientId: `mock-gw-${GW_ID}-${Math.random().toString(16).slice(2, 8)}`,
-  will: { topic: T_LWT, payload: Buffer.from(JSON.stringify({ online: false })), qos: 1, retain: true },
+  will: { topic: T_LWT, payload: Buffer.from(JSON.stringify({ online: false })), qos: 2, retain: true },
 });
 
 type Fields = Array<readonly [string, FieldValue | null | undefined]>;
 
 function publish(type: BrMessageTypeName, fields: Fields, label: string): void {
   const frame = encodeFrame(type, fields, { version: BR_PROTOCOL_VERSION });
-  client.publish(T_BIN, Buffer.from(frame), { qos: 1 });
+  client.publish(T_BIN, Buffer.from(frame), { qos: 2 }); // lib/topics.ts UPLINK_QOS
   console.log(`  → [bin ${frame.length} B] ${label}`);
 }
 
@@ -246,8 +246,8 @@ client.on("connect", () => {
   mqttConnects += 1;
   firstHealth = true;
   console.log(`✓ Broker bağlandı — sanal ağ geçidi ${GW_ID} (thread_br, binary 0x03)`);
-  client.publish(T_LWT, JSON.stringify({ online: true }), { qos: 1, retain: true });
-  client.subscribe(T_CMD, { qos: 1 }, (err) => {
+  client.publish(T_LWT, JSON.stringify({ online: true }), { qos: 2, retain: true });
+  client.subscribe(T_CMD, { qos: 2 }, (err) => { // CMD_QOS
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`  dinleniyor: ${T_CMD}\n`);
     publishHealth();

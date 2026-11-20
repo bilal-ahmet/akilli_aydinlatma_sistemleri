@@ -106,7 +106,7 @@ client.on("error", (err) => {
 });
 client.on("connect", () => {
   const topic = `Meven:${mac}/bin`;
-  client.publish(topic, Buffer.from(payload), { qos: 1 }, (err) => {
+  client.publish(topic, Buffer.from(payload), { qos: 2 }, (err) => {
     if (err) console.error("Publish hatası:", err.message);
     else console.log(`▶ ${topic} (${payload.length} bayt): ${toHex(payload)}`);
     client.end();

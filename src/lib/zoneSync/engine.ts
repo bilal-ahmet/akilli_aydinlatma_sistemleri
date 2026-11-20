@@ -26,7 +26,7 @@ import {
  * index'inden, DB'siz) cihazın BİLİNEN listesine (device_zone_sync.reported)
  * getirir. Cihaz başına aynı anda tek komut uçuştadır; ack gelince fark
  * yeniden hesaplanır (bkz. plan.ts). Çevrimdışı cihaz komutu kaçırırsa
- * (QoS 0 abonelik, kalıcı oturum yok) HELLO'da ya da sıradaki /bin paketinde
+ * (kalıcı oturum yok; QoS 2 de çevrimdışı cihaza saklanmaz) HELLO'da ya da sıradaki /bin paketinde
  * kalınan yerden devam edilir — istenen durum DB'de olduğu için restart'ta
  * da kaybolmaz.
  *

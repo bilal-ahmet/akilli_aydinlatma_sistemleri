@@ -37,7 +37,7 @@ const client = mqtt.connect({
 });
 
 client.on("connect", () => {
-  client.subscribe(TOPIC, { qos: 1 }, (err) => {
+  client.subscribe(TOPIC, { qos: 2 }, (err) => {
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`✓ dinleniyor: ${TOPIC}\n  (dashboard'dan komut gönder; Ctrl+C ile çık)\n`);
   });

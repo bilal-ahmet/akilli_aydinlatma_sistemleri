@@ -89,7 +89,7 @@ topic'lerini NVS'te tutar, backend `Meven:<MAC>/cmd`'ye binary komutla yönetir.
 | `src/lib/binproto/command.ts` | `encodeCommand` (TYPE = COMMAND) |
 | `src/lib/binproto/shortIds.ts` | Kısa komut id'si ↔ UUID tablosu |
 | `src/lib/binUplink.ts` | Sunucu katmanı: sayaçlar, alarm, health önbelleği, `binSeen`, JSON reddi |
-| `src/lib/mqtt.ts` | `+/bin` aboneliği (QoS 1), `handleBinUplink` → `routeUplink`; `/data`/`/health` JSON reddi; binary `publishCommand` |
+| `src/lib/mqtt.ts` | `+/bin` aboneliği (QoS 2), `handleBinUplink` → `routeUplink`; `/data`/`/health` JSON reddi; binary `publishCommand` |
 | `GET /api/admin/binproto` + `src/app/admin/BinaryProtocol.tsx` | Admin kartı |
 
 ## Kurallar

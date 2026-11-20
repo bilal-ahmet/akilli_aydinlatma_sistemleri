@@ -195,7 +195,7 @@ Meven:<slug>/cmd   ← Backend publish, o bölgedeki ESP32'ler subscribe (bölge
 Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
 Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri + komut yanıtı)
 Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürümü, OTA durumu)
-Meven:<MAC>/bin    ← ESP32 (yeni firmware) publish, Backend subscribe (QoS 1): binary protokol v1, TÜM uplink
+Meven:<MAC>/bin    ← ESP32 (yeni firmware) publish, Backend subscribe (QoS 2): binary protokol v1, TÜM uplink
 Meven:<GW>/bin     ← Ağ geçidi (Border Router) publish: binary 0x03 (bkz. "Gateway'ler")
 Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (abonelik +/lwt)
 ```
@@ -378,7 +378,7 @@ MQTT will mesajıdır; kalır.
 ```
 Meven:<GW_ID>/bin  ← 0x03: BR_HEALTH (bağlanınca + ~300 sn), BR_NEIGHBORS + BR_ROUTES
                      (bağlanınca + ~900 sn, sayfalı, aynı SNAPSHOT_ID), COMMAND_ACK
-Meven:<GW_ID>/lwt  ← retained {"online":true}; MQTT will {"online":false}  (abonelik +/lwt, QoS 1)
+Meven:<GW_ID>/lwt  ← retained {"online":true}; MQTT will {"online":false}  (abonelik +/lwt, QoS 2)
 Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa id
 ```
 
@@ -426,8 +426,22 @@ Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa i
 
 ### QoS Seviyeleri
 
-- Komutlar (cmd): **QoS 1** — en az bir kez iletim garantisi
-- Veri (data): **QoS 0** — fire and forget, yüksek frekanslı
+Tek yer: `src/lib/topics.ts → CMD_QOS`, `UPLINK_QOS` (2026-11-20'de 1 → 2).
+
+- **Backend → cihaz / ağ geçidi** (komut, bakım, zone, gateway komutu, bütün
+  `…/cmd` topic'leri): **QoS 2** — tam bir kez iletim.
+- **Cihaz / ağ geçidi → backend** (`+/bin`, `+/lwt` aboneliği): **QoS 2**.
+- Eski JSON topic'leri (`+/data`, `+/health`, yalnızca görünürlük) ve JSON
+  aynası: QoS 0.
+
+> **Etkin QoS = min(yayınlayanın QoS'u, abonenin QoS'u).** Backend'in 2
+> istemesi yalnızca kendi tarafındaki üst sınırdır. Uçtan uca QoS 2 için
+> firmware komut topic'lerine (`Meven:<MAC>/cmd`, bölge/alt grup, `all`)
+> QoS 2 ile **abone olmalı**, `/bin`'i (ve ağ geçidi `/lwt` + will'i) QoS 2
+> ile **basmalıdır**; aksi halde o yön firmware'in QoS'unda kalır. Kalıcı
+> oturum (clean session = false) yoksa QoS 2 de çevrimdışı cihaza saklanmaz.
+> Bedeli: mesaj başına 4 paketlik el sıkışma; Thread ağında özellikle bölge
+> komutunun fan-out'unda trafik artar.
 
 ---
 

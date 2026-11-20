@@ -6,7 +6,8 @@
  * Bir tur = aynı SNAPSHOT_ID'yi taşıyan sayfalar (PAGE 0'dan başlar, son
  * sayfada LAST_PAGE = 1). NEIGHBORS ve ROUTES aynı turda aynı SNAPSHOT_ID ile
  * gelir ama ayrı birleştirilir. Kurallar:
- *  - Paketler QoS 1'dir: aynı sayfa iki kez gelebilir, bir kez sayılır.
+ *  - Aynı sayfa iki kez gelebilir (ağ geçidi QoS 1 ile basarsa ya da yeniden
+ *    bağlanmada), bir kez sayılır.
  *  - Sayfalar sırasız gelebilir; LAST_PAGE görülüp 0..son sayfaların hepsi
  *    gelince tur tamamdır.
  *  - Aynı gateway + tür için yeni bir tur başlarsa eskisinin yarımı atılır;

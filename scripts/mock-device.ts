@@ -308,7 +308,7 @@ type BinFields = Array<readonly [string, FieldValue | null | undefined]>;
 
 function publishBin(type: Parameters<typeof encodeFrame>[0], fields: BinFields): number {
   const frame = encodeFrame(type, fields);
-  client.publish(T_BIN, Buffer.from(frame), { qos: type === "HEALTH" ? 2 : 0 });
+  client.publish(T_BIN, Buffer.from(frame), { qos: 2 }); // QoS kontratı: lib/topics.ts UPLINK_QOS
   return frame.length;
 }
 
@@ -624,7 +624,7 @@ client.on("connect", () => {
   healthStaticSent = false; // yeni bağlantı: bir-kezlik health alanları tekrar gider
   intervalsSent = false;
   const topics = [T_CMD, T_ALL, ...nvsZones.map(zoneTopic)]; // yeniden bağlanmada güncel NVS listesi
-  client.subscribe(topics, { qos: 1 }, (err) => {
+  client.subscribe(topics, { qos: 2 }, (err) => { // CMD_QOS
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`  dinleniyor:\n    ${topics.join("\n    ")}`);
     console.log("\nDashboard'dan komut gönder → burada görünecek, yanıtı dashboard'a dönecek.\n");
@@ -847,7 +847,7 @@ function applyZones(next: string[]): void {
   const added = next.filter((z) => !nvsZones.includes(z));
   nvsZones = next;
   if (removed.length) client.unsubscribe(removed.map(zoneTopic));
-  if (added.length) client.subscribe(added.map(zoneTopic), { qos: 1 });
+  if (added.length) client.subscribe(added.map(zoneTopic), { qos: 2 });
   console.log(`  NVS bölgeleri: [${nvsZones.join(", ")}]`);
 }
 

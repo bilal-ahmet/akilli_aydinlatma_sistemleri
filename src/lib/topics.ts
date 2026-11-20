@@ -34,6 +34,18 @@ export const BIN_WILDCARD = "+/bin";
 export const lwtTopic = (mac: string) => `${PREFIX}:${mac}/lwt`;
 export const LWT_WILDCARD = "+/lwt";
 
+/**
+ * QoS kontratı (tek yer). MQTT'de etkin QoS = min(yayınlayanın QoS'u,
+ * abonenin QoS'u): backend'in 2 istemesi yalnızca kendi tarafındaki üst
+ * sınırdır; uçtan uca 2 için firmware de komut topic'lerine QoS 2 ile abone
+ * olmalı ve /bin, /lwt'yi QoS 2 ile basmalıdır.
+ *  - CMD_QOS:    backend → cihaz / ağ geçidi (komut, bakım, zone, gateway komutu)
+ *  - UPLINK_QOS: cihaz / ağ geçidi → backend (`+/bin`, `+/lwt` aboneliği)
+ * Eski JSON topic'leri (yalnızca görünürlük) ve JSON aynası 0'da kalır.
+ */
+export const CMD_QOS = 2;
+export const UPLINK_QOS = 2;
+
 /** Çözülmüş binary paketin iç JSON'unun türü (lib/binproto/toJson). */
 export type UplinkSuffix = "data" | "health";
 

@@ -27,7 +27,7 @@ import { zoneSyncView } from "@/lib/zoneSync/engine";
  *  - Çok lambalı efekt lamba hedefini cihazın tamamına yükseltir; lambası
  *    `minLamps`'ten az olan cihaz atlanır.
  *  - Çok lambalı efekt çalışan cihazda lamba komutundan ÖNCE efekt kanalsız
- *    `dim` ile cihazın tamamında durdurulur. Aynı topic + QoS 1 → MQTT sırayı
+ *    `dim` ile cihazın tamamında durdurulur. Aynı topic + QoS 2 → MQTT sırayı
  *    korur; `recordCommand`'lar da sırayla beklenir.
  *
  * Komut yolu değildir (Kural #10 istek route'ları için): planı çözmek için

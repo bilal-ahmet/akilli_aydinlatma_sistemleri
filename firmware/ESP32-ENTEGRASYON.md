@@ -30,7 +30,8 @@ Bu değer hem topic'lerde hem data payload'ındaki `deviceId` alanında kullanı
 
 Cihaz açılışta **üç** topic'e subscribe olur: `Meven:<MAC>/cmd`,
 `Meven:<ZONE_SLUG>/cmd` ve `Meven:all/cmd`.
-**QoS:** komutlara subscribe → 1 · data/health publish → 0.
+**QoS (2026-11-20):** komut topic'lerine subscribe → **2** · `/bin` publish → **2**
+(backend iki yönde de QoS 2 kullanır; etkin QoS iki tarafın küçüğüdür).
 
 ### ZONE_SLUG provisioning (cihaz başına, zorunlu)
 `secrets.h` içine cihazın bulunduğu bölgenin slug'ı yazılır:
