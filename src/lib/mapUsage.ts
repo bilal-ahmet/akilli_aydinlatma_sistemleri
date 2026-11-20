@@ -17,15 +17,21 @@ import { mapUsage } from "@/lib/db/schema";
  * Tüm müşteriler ortaktır (Google anahtar başına faturalar).
  */
 
-export type GoogleUsageKind = "load" | "route" | "geocode";
+export type GoogleUsageKind = "load" | "route" | "geocode" | "places";
 
 const COLUMN = {
   load: mapUsage.googleLoads,
   route: mapUsage.routeRequests,
   geocode: mapUsage.geocodeRequests,
+  places: mapUsage.placesRequests,
 } as const;
 
-const PROP = { load: "googleLoads", route: "routeRequests", geocode: "geocodeRequests" } as const;
+const PROP = {
+  load: "googleLoads",
+  route: "routeRequests",
+  geocode: "geocodeRequests",
+  places: "placesRequests",
+} as const;
 
 const DEFAULTS: Record<GoogleUsageKind, { daily: number; monthly: number; env: string }> = {
   load: { daily: 250, monthly: 8000, env: "GOOGLE_MAPS" },
@@ -33,6 +39,10 @@ const DEFAULTS: Record<GoogleUsageKind, { daily: number; monthly: number; env: s
   route: { daily: 100, monthly: 5000, env: "GOOGLE_ROUTES" },
   // Geocoding Essentials: 10k/ay ücretsiz; yarısında kalınır.
   geocode: { daily: 100, monthly: 5000, env: "GOOGLE_GEOCODING" },
+  // Places (New): yazarken her öneri isteği + seçimde bir ayrıntı isteği.
+  // Autocomplete Requests ve Place Details Essentials'ın her biri 10k/ay
+  // ücretsiz; ikisi tek sayaçta, toplamın altında kalınır.
+  places: { daily: 300, monthly: 8000, env: "GOOGLE_PLACES" },
 };
 
 function limitFrom(name: string, fallback: number): number {
@@ -145,18 +155,21 @@ export interface MapUsageSnapshot extends UsageCounter {
   routes: UsageCounter;
   /** Adres bulma (Geocoding API) sayacı. */
   geocodes: UsageCounter;
+  /** Adres önerisi (Places API) sayacı. */
+  places: UsageCounter;
 }
 
 /** Admin sayfası için kullanım özeti. */
 export async function mapUsageSnapshot(): Promise<MapUsageSnapshot> {
   const day = today();
   const [row] = await db
-    .select({ loads: mapUsage.googleLoads, routes: mapUsage.routeRequests, geocodes: mapUsage.geocodeRequests })
+    .select({ loads: mapUsage.googleLoads, routes: mapUsage.routeRequests, geocodes: mapUsage.geocodeRequests, places: mapUsage.placesRequests })
     .from(mapUsage)
     .where(sql`${mapUsage.day} = ${day}`);
   const load = googleUsageLimits("load");
   const route = googleUsageLimits("route");
   const geo = googleUsageLimits("geocode");
+  const pl = googleUsageLimits("places");
   return {
     configured: googleMapsConfigured(),
     today: row?.loads ?? 0,
@@ -176,6 +189,13 @@ export async function mapUsageSnapshot(): Promise<MapUsageSnapshot> {
       dailyLimit: geo.daily,
       month: await monthTotal("geocode", day),
       monthlyLimit: geo.monthly,
+    },
+    places: {
+      configured: googleRoutesConfigured(),
+      today: row?.places ?? 0,
+      dailyLimit: pl.daily,
+      month: await monthTotal("places", day),
+      monthlyLimit: pl.monthly,
     },
   };
 }

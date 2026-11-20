@@ -533,6 +533,8 @@ export const mapUsage = pgTable("map_usage", {
   routeRequests: integer("route_requests").notNull().default(0),
   /** Google Geocoding API istekleri (yol tarifinde adres başlangıcı). */
   geocodeRequests: integer("geocode_requests").notNull().default(0),
+  /** Google Places API (New) istekleri: adres önerisi + seçilen yerin konumu. */
+  placesRequests: integer("places_requests").notNull().default(0),
 });
 
 export type CustomerRow = typeof customers.$inferSelect;

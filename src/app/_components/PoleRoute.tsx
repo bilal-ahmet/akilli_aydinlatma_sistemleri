@@ -11,6 +11,7 @@ import {
   type LatLng,
 } from "@/app/_lib/polyline";
 import type { MapRoute } from "./PoleMap";
+import { AddressAutocomplete } from "./AddressAutocomplete";
 
 /**
  * Direğe yol tarifi (Haritalar sayfası, direk paneli).
@@ -384,21 +385,20 @@ export function PoleRoute({
         ) : null}
 
         {origin === "address" ? (
-          <input
-            type="text"
+          <AddressAutocomplete
+            poleId={pole.id}
+            enabled={provider === "google"}
             value={address}
-            maxLength={200}
-            onChange={(e) => {
-              setAddress(e.target.value);
+            onChange={(text) => {
+              setAddress(text);
               setChosen(null);
               if (status.kind !== "idle") reset();
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !busy) void show();
+            onPick={(place) => void pickCandidate(place)}
+            onEnter={() => {
+              if (!busy) void show();
             }}
-            placeholder="Ör. Kocaeli Büyükşehir Belediyesi, İzmit"
-            aria-label="Başlangıç adresi"
-            className="field !h-9 !text-[13px]"
+            onError={(message) => setStatus({ kind: "error", message })}
           />
         ) : null}
       </div>

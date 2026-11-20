@@ -1,0 +1,1 @@
+ALTER TABLE "map_usage" ADD COLUMN "places_requests" integer DEFAULT 0 NOT NULL;

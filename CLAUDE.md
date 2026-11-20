@@ -934,8 +934,8 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
     google.maps.Map` ile kurmayın.**
   - **Tarayıcıda yalnızca Maps JavaScript API.** Places, Geocoding, Street
     View, Static Maps kullanılmaz (ayrı faturalanır); `clickableIcons: false`.
-    İstisna **Routes API + Geocoding API** (yol tarifi): yalnızca sunucudan,
-    ayrı anahtarla ve kota sayaçlarıyla (aşağıda).
+    İstisna **Routes API + Geocoding API + Places API (New)** (yol tarifi):
+    yalnızca sunucudan, ayrı anahtarla ve kota sayaçlarıyla (aşağıda).
   - **Yol tarifi** (direk paneli → "Yol tarifi", `_components/PoleRoute.tsx`):
     başlangıç = Konumum (GPS) · Haritada seç · başka direk · adres; Araç/Yaya.
     `POST /api/map/route { poleId, mode, origin: {kind:"point",lat,lng} |
@@ -943,7 +943,18 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
     bütün roller; başlangıç direği aynı müşteriden). Sunucu
     `lib/googleRoutes.ts` → Compute Routes, **Essentials SKU'su**: alan maskesi
     + `TRAFFIC_UNAWARE` (trafik/rota değiştirici eklemeyin, Pro'ya çıkar).
-    **Adres başlangıcı** önce `POST /api/map/geocode { poleId, text }`
+    **Adres önerisi (yazarken):** `_components/AddressAutocomplete.tsx` →
+    `POST /api/map/places { action: "suggest" | "details", poleId, input |
+    placeId, sessionToken }` (`lib/googlePlaces.ts`, Places API (New), aynı
+    anahtar; 300 ms + ≥3 karakter, direğin 30 km çevresine öncelik, yalnızca
+    TR). Yazma oturumu başına `sessionToken`; seçimde Details yalnızca
+    `location,formattedAddress` (Essentials; `displayName` Pro'dur, eklemeyin)
+    ile oturum biter ve rota doğrudan çizilir. Sayaç `claimGoogleUsage("places")`
+    (`map_usage.places_requests`, `GOOGLE_PLACES_DAILY/MONTHLY_LIMIT`, boş =
+    300 / 8000), kullanıcı başına 10 dk'da 120 istek. Anahtarda Places kapalıysa
+    (403) sunucu 10 dk öneriyi kapatır, kutu Enter ile aşağıdaki Geocoding
+    akışına döner.
+    **Adres başlangıcı (Enter / "Rotayı göster")** önce `POST /api/map/geocode { poleId, text }`
     (`lib/googleGeocode.ts`, aynı anahtar; hedef direğin ±0,3° çevresine
     öncelik, `country:TR`, ülke/il düzeyi kaba sonuçlar atılır, en fazla 5):
     tek sonuç → doğrudan rota, çok sonuç → panelde aday listesi, rota seçilen
@@ -1490,6 +1501,9 @@ GOOGLE_ROUTES_DAILY_LIMIT=
 GOOGLE_ROUTES_MONTHLY_LIMIT=
 GOOGLE_GEOCODING_DAILY_LIMIT=
 GOOGLE_GEOCODING_MONTHLY_LIMIT=
+# Adres önerisi (Places API (New), aynı anahtar). Boş = 300 / 8000.
+GOOGLE_PLACES_DAILY_LIMIT=
+GOOGLE_PLACES_MONTHLY_LIMIT=
 
 # Binary uplink'in JSON aynası (opsiyonel, izleme): all | MAC1,MAC2 | boş=kapalı.
 # Meven:<MAC>/json/data|health|reject topic'lerine basar.

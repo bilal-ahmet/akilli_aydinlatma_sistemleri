@@ -15,6 +15,7 @@ interface Counter {
 interface Snapshot extends Counter {
   routes?: Counter;
   geocodes?: Counter;
+  places?: Counter;
 }
 
 function Meter({ label, used, limit }: { label: string; used: number; limit: number }) {
@@ -64,6 +65,7 @@ export function MapUsage() {
 
   const routes = snap?.routes?.configured ? snap.routes : null;
   const geocodes = snap?.geocodes?.configured ? snap.geocodes : null;
+  const places = snap?.places?.configured ? snap.places : null;
   if (!snap || (!snap.configured && !routes)) return null;
 
   return (
@@ -113,6 +115,20 @@ export function MapUsage() {
           {isFull(geocodes) ? (
             <p className="mt-3 text-xs font-medium text-danger">
               Sınır doldu: adres başlangıcı doğrudan rota servisine veriliyor (aday listesi yok).
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {places ? (
+        <>
+          <h3 className="mt-4 text-xs font-semibold text-ink-2">Adres önerisi (Places API)</h3>
+          <div className="mt-2 flex flex-wrap gap-x-8 gap-y-4">
+            <Meter label="Bugün" used={places.today} limit={places.dailyLimit} />
+            <Meter label="Bu ay" used={places.month} limit={places.monthlyLimit} />
+          </div>
+          {isFull(places) ? (
+            <p className="mt-3 text-xs font-medium text-danger">
+              Sınır doldu: adres yazarken öneri gösterilmiyor; adres Enter ile aranıyor.
             </p>
           ) : null}
         </>
