@@ -17,17 +17,22 @@ import { mapUsage } from "@/lib/db/schema";
  * Tüm müşteriler ortaktır (Google anahtar başına faturalar).
  */
 
-export type GoogleUsageKind = "load" | "route";
+export type GoogleUsageKind = "load" | "route" | "geocode";
 
 const COLUMN = {
   load: mapUsage.googleLoads,
   route: mapUsage.routeRequests,
+  geocode: mapUsage.geocodeRequests,
 } as const;
+
+const PROP = { load: "googleLoads", route: "routeRequests", geocode: "geocodeRequests" } as const;
 
 const DEFAULTS: Record<GoogleUsageKind, { daily: number; monthly: number; env: string }> = {
   load: { daily: 250, monthly: 8000, env: "GOOGLE_MAPS" },
   // Compute Routes Essentials: 10k/ay ücretsiz; yarısında kalınır.
   route: { daily: 100, monthly: 5000, env: "GOOGLE_ROUTES" },
+  // Geocoding Essentials: 10k/ay ücretsiz; yarısında kalınır.
+  geocode: { daily: 100, monthly: 5000, env: "GOOGLE_GEOCODING" },
 };
 
 function limitFrom(name: string, fallback: number): number {
@@ -54,6 +59,14 @@ export function googleMapsConfigured(): boolean {
   return Boolean(
     process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() && process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID?.trim(),
   );
+}
+
+/**
+ * Geocoding de aynı sunucu anahtarını kullanır (`GOOGLE_ROUTES_API_KEY`;
+ * anahtarın API kısıtlamasında Routes + Geocoding açık olmalı).
+ */
+export function googleRoutesKey(): string | undefined {
+  return process.env.GOOGLE_ROUTES_API_KEY?.trim() || undefined;
 }
 
 /**
@@ -100,10 +113,10 @@ export async function claimGoogleUsage(kind: GoogleUsageKind): Promise<boolean> 
     if ((await monthTotal(kind, day)) >= monthly) return false;
     const rows = await db
       .insert(mapUsage)
-      .values(kind === "load" ? { day, googleLoads: 1 } : { day, routeRequests: 1 })
+      .values({ day, [PROP[kind]]: 1 })
       .onConflictDoUpdate({
         target: mapUsage.day,
-        set: kind === "load" ? { googleLoads: sql`${col} + 1` } : { routeRequests: sql`${col} + 1` },
+        set: { [PROP[kind]]: sql`${col} + 1` },
         setWhere: lt(col, daily),
       })
       .returning({ n: col });
@@ -130,17 +143,20 @@ export interface UsageCounter {
 export interface MapUsageSnapshot extends UsageCounter {
   /** Yol tarifi (Routes API) sayacı. */
   routes: UsageCounter;
+  /** Adres bulma (Geocoding API) sayacı. */
+  geocodes: UsageCounter;
 }
 
 /** Admin sayfası için kullanım özeti. */
 export async function mapUsageSnapshot(): Promise<MapUsageSnapshot> {
   const day = today();
   const [row] = await db
-    .select({ loads: mapUsage.googleLoads, routes: mapUsage.routeRequests })
+    .select({ loads: mapUsage.googleLoads, routes: mapUsage.routeRequests, geocodes: mapUsage.geocodeRequests })
     .from(mapUsage)
     .where(sql`${mapUsage.day} = ${day}`);
   const load = googleUsageLimits("load");
   const route = googleUsageLimits("route");
+  const geo = googleUsageLimits("geocode");
   return {
     configured: googleMapsConfigured(),
     today: row?.loads ?? 0,
@@ -153,6 +169,13 @@ export async function mapUsageSnapshot(): Promise<MapUsageSnapshot> {
       dailyLimit: route.daily,
       month: await monthTotal("route", day),
       monthlyLimit: route.monthly,
+    },
+    geocodes: {
+      configured: googleRoutesConfigured(),
+      today: row?.geocodes ?? 0,
+      dailyLimit: geo.daily,
+      month: await monthTotal("geocode", day),
+      monthlyLimit: geo.monthly,
     },
   };
 }

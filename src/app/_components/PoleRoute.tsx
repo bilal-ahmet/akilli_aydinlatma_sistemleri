@@ -35,11 +35,18 @@ interface RouteData {
   steps: Array<{ text: string; distanceMeters: number }>;
 }
 
+interface Candidate {
+  label: string;
+  lat: number;
+  lng: number;
+}
+
 type Status =
   | { kind: "idle" }
+  | { kind: "choose"; results: Candidate[] }
   | { kind: "locating" }
   | { kind: "loading" }
-  | { kind: "done"; route: RouteData }
+  | { kind: "done"; route: RouteData; startLabel: string | null }
   | { kind: "fallback"; reason: string }
   | { kind: "error"; message: string };
 
@@ -113,6 +120,8 @@ export function PoleRoute({
   const [mode, setMode] = useState<Mode>("drive");
   const [poleCode, setPoleCode] = useState("");
   const [address, setAddress] = useState("");
+  /** Geocoding ile bulunup seçilen adres (adres başlangıcı). */
+  const [chosen, setChosen] = useState<Candidate | null>(null);
   const [myPos, setMyPos] = useState<{ point: LatLng; accuracy: number } | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [showSteps, setShowSteps] = useState(false);
@@ -145,9 +154,11 @@ export function PoleRoute({
           ? originPole
             ? { lat: originPole.lat!, lng: originPole.lng! }
             : undefined
-          : address.trim().length >= 3
-            ? { address: address.trim() }
-            : undefined;
+          : chosen
+            ? { lat: chosen.lat, lng: chosen.lng }
+            : address.trim().length >= 3
+              ? { address: address.trim() }
+              : undefined;
   const navUrl = linkOrigin === undefined ? null : googleMapsDirUrl(linkOrigin, dest, mode);
 
   function reset() {
@@ -195,7 +206,50 @@ export function PoleRoute({
         setStatus({ kind: "error", message: "Başlangıç adresini yazın." });
         return;
       }
-      body = { kind: "address", text: address.trim() };
+      if (provider !== "google") {
+        setStatus({ kind: "fallback", reason: "osm" });
+        return;
+      }
+      if (chosen) {
+        await requestRoute({ kind: "point", lat: chosen.lat, lng: chosen.lng }, chosen.label);
+        return;
+      }
+      // Önce adres bulunur (Geocoding); çözülemezse adres Routes'a gider.
+      setStatus({ kind: "loading" });
+      try {
+        const res = await fetch("/api/map/geocode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ poleId: pole.id, text: address.trim() }),
+        });
+        const j = await res.json().catch(() => null);
+        if (!res.ok || !j?.ok) {
+          setStatus({ kind: "error", message: j?.error ?? "Adres aranamadı." });
+          return;
+        }
+        const data = j.data as { provider: "google"; results: Candidate[] } | { provider: "none"; reason: string };
+        if (data.provider === "none") {
+          await requestRoute({ kind: "address", text: address.trim() }, null);
+          return;
+        }
+        if (data.results.length === 0) {
+          setStatus({
+            kind: "error",
+            message: "Adres bulunamadı. Mahalle, cadde ya da ilçe adını ekleyerek tekrar deneyin.",
+          });
+          return;
+        }
+        if (data.results.length === 1) {
+          const only = data.results[0];
+          setChosen(only);
+          await requestRoute({ kind: "point", lat: only.lat, lng: only.lng }, only.label);
+          return;
+        }
+        setStatus({ kind: "choose", results: data.results });
+      } catch {
+        setStatus({ kind: "error", message: "Adres aranamadı. Bağlantınızı kontrol edin." });
+      }
+      return;
     }
 
     // Google rotası yalnızca Google haritasında gösterilebilir.
@@ -203,7 +257,16 @@ export function PoleRoute({
       setStatus({ kind: "fallback", reason: "osm" });
       return;
     }
+    await requestRoute(body, null);
+  }
 
+  async function pickCandidate(c: Candidate) {
+    setChosen(c);
+    reset();
+    await requestRoute({ kind: "point", lat: c.lat, lng: c.lng }, c.label);
+  }
+
+  async function requestRoute(body: Record<string, unknown>, startLabel: string | null) {
     setStatus({ kind: "loading" });
     try {
       const res = await fetch("/api/map/route", {
@@ -222,7 +285,7 @@ export function PoleRoute({
         return;
       }
       const path = decodePolyline(data.route.polyline);
-      setStatus({ kind: "done", route: data.route });
+      setStatus({ kind: "done", route: data.route, startLabel });
       onRoute({ key: `r${++routeSeq}`, path, start: data.route.start });
     } catch {
       setStatus({ kind: "error", message: "Yol tarifi alınamadı. Bağlantınızı kontrol edin." });
@@ -327,6 +390,7 @@ export function PoleRoute({
             maxLength={200}
             onChange={(e) => {
               setAddress(e.target.value);
+              setChosen(null);
               if (status.kind !== "idle") reset();
             }}
             onKeyDown={(e) => {
@@ -371,9 +435,34 @@ export function PoleRoute({
         </button>
       </div>
 
+      {/* Adres adayları */}
+      {status.kind === "choose" ? (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[12px] text-muted">Birden çok yer bulundu; başlangıcı seçin:</span>
+          <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+            {status.results.map((c, i) => (
+              <li key={i}>
+                <button
+                  type="button"
+                  onClick={() => void pickCandidate(c)}
+                  className="w-full px-2.5 py-1.5 text-left text-[12.5px] text-text hover:bg-panel-2"
+                >
+                  {c.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {/* Sonuç */}
       {status.kind === "done" ? (
         <div className="flex flex-col gap-2">
+          {status.startLabel ? (
+            <p className="text-[12px] text-muted">
+              Başlangıç: <span className="text-ink-2">{status.startLabel}</span>
+            </p>
+          ) : null}
           <p className="text-[13px] text-text">
             <span className="text-base font-semibold">{formatDuration(status.route.durationS)}</span>
             <span className="text-muted"> · {formatDistance(status.route.distanceMeters)}</span>

@@ -934,16 +934,23 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
     google.maps.Map` ile kurmayın.**
   - **Tarayıcıda yalnızca Maps JavaScript API.** Places, Geocoding, Street
     View, Static Maps kullanılmaz (ayrı faturalanır); `clickableIcons: false`.
-    Tek istisna **Routes API** (yol tarifi): yalnızca sunucudan, ayrı anahtarla
-    ve kota sayacıyla (aşağıda).
+    İstisna **Routes API + Geocoding API** (yol tarifi): yalnızca sunucudan,
+    ayrı anahtarla ve kota sayaçlarıyla (aşağıda).
   - **Yol tarifi** (direk paneli → "Yol tarifi", `_components/PoleRoute.tsx`):
     başlangıç = Konumum (GPS) · Haritada seç · başka direk · adres; Araç/Yaya.
     `POST /api/map/route { poleId, mode, origin: {kind:"point",lat,lng} |
     {kind:"pole",poleId} | {kind:"address",text} }` (`authorizePole` read,
     bütün roller; başlangıç direği aynı müşteriden). Sunucu
     `lib/googleRoutes.ts` → Compute Routes, **Essentials SKU'su**: alan maskesi
-    + `TRAFFIC_UNAWARE` (trafik/rota değiştirici eklemeyin, Pro'ya çıkar);
-    adresi Routes kendisi çözer (ayrı Geocoding yok). 10 dk bellek önbelleği,
+    + `TRAFFIC_UNAWARE` (trafik/rota değiştirici eklemeyin, Pro'ya çıkar).
+    **Adres başlangıcı** önce `POST /api/map/geocode { poleId, text }`
+    (`lib/googleGeocode.ts`, aynı anahtar; hedef direğin ±0,3° çevresine
+    öncelik, `country:TR`, ülke/il düzeyi kaba sonuçlar atılır, en fazla 5):
+    tek sonuç → doğrudan rota, çok sonuç → panelde aday listesi, rota seçilen
+    noktadan; "Başlangıç: <adres>" gösterilir. Geocoding çözemezse (kota,
+    hata) adres `origin.kind:"address"` ile Routes'a gider. Sayaç
+    `claimGoogleUsage("geocode")` (`map_usage.geocode_requests`,
+    `GOOGLE_GEOCODING_DAILY/MONTHLY_LIMIT`, boş = 100 / 5000). 10 dk bellek önbelleği,
     kullanıcı başına 10 dk'da 20 istek, sayaç `claimGoogleUsage("route")`
     (`map_usage.route_requests`, `GOOGLE_ROUTES_DAILY/MONTHLY_LIMIT`, boş =
     100 / 5000). Çizilemeyen durum hata değil `{ provider: "none", reason }`
@@ -1475,11 +1482,14 @@ NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=
 # Uygulama içi kota (harita yüklemesi, tüm müşteriler ortak). Boş = 250 / 8000.
 GOOGLE_MAPS_DAILY_LIMIT=
 GOOGLE_MAPS_MONTHLY_LIMIT=
-# Yol tarifi: SUNUCU anahtarı, yalnızca Routes API (NEXT_PUBLIC_ değil). Boşsa
-# rota çizilmez, Google Haritalar bağlantısı verilir. Sınırlar boş = 100 / 5000.
+# Yol tarifi: SUNUCU anahtarı, Routes + Geocoding API (NEXT_PUBLIC_ değil, web
+# sitesi kısıtlaması yok). Boşsa rota çizilmez, Google Haritalar bağlantısı
+# verilir. Sınırlar boş = 100 / 5000 (rota ve adres bulma ayrı sayılır).
 GOOGLE_ROUTES_API_KEY=
 GOOGLE_ROUTES_DAILY_LIMIT=
 GOOGLE_ROUTES_MONTHLY_LIMIT=
+GOOGLE_GEOCODING_DAILY_LIMIT=
+GOOGLE_GEOCODING_MONTHLY_LIMIT=
 
 # Binary uplink'in JSON aynası (opsiyonel, izleme): all | MAC1,MAC2 | boş=kapalı.
 # Meven:<MAC>/json/data|health|reject topic'lerine basar.
