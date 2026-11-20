@@ -420,8 +420,8 @@ export const d4iTelemetry = pgTable(
 /**
  * Health geçmişi — her `/health` mesajı (Thread/RF bloğu dahil) bir satır.
  * `devices.health` yalnızca son mesajı tutar; bu tablo admin'in "Kayıtlar"
- * sekmesi ve indirme içindir. Yalnızca kayıtlı cihazlar yazılır, 7 günden
- * eskiler `lib/healthLog.ts` ile silinir (müşteriye gösterilmez).
+ * sekmesi ve indirme içindir. Yalnızca kayıtlı cihazlar yazılır, 90 günden
+ * eskiler `lib/retention.ts` ile silinir (müşteriye gösterilmez).
  */
 export const deviceHealthLog = pgTable(
   "device_health_log",

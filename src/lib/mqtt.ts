@@ -11,6 +11,7 @@ import { syncFaultEvents } from "@/lib/faultLog";
 import { getTenancy, peekTenancy } from "@/lib/tenancy";
 import { noteHealth, noteOtaSent } from "@/lib/otaGuard";
 import { appendHealthLog } from "@/lib/healthLog";
+import { pruneOldRecords } from "@/lib/retention";
 import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { linkDevicesByPartition } from "@/lib/gatewayLink";
 import { intervalSeconds } from "@/lib/deviceWindows";
@@ -391,6 +392,7 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
       ledCurrentA: led?.current_a ?? null,
       raw: (raw as Record<string, unknown>) ?? null,
     });
+    pruneOldRecords("d4i_telemetry", now.getTime());
   } catch (err) {
     console.error(
       `[mqtt] d4i_telemetry yazılamadı (${mac} ch${ch}):`,

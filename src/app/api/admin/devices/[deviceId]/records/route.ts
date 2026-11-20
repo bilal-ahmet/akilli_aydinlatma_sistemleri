@@ -28,7 +28,7 @@ interface DeviceRecord {
  *
  * YALNIZCA ADMIN. Cihazın son N kaydı, yeniden eskiye:
  *  - data   → `d4i_telemetry` (lamba başına periyodik rapor, ham paket)
- *  - health → `device_health_log` (7 gün saklanır)
+ *  - health → `device_health_log` (90 gün saklanır)
  *  - rf     → aynı health satırlarının Thread radyo bloğu
  * `format=csv` ya da `download=1` dosya olarak iner (Content-Disposition).
  */

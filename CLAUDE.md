@@ -1025,8 +1025,8 @@ Yeni tablo yok; `fault_events` + `d4i_telemetry` üzerinden hesaplanır.
   uyarı + grafikte gri bant gösterir, günlük ortalama yalnızca kayıtlı günlere
   bölünür; dönemde hiç ölçüm yoksa sayılar yerine "ölçüm kaydı yok" çıkar.
 - Cihazlar **bugünkü** bölgelerinde raporlanır (taşınan cihazın geçmişi yeni
-  bölgesine yazılır). `d4i_telemetry` için saklama politikası eklenirse rapor o
-  süreden eskiye gidemez.
+  bölgesine yazılır). `d4i_telemetry` 90 gün saklanır (`lib/retention.ts`);
+  rapor dönemi (≤31 gün) bunun içinde kalır.
 
 ### Cihaz kayıtları (yalnızca admin)
 
@@ -1037,7 +1037,7 @@ GET /api/admin/devices/:deviceId/records?kind=data|health|rf&limit=50&format=jso
 Cihazın son N kaydı (varsayılan 50, en fazla 5000), yeniden eskiye. Guard
 `authorizeAdmin`: müşteri kullanıcıları (manager/viewer) 403 alır.
 - `data`: `d4i_telemetry` (lamba başına periyodik rapor, ham paket `raw`).
-- `health`: `device_health_log` (her `/health` mesajı, **7 gün** saklanır).
+- `health`: `device_health_log` (her `/health` mesajı, **90 gün** saklanır).
 - `rf`: aynı health satırlarının Thread radyo bloğu (`health.thread`: rol, parent
   RSSI/LQ, RLOC16, kanal, PAN, sayaçlar, `neighbors[]`).
 - `format=csv` ya da `download=1` dosya olarak iner (`Content-Disposition`).
@@ -1173,8 +1173,8 @@ CREATE TABLE devices (
 
 > `health*` sütunları migration `0008_device_health.sql`. `/health` `devices`
 > satırını günceller (son mesaj); ayrıca kayıtlı cihazın her mesajı
-> `device_health_log`'a eklenir (admin "Kayıtlar", migration `0014`, 7 gün:
-> `lib/healthLog.ts`, temizlik saatte en fazla bir kez health yazımının
+> `device_health_log`'a eklenir (admin "Kayıtlar", migration `0014`, 90 gün:
+> `lib/retention.ts`, temizlik saatte en fazla bir kez health yazımının
 > ardından, ayrı zamanlayıcı yok). `GET /api/devices` bunları
 > `firmwareVersion`, `resetReason`, `ota`, `healthAt` olarak döner.
 
@@ -1326,8 +1326,11 @@ CREATE INDEX idx_d4i_telemetry_device_channel ON d4i_telemetry(device_id, channe
 CREATE INDEX idx_d4i_telemetry_recorded_at ON d4i_telemetry(recorded_at DESC);
 ```
 
-> Cihaz kanal başına ~30 sn'de bir yayın yapar; tablo sınırsız büyür. İleride
-> saklama politikası (örn. 90 günden eskiyi sil) gerekecek.
+> Cihaz kanal başına ~30 sn'de bir yayın yapar. **Saklama: 90 gün**
+> (`lib/retention.ts → RECORD_RETENTION_DAYS`, `device_health_log` ile ortak):
+> telemetri yazımının ardından saatte en fazla bir kez, 5000 satırlık
+> parçalarla silinir; ayrı zamanlayıcı yok. 90 gündür rapor vermeyen armatürün
+> panelde son ölçümü de "ölçüm gelmiyor" uyarısı da kalmaz.
 
 ### `fault_events`
 

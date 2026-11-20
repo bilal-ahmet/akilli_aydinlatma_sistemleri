@@ -7,7 +7,7 @@ import { formatDateTime } from "@/app/_lib/format";
  * Cihaz modalinin "Kayıtlar" sekmesi — YALNIZCA ADMIN (modal sekmeyi admin'e
  * gösterir, API `authorizeAdmin` ister). Cihazın son kayıtları:
  *  - Veri:   d4i_periodic raporları (lamba başına, ham paket)
- *  - Health: /health mesajları (7 gün saklanır)
+ *  - Health: /health mesajları (90 gün saklanır)
  *  - RF:     health'teki Thread radyo bloğu (parent RSSI/LQ, komşular…)
  * Her görünüm CSV / JSON olarak indirilebilir.
  */
@@ -160,7 +160,7 @@ export function DeviceRecords({ deviceId }: { deviceId: string }) {
           JSON
         </a>
         <span className="text-xs text-muted">
-          {kind === "data" ? "Lamba başına D4i raporu" : "Health geçmişi 7 gün saklanır"}
+          {kind === "data" ? "Lamba başına D4i raporu" : "Health geçmişi 90 gün saklanır"}
         </span>
       </div>
 
