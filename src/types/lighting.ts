@@ -70,51 +70,9 @@ export function percentToLevel(percent: number): number {
   return Math.max(0, Math.min(MAX_ARC_LEVEL, Math.round((percent / 100) * MAX_ARC_LEVEL)));
 }
 
-// ── Command (Backend → ESP32) ────────────────────────────────
-// Yayınlanan komut payload'ı yalın: { action, value? } veya
-// { action:"efekt", number }. `channel` VARSA tek lambayı (0-63) hedefler;
-// YOKSA cihazdaki tüm lambaları. Aradaki fark tek başına `channel` alanının
-// varlığıdır — 255 gibi bir broadcast değeri yoktur.
-export const commandPayloadSchema = z.object({
-  action: z.enum(ACTIONS),
-  value: z.number().int().min(0).max(100).optional(),
-  number: z.number().int().min(0).max(EFFECT_MAX_NUMBER).optional(), // efekt no (0 = durdur)
-  channel: z.number().int().min(0).max(MAX_CHANNEL).optional(),
-  // Mors efektinin (no 22) çalacağı metin. Gönderilmezse cihaz son ayarlanan
-  // metni tekrar çalar — bu yüzden boş metin gönderilmez, alan hiç konmaz.
-  text: z.string().max(MORSE_TEXT_MAX).optional(),
-  // Komut kimliği = commands.request_id. Cihaz cevabında (ack) aynen geri
-  // yollar; hata doğru komuta/lambaya bu id ile bağlanır.
-  id: z.string().optional(),
-});
-export type CommandPayload = z.infer<typeof commandPayloadSchema>;
-
-// ── Data (ESP32 → Backend, Meven:<MAC>/data) ─────────────────
-// Tek kanal (lamba) durumu — çok-lamba cihazlar `channels` dizisinde raporlar.
-export const channelStatusSchema = z.object({
-  ch: z.number().int().min(0).max(MAX_CHANNEL),
-  brightness: z.number().int().min(0).max(100).optional(),
-  relayStatus: z.enum(["on", "off"]).optional(),
-  status: z.enum(["ok", "error"]).optional(),
-});
-export type ChannelStatus = z.infer<typeof channelStatusSchema>;
-
-export const dataPayloadSchema = z.object({
-  deviceId: z.string(), // MAC (iki noktasız)
-  // Cihaz-seviyesi (tek-lamba / geriye uyum) alanlar:
-  brightness: z.number().int().min(0).max(100).optional(),
-  relayStatus: z.enum(["on", "off"]).optional(),
-  temperature: z.number().optional(),
-  rssi: z.number().int().optional(),
-  status: z.enum(["ok", "error"]),
-  // Çok-lamba (DALI) cihazlar için kanal başına durum:
-  channels: z.array(channelStatusSchema).optional(),
-});
-export type DataPayload = z.infer<typeof dataPayloadSchema>;
-
 // ── D4i periyodik rapor (ESP32 → Backend) ────────────────────
-// Cihaz her DALI adresi (lamba) için ayrı bir mesaj yayınlar. Payload'da
-// `deviceId` YOKTUR — MAC topic'ten okunur (bkz. lib/topics.ts macFromDataTopic).
+// Binary D4I_PERIODIC paketinin iç JSON karşılığı (lib/binproto/toJson): DALI
+// adresi (lamba) başına bir mesaj. MAC topic'ten okunur (Meven:<MAC>/bin).
 
 /**
  * DALI sorgu yanıtı üç durumlu: 255 (evet), 0 (hayır), null (cihaz yanıtlamadı).
@@ -201,11 +159,10 @@ export function d4iIsOn(d: D4iPeriodic): boolean | undefined {
   return undefined;
 }
 
-// ── Komut yanıtı (ESP32 → Backend, aynı /data topic'i) ───────
-// Cihaz her komuttan sonra işleme sonucunu yayınlar. Firmware 1.0.9+ komutun
-// `action`'ını ve gönderilen `id`'yi aynen geri yollar; komut bu id ile
-// eşleştirilir. id'siz (eski firmware / "gecersiz json") yanıtta hedef komut
-// "o cihazın en son bekleyen komutu" olarak tahmin edilir (bkz. lib/mqtt.ts handleAck).
+// ── Komut yanıtı (ESP32 → Backend, binary COMMAND_ACK) ───────
+// Cihaz tekil komuttan sonra işleme sonucunu yayınlar; `action` ve u16 kısa
+// `id` geri gelir. lib/mqtt.ts kısa id'yi komutun UUID'sine çevirir; eşlenemeyen
+// yanıtta tahmin yapılmaz (bkz. handleBinUplink).
 export const commandAckSchema = z.object({
   status: z.enum(["ok", "error"]),
   error: z.string().optional(),
@@ -219,18 +176,16 @@ export const commandAckSchema = z.object({
 export type CommandAck = z.infer<typeof commandAckSchema>;
 
 /**
- * /data topic'inden gelen bir mesajı üç kontrattan birine ayrıştırır.
- * Ayrım sırası: `type` alanı → d4i, `deviceId` → eski tek/çok-lamba raporu,
- * yalnızca `status` → komut yanıtı.
+ * Çözülmüş binary paketin (data türü) iç JSON'unu ayrıştırır: `type` alanı →
+ * d4i ya da yok sayılan tip, yalnızca `status` → komut yanıtı.
  */
 export type Uplink =
   | { kind: "d4i"; data: D4iPeriodic }
-  | { kind: "legacy"; data: DataPayload }
   | { kind: "ack"; data: CommandAck }
   | { kind: "ignored"; type: string };
 
 /**
- * Cihazın /data'ya bastığı ama backend'in (henüz) işlemediği tipler: tek
+ * Cihazın bastığı ama backend'in (henüz) işlemediği tipler: tek
  * sorgu cevapları (`dali_status`, `d4i` = d4i_read sonucu) ve tarama özeti
  * (`commission_result`; lambalar zaten d4i_periodic ile gelir). Sessizce
  * atlanır — "bilinmeyen payload" uyarısı yalnızca gerçekten tanınmayana.
@@ -248,16 +203,12 @@ export function parseUplink(raw: unknown): Uplink | null {
     const p = d4iPeriodicSchema.safeParse(obj);
     return p.success ? { kind: "d4i", data: p.data } : null;
   }
-  if (typeof obj.deviceId === "string") {
-    const p = dataPayloadSchema.safeParse(obj);
-    return p.success ? { kind: "legacy", data: p.data } : null;
-  }
   const p = commandAckSchema.safeParse(obj);
   return p.success ? { kind: "ack", data: p.data } : null;
 }
 
-// ── Sağlık mesajı (ESP32 → Backend, Meven:<MAC>/health) ──────
-// Firmware 1.0.9+ ~30 sn'de bir yayınlar. OTA ilerlemesi buradan okunur.
+// ── Sağlık mesajı (ESP32 → Backend, binary HEALTH) ───────────
+// Binary HEALTH paketinin iç JSON karşılığı. OTA ilerlemesi buradan okunur.
 // Bilinmeyen alanlar korunur (passthrough) — ham mesaj devices.health'e yazılır.
 export const OTA_STATES = [
   "idle",

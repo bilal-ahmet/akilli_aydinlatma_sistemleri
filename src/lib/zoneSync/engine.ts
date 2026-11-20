@@ -1,7 +1,7 @@
 import { eq, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { peekTenancy, type TenancyIndex } from "@/lib/tenancy";
-import { binCommandCapable } from "@/lib/binUplink";
+import { binSeen } from "@/lib/binUplink";
 import { zoneSyncMode } from "@/lib/env";
 import { emitLiveEvent } from "@/lib/events";
 import { resultCodeOf } from "@/lib/binproto/fields";
@@ -32,7 +32,8 @@ import {
  *
  * Kurallar:
  *  - Zone komutu YALNIZCA binary ve YALNIZCA Meven:<MAC>/cmd'ye gider (cihaz
- *    başka topic'ten geleni -21 ile reddeder). JSON firmware'e hiç gitmez.
+ *    başka topic'ten geleni -21 ile reddeder); yalnızca binary paketi görülmüş
+ *    cihaza (binSeen), hiç bağlanmamış kayda gitmez.
  *  - Bilinmeyen cihaza ilk temas `zone_list`'tir (alan taşımaz): eski binary
  *    firmware -5 döner → `unsupported`; 0xA9 içeren paket ona hiç gitmez.
  *    `unsupported`, health'te firmware sürümü değişince sıfırlanır.
@@ -236,8 +237,8 @@ function step(mac: string): void {
   const idx = peekTenancy();
   if (!idx) return;
   if (!registered(idx, mac) && !st.managed) return; // hiç yönetilmemiş kayıtsız MAC
-  // Yalnızca binary konuşan cihaza (JSON firmware zone komutunu tanımaz).
-  if (!binCommandCapable(mac)) return;
+  // Hiç bağlanmamış (binary paketi görülmemiş) kayda komut atılmaz.
+  if (!binSeen(mac)) return;
   if (st.status === "unsupported" && st.unsupportedFw === st.firmware) return;
 
   const { valid, invalid } = desiredFor(idx, mac);
@@ -385,9 +386,9 @@ export function noteFirmware(mac: string, version: string | null): void {
 }
 
 /** Elle doğrulama (panel "Şimdi doğrula"): zone_list + fark. */
-export function forceVerify(mac: string): { sent: boolean; reason?: "off" | "not_binary" | "busy" } {
+export function forceVerify(mac: string): { sent: boolean; reason?: "off" | "not_seen" | "busy" } {
   if (zoneSyncMode() === "off") return { sent: false, reason: "off" };
-  if (!binCommandCapable(mac)) return { sent: false, reason: "not_binary" };
+  if (!binSeen(mac)) return { sent: false, reason: "not_seen" };
   const st = ensure(mac);
   if (st.inflight) return { sent: false, reason: "busy" };
   st.verify = true;
@@ -404,7 +405,7 @@ export function forceVerify(mac: string): { sent: boolean; reason?: "off" | "not
 }
 
 /**
- * Zone komutunun ack'i (binary ya da JSON; lib/mqtt.ts handleZoneAck). Lamba
+ * Zone komutunun ack'i (binary; lib/mqtt.ts handleZoneAck). Lamba
  * hatası değildir: rozete/arıza geçmişine yazılmaz, durum burada tutulur.
  */
 export async function onAck(mac: string, ack: CommandAck, requestId: string | undefined): Promise<void> {

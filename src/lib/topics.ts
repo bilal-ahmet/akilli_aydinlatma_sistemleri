@@ -3,9 +3,8 @@
  *   Meven:<MAC>/cmd   ← tekil komut (backend publish, cihaz subscribe)
  *   Meven:<slug>/cmd  ← bölge komutu (bölgedeki tüm cihazlar subscribe)
  *   Meven:all/cmd     ← toplu komut (tüm cihazlar subscribe)
- *   Meven:<MAC>/data  ← veri/durum + komut yanıtı (cihaz publish, backend subscribe)
- *   Meven:<MAC>/health← ~30 sn'de bir sağlık/OTA durumu (cihaz publish, backend subscribe)
- *   Meven:<MAC>/bin   ← binary protokol: yeni firmware'in (0x01) ve ağ geçidinin (0x03) TÜM uplink'i
+ *   Meven:<MAC>/bin   ← binary protokol: cihazın (0x01) ve ağ geçidinin (0x03) TÜM uplink'i
+ *   Meven:<MAC>/data, /health ← eski (JSON) firmware; İŞLENMEZ, yalnızca admin kartında görünür
  *   Meven:<GW>/lwt    ← ağ geçidinin bağlantı durumu (retained {"online":…})
  *
  * Bölge topic'i sayesinde bölge komutu tek publish'tir: backend cihaz listesini
@@ -13,21 +12,20 @@
  * firmware'deki ZONE_SLUG'tan bilir.
  *
  * Not: MQTT '+' joker'i bir seviyenin tamamını kapsar; "Meven:" bir seviyenin
- * parçası olduğundan "Meven:+/data" GEÇERSİZdir. Bu yüzden veri aboneliği
- * "+/data" olur; MAC topic'in kendisinden çözülür (macFromDataTopic).
+ * parçası olduğundan "Meven:+/bin" GEÇERSİZdir. Bu yüzden abonelik "+/bin"
+ * olur; MAC topic'in kendisinden çözülür (parseBinTopic).
  */
 const PREFIX = "Meven";
 
 export const cmdTopic = (mac: string) => `${PREFIX}:${mac}/cmd`;
 export const zoneCmdTopic = (slug: string) => `${PREFIX}:${slug}/cmd`;
-export const dataTopic = (mac: string) => `${PREFIX}:${mac}/data`;
-export const healthTopic = (mac: string) => `${PREFIX}:${mac}/health`;
 export const ALL_CMD = `${PREFIX}:all/cmd`;
-export const DATA_WILDCARD = "+/data";
-// Firmware 1.0.9+: ~30 sn'de bir sağlık mesajı (firmware sürümü, OTA durumu).
-export const HEALTH_WILDCARD = "+/health";
-// Binary protokol v1 (lib/binproto): yeni firmware TÜM uplink'ini buraya basar
-// (/data ve /health'e artık yazmaz). Backend çözüp JSON yoluna verir.
+// Eski (JSON) firmware'in uplink topic'leri. Backend JSON KABUL ETMEZ; bunlara
+// yalnızca firmware'i güncellenmemiş cihazı admin kartında göstermek için
+// abone olur (lib/binUplink.ts → noteRejectedJson).
+export const JSON_DATA_WILDCARD = "+/data";
+export const JSON_HEALTH_WILDCARD = "+/health";
+// Binary protokol v1 (lib/binproto): cihaz TÜM uplink'ini buraya basar.
 // Ağ geçitleri (Border Router, paket sürümü 0x03) de TÜM uplink'ini buraya basar.
 export const binTopic = (mac: string) => `${PREFIX}:${mac}/bin`;
 export const BIN_WILDCARD = "+/bin";
@@ -36,6 +34,7 @@ export const BIN_WILDCARD = "+/bin";
 export const lwtTopic = (mac: string) => `${PREFIX}:${mac}/lwt`;
 export const LWT_WILDCARD = "+/lwt";
 
+/** Çözülmüş binary paketin iç JSON'unun türü (lib/binproto/toJson). */
 export type UplinkSuffix = "data" | "health";
 
 /** "Meven:A842E3123456/bin" → "A842E3123456". Eşleşmezse null. */
@@ -53,24 +52,17 @@ export function parseLwtTopic(topic: string): string | null {
 /**
  * JSON aynası (yalnızca izleme): çözülmüş binary uplink buraya da basılır
  * (`MQTT_JSON_MIRROR`). Üç seviyeli olduğu için backend'in `+/data`,
- * `+/health` aboneliklerine takılmaz. İzlemek için: `+/json/#`.
+ * `+/health` aboneliklerine (JSON reddi sayacı) takılmaz. İzlemek için: `+/json/#`.
  */
 export function jsonMirrorTopic(mac: string, suffix: "data" | "health" | "reject"): string {
   return `Meven:${mac}/json/${suffix}`;
 }
 
 /**
- * "Meven:A842E3123456/data" → { mac: "A842E3123456", suffix: "data" }.
- * Cihazın yayınladığı yeni payload'larda (d4i_periodic, komut yanıtı, health)
- * `deviceId` alanı yok; kimlik yalnızca topic'te taşınıyor. Eşleşmezse null.
+ * "Meven:A842E3123456/data" → { mac: "A842E3123456", suffix: "data" }. Yalnızca
+ * reddedilen JSON'u (eski firmware) MAC'e bağlamak için. Eşleşmezse null.
  */
-export function parseUplinkTopic(topic: string): { mac: string; suffix: UplinkSuffix } | null {
+export function parseJsonUplinkTopic(topic: string): { mac: string; suffix: "data" | "health" } | null {
   const m = /^Meven:([0-9A-Fa-f]{12})\/(data|health)$/.exec(topic);
-  return m ? { mac: m[1].toUpperCase(), suffix: m[2] as UplinkSuffix } : null;
-}
-
-/** "Meven:A842E3123456/data" → "A842E3123456". Eşleşmezse null. */
-export function macFromDataTopic(topic: string): string | null {
-  const t = parseUplinkTopic(topic);
-  return t?.suffix === "data" ? t.mac : null;
+  return m ? { mac: m[1].toUpperCase(), suffix: m[2] as "data" | "health" } : null;
 }

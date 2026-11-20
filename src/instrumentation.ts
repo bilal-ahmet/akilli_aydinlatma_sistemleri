@@ -26,15 +26,16 @@ export async function register() {
     console.error("[instrumentation] tenancy başlatılamadı:", err);
   }
 
-  // Komut biçimi (binary/JSON) bilgisi bellektedir; DB'den geri yüklenmezse
-  // deploy sonrası toplu komutlar cihazların ilk raporuna kadar JSON giderdi.
+  // "Binary paketi görülmüş cihaz" bilgisi bellektedir (bölge senkronu
+  // kapısı); DB'den geri yüklenmezse deploy sonrası cihazın ilk paketine kadar
+  // panelden bölge değişikliği gönderilemezdi.
   try {
     const { seedBinStateFromDb } = await import("@/lib/binUplink");
     void seedBinStateFromDb().catch((err) =>
-      console.error("[instrumentation] komut biçimi yüklenemedi:", err),
+      console.error("[instrumentation] binary cihaz durumu yüklenemedi:", err),
     );
   } catch (err) {
-    console.error("[instrumentation] komut biçimi başlatılamadı:", err);
+    console.error("[instrumentation] binary cihaz durumu başlatılamadı:", err);
   }
 
   // Bölge aboneliği (zone sync) durumu bellektedir; DB'den yüklenir. Komut

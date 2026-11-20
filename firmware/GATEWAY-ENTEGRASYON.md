@@ -67,7 +67,7 @@ komşu/router satırları lambaların `THREAD_RLOC16`'sıyla adlandırılır.
 
 ```
 npm run mock:gateway 404CCA544698 --partition 305419896 --interval 30
-npm run mock:device A842E3123456 2 <bölge> --bin --partition 305419896 --rloc 23553
+npm run mock:device A842E3123456 2 <bölge> --partition 305419896 --rloc 23553
 ```
 
 Sanal gateway 0x03 BR_HEALTH / BR_NEIGHBORS (iki sayfa) / BR_ROUTES basar,

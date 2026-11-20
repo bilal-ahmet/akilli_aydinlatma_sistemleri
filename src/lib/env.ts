@@ -32,18 +32,6 @@ export function getEnv(): Env {
 }
 
 /**
- * Binary komut gönderimi (protokol v1, downlink). Varsayılan AÇIK: yalnızca
- * binary gönderdiği görülen cihazlara binary gider (lib/binUplink.ts →
- * binCommandCapable). `MQTT_BINARY_COMMANDS=off` (ya da 0/false) → bütün
- * komutlar JSON — sahada sorun çıkarsa kapatma anahtarı. Opsiyonel olduğu için
- * şemada değil: yanlış yazım MQTT'yi düşürmesin.
- */
-export function binaryCommandsEnabled(): boolean {
-  const v = process.env.MQTT_BINARY_COMMANDS?.trim().toLowerCase();
-  return !(v === "off" || v === "0" || v === "false" || v === "no");
-}
-
-/**
  * Dinamik bölge aboneliği (lib/zoneSync). Varsayılan `on`: cihazın dinlediği
  * bölge/alt grup topic'leri DB'den yönetilir. `observe`: yalnızca zone_list
  * gönderilir, farklar admin kartında görünür, cihazda değişiklik yapılmaz.
@@ -61,8 +49,8 @@ export function zoneSyncMode(): "on" | "observe" | "off" {
  * JSON karşılığı `Meven:<MAC>/json/<data|health|reject>`'e de basılır.
  * Varsayılan KAPALI (broker trafiği). `MQTT_JSON_MIRROR=all` → bütün cihazlar;
  * virgüllü MAC listesi → yalnızca onlar (iki noktalı/noktasız). Topic bilerek
- * `/data` ve `/health` DEĞİL: backend `+/data`, `+/health` dinler, kendi
- * aynasını cihaz mesajı sanıp ikinci kez işlerdi.
+ * `/data` ve `/health` DEĞİL: backend oraları eski firmware'i yakalamak için
+ * dinler, kendi aynasını "JSON gönderen cihaz" sayardı.
  */
 export function jsonMirrorEnabled(mac: string): boolean {
   const v = process.env.MQTT_JSON_MIRROR?.trim();

@@ -11,8 +11,8 @@
  *
  * Kullanım: bunu açık bırak, dashboard'dan komutu tetikle, çıktıya bak.
  *
- * Binary komutlar (protokol v1, ilk bayt 0x01) çözülüp aynı denetimden geçer;
- * hex'i ve kısa id'si (u16) ayrıca yazılır.
+ * Komutlar binary (protokol v1, ilk bayt 0x01) olmalı: çözülüp denetlenir,
+ * hex'i ve kısa id'si (u16) ayrıca yazılır. JSON komut görülürse hata basılır.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -143,12 +143,10 @@ client.on("message", (topic, raw) => {
     console.log();
     return;
   }
+  // Backend yalnızca binary gönderir; buraya düşen ya başka bir istemcidir
+  // (eski backend sürümü, elle mosquitto_pub) ya da bir regresyon.
   console.log(`  ${body}`);
-  try {
-    for (const n of audit(JSON.parse(body))) console.log(`  ${n}`);
-  } catch {
-    console.log("  ✗ HATA: geçersiz JSON — cihaz 'gecersiz json' döner");
-  }
+  console.log("  ✗ HATA: binary olmayan komut — backend yalnızca binary protokol v1 gönderir");
   console.log();
 });
 

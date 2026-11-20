@@ -36,8 +36,8 @@ export async function POST(req: Request, { params }: Params) {
           ? msg(ctx.user, "Cihaza zaten bir zone komutu gidiyor", "Cihaza zaten bölge bilgisi gönderiliyor")
           : msg(
               ctx.user,
-              "Cihaz binary protokol konuşmuyor (eski firmware ya da henüz paket gelmedi)",
-              "Cihaz bu özelliği desteklemiyor ya da henüz bağlanmadı",
+              "Cihazdan henüz binary paket gelmedi (hiç bağlanmadı)",
+              "Cihaz henüz bağlanmadı",
             );
     return fail(text, 409);
   }

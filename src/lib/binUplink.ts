@@ -14,9 +14,10 @@ import { brToMessage, type BrBuildInfo, type BrMessage } from "@/lib/binproto/br
 
 /**
  * Meven:<MAC>/bin alım katmanı (sunucu). Binary paketi doğrular, çözer ve
- * cihazın eski JSON'una çevirir; çıktı lib/mqtt.ts'te JSON'la gelen mesajla
- * AYNI yoldan (routeUplink) işlenir. Python köprüsünün (mqtt_bridge.py) yerini
- * tutar — ayrı servis yok, broker'dan mesaj iki kez geçmez.
+ * backend'in iç JSON biçimine çevirir; çıktı lib/mqtt.ts'te routeUplink ile
+ * işlenir. Python köprüsünün (mqtt_bridge.py) yerini tutar — ayrı servis yok.
+ * Cihazdan JSON KABUL EDİLMEZ: /data ve /health'e gelen JSON yalnızca sayılır
+ * (noteRejectedJson) ve admin kartında "JSON gönderen cihaz" olarak görünür.
  *
  * Bellek içi tutulanlar (globalThis, tek instance — Kural #8):
  *  - Health'in bağlantı başına bir kez gelen alanları (idf_version, derleme
@@ -24,8 +25,8 @@ import { brToMessage, type BrBuildInfo, type BrMessage } from "@/lib/binproto/br
  *    önbellek boşsa `devices.health`'teki son değerle tohumlanır.
  *  - Sayaçlar ve son retler → admin kartı (GET /api/admin/binproto). Doküman
  *    "tanımsız alan gelirse paketi atın ve alarm üretin" diyor; alarm budur.
- *  - Cihaz başına son geçerli binary zamanı → çift işleme koruması (binActive)
- *    ve komut biçimi seçimi (binCommandCapable).
+ *  - Cihaz başına son geçerli binary zamanı → bölge senkronu kapısı (binSeen).
+ *  - JSON gönderen (reddedilen) MAC'ler → admin kartı.
  */
 
 /** Binary paketin akıbeti: kabul ya da ret/atlama nedeni. */
@@ -48,8 +49,6 @@ const CORRUPT_OUTCOMES: ReadonlySet<BinOutcome> = new Set([
   "NO_TYPE",
 ]);
 
-/** JSON telemetrisi bu süre içinde binary göndermiş MAC'ten gelirse atlanır. */
-const BIN_ACTIVE_MS = 10 * 60_000;
 const ALARM_WINDOW_MS = 24 * 60 * 60_000;
 const LOG_INTERVAL_MS = 60 * 60_000;
 const MAX_RECENT = 50;
@@ -60,12 +59,13 @@ type DeviceBinState = {
   firstAt: number;
   lastAt: number;
   lastValidAt: number | null;
-  /** Bu MAC'ten son JSON telemetri/health (ack hariç) — firmware geri dönüşü. */
-  lastJsonAt: number | null;
   frames: number;
   lastType: string | null;
   lastReject: RejectInfo | null;
 };
+
+/** /data ya da /health'e JSON basan (eski firmware) MAC — işlenmez, yalnızca sayılır. */
+type JsonReject = { firstAt: number; lastAt: number; count: number; topic: "data" | "health" };
 
 type Store = {
   since: number;
@@ -76,10 +76,9 @@ type Store = {
   buildInfo: Map<string, BuildInfo>;
   /** Border Router (0x03) başına, MQTT bağlantısı başına bir kez gelen health alanları. */
   brBuildInfo: Map<string, BrBuildInfo>;
-  duplicateJson: number;
   logged: Map<string, number>;
-  /** MAC → son JSON telemetri/health zamanı (binary hiç görülmemiş cihazlar dahil). */
-  jsonSeen: Map<string, number>;
+  /** MAC → reddedilen JSON mesajları. */
+  jsonRejected: Map<string, JsonReject>;
 };
 
 const g = globalThis as unknown as { __fenerBin?: Store };
@@ -91,11 +90,10 @@ const store: Store = (g.__fenerBin ??= {
   lastAlarm: null,
   buildInfo: new Map(),
   brBuildInfo: new Map(),
-  duplicateJson: 0,
   logged: new Map(),
-  jsonSeen: new Map(),
+  jsonRejected: new Map(),
 });
-store.jsonSeen ??= new Map(); // HMR: eski store nesnesinde alan yok
+store.jsonRejected ??= new Map(); // HMR: eski store nesnesinde alan yok
 store.brBuildInfo ??= new Map();
 
 /** Aynı anahtar için saatte en fazla bir log (cihaz her 30 sn aynı paketi basabilir). */
@@ -109,7 +107,7 @@ function logOnce(key: string, level: "warn" | "error", message: string, now: num
 function touch(mac: string, now: number): DeviceBinState {
   let d = store.devices.get(mac);
   if (!d) {
-    d = { firstAt: now, lastAt: now, lastValidAt: null, lastJsonAt: null, frames: 0, lastType: null, lastReject: null };
+    d = { firstAt: now, lastAt: now, lastValidAt: null, frames: 0, lastType: null, lastReject: null };
     store.devices.set(mac, d);
   }
   d.lastAt = now;
@@ -197,8 +195,7 @@ export type BrUplink = { kind: "br"; msg: BrMessage };
 export type BinUplinkResult = LegacyMessage | BinSkip | BrUplink;
 
 /**
- * Bir `/bin` paketini işler. Dönen JSON, cihaz onu doğrudan JSON olarak
- * basmış gibi routeUplink'e verilir. Paketin tamamı doğrulanmadan hiçbir alan
+ * Bir `/bin` paketini işler. Dönen iç JSON routeUplink'e verilir. Paketin tamamı doğrulanmadan hiçbir alan
  * kullanılmaz; bozuk / tanımsız alanlı paket atılır ve sayılır.
  */
 export async function decodeBinUplink(mac: string, payload: Uint8Array): Promise<BinUplinkResult> {
@@ -280,7 +277,7 @@ async function brBuildInfoFor(mac: string): Promise<BrBuildInfo> {
 /**
  * Border Router paketi (ilk bayt 0x03). Sayaçlar, son retler ve alan tablosu
  * alarmı lamba paketleriyle ortaktır (admin kartı); cihaz binary durumuna
- * (binActive, binCommandCapable, admin cihaz listesi) yazılmaz.
+ * (binSeen, admin cihaz listesi) yazılmaz.
  */
 async function decodeBrUplink(mac: string, payload: Uint8Array, now: number): Promise<BrUplink | BinSkip> {
   const frame = decodeFrame(payload);
@@ -305,84 +302,45 @@ export function forgetBrGateway(mac: string): void {
 }
 
 /**
- * Bu MAC son 10 dk'da geçerli binary paket gönderdi mi? Öyleyse aynı MAC'ten
- * gelen JSON telemetri/health ikinci kopyadır (doğrulama firmware'i ikisini
- * birden basıyor ya da biri canlı broker'da Python köprüsünü köprü modunda
- * çalıştırıyor) ve atlanır. JSON komut yanıtları (ack) bu kurala girmez:
- * JSON komuta cihaz yeni firmware'de de JSON ack döner.
+ * Bu MAC'ten geçerli binary paket görüldü mü (bu süreçte ya da açılışta DB'den
+ * tohumlanarak)? Bölge senkronu yalnızca bu cihazlara zone komutu gönderir:
+ * hiç bağlanmamış kayıtlara komut atıp `no_response`'a düşürmesin.
  */
-export function binActive(mac: string, now = Date.now()): boolean {
-  const at = store.devices.get(mac)?.lastValidAt;
-  return at != null && now - at < BIN_ACTIVE_MS;
+export function binSeen(mac: string): boolean {
+  return store.devices.get(mac)?.lastValidAt != null;
 }
 
 /**
- * Bu MAC'e komut binary gönderilebilir mi? Geçerli binary paket görülmüş VE
- * ondan sonra JSON telemetri/health gelmemiş olmalı. Süre sınırı yok: sahadaki
- * cihazlar dakikalarca sessiz kalabiliyor (rapor aralığı firmware'de, bkz.
- * lib/deviceWindows.ts); sessizlik firmware'in değiştiği anlamına gelmez.
- * İkinci şart OTA geri dönüşünü yakalar (eski firmware'e dönen cihaz JSON
- * basar, binary komutu anlamaz); köprü yanlışlıkla köprü modunda çalışırsa da
- * güvenli yöne (JSON) kayar. Bellek içidir: backend yeniden başlayınca cihazın
- * ilk binary paketine kadar JSON gider (cihaz ikisini de kabul eder).
+ * /data ya da /health'e JSON geldi (eski firmware). İşlenmez — cihaz binary
+ * firmware'e güncellenene kadar panelde bağlantısız görünür. Admin kartı bu
+ * cihazları listeler ki sessizce kaybolmasınlar.
  */
-export function binCommandCapable(mac: string): boolean {
-  const d = store.devices.get(mac);
-  if (!d || d.lastValidAt == null) return false;
-  return d.lastJsonAt == null || d.lastJsonAt < d.lastValidAt;
-}
-
-/**
- * Bu MAC'ten JSON telemetri/health geldi (ack değil). Yalnızca binary görülmüş
- * cihazlar için tutulur — eski firmware'li filo belleği büyütmez.
- */
-export function noteJsonUplink(mac: string, now = Date.now()): void {
-  const d = store.devices.get(mac);
-  if (d) d.lastJsonAt = now;
-  store.jsonSeen.set(mac, now);
-}
-
-/**
- * Bu cihazın JSON konuştuğu BİLİNİYOR mu (eski firmware)? Son uplink'i JSON
- * telemetri/health ise evet. Hiç görülmemiş ya da sessiz cihaz "bilinmiyor"dur
- * — ne binary-yetenekli ne JSON'cu.
- */
-export function knownJsonDevice(mac: string): boolean {
-  const at = store.jsonSeen.get(mac);
-  if (at == null) return false;
-  const bin = store.devices.get(mac)?.lastValidAt;
-  return bin == null || bin < at;
-}
-
-/**
- * Bir toplu topic'e (bölge / all) binary gidebilir mi? Dinleyen kayıtlı
- * cihazlardan en az biri binary-yetenekli olmalı ve hiçbiri JSON'cu olarak
- * bilinmemeli. Hiç bağlanmamış / sessiz kayıtlar kararı ETKİLEMEZ: eskiden
- * tek bir ölü kayıt bütün bölgeyi JSON'a çekiyordu ve yeni firmware JSON
- * toplu komutu çözemiyordu.
- */
-export function groupTakesBinary(macs: Iterable<string>): boolean {
-  let capable = false;
-  for (const mac of macs) {
-    if (knownJsonDevice(mac)) return false;
-    if (binCommandCapable(mac)) capable = true;
+export function noteRejectedJson(mac: string, topic: "data" | "health", now = Date.now()): void {
+  const r = store.jsonRejected.get(mac);
+  if (r) {
+    r.lastAt = now;
+    r.count += 1;
+    r.topic = topic;
+  } else {
+    store.jsonRejected.set(mac, { firstAt: now, lastAt: now, count: 1, topic });
   }
-  return capable;
+  logOnce(
+    `${mac}:json`,
+    "warn",
+    `[bin] ${mac}: JSON mesajı (/${topic}) reddedildi — yalnızca binary protokol kabul edilir, firmware güncellenmeli`,
+    now,
+  );
 }
 
-/** Son 24 saatte JSON health'i görülmüş cihaz açılışta "JSON'cu" sayılır. */
-const SEED_JSON_MAX_AGE_MS = 24 * 60 * 60_000;
-
 /**
- * Açılışta komut biçimi bilgisini DB'den geri yükler. Bilgi bellekte tutulur
- * ve sahadaki cihazlar 15 dk'da bir rapor verir; tohumlanmazsa her deploy'dan
- * sonra komutlar (özellikle toplu olanlar) dakikalarca JSON giderdi.
+ * Açılışta "binary görülmüş" bilgisini DB'den geri yükler (bölge senkronu
+ * kapısı, binSeen); yoksa her deploy'dan sonra cihazın ilk paketine kadar
+ * panelden bölge değişikliği / "Şimdi doğrula" gönderilemezdi.
  *
  * Binary işareti: son health'i bizim çeviricimizden çıkmışsa `health_interval_s`
  * anahtarını taşır (toJson her zaman yazar, değer null olabilir), ya da cihaz
- * rapor aralığını bildirmiştir (yalnızca binary firmware bildirir). JSON
- * işareti: health'i var, bu anahtar yok ve cihaz son 24 saatte görülmüş.
- * Bellekte zaten kaydı olan cihaza dokunulmaz (canlı bilgi daha yenidir).
+ * rapor aralığını bildirmiştir (yalnızca binary firmware bildirir). Bellekte
+ * zaten kaydı olan cihaza dokunulmaz (canlı bilgi daha yenidir).
  */
 export async function seedBinStateFromDb(): Promise<void> {
   const rows = await db
@@ -390,45 +348,27 @@ export async function seedBinStateFromDb(): Promise<void> {
       mac: schema.devices.deviceId,
       lastSeen: schema.devices.lastSeen,
       binHealth: sql<boolean>`coalesce(jsonb_exists(${schema.devices.health}, 'health_interval_s'), false)`,
-      hasHealth: sql<boolean>`${schema.devices.health} is not null`,
       reportIntervalS: schema.devices.reportIntervalS,
       healthIntervalS: schema.devices.healthIntervalS,
     })
     .from(schema.devices)
     .where(isNotNull(schema.devices.lastSeen));
-  const now = Date.now();
   let bin = 0;
-  let json = 0;
   for (const r of rows) {
+    if (!(r.binHealth || r.reportIntervalS != null || r.healthIntervalS != null)) continue;
+    if (store.devices.has(r.mac)) continue;
     const seen = r.lastSeen!.getTime();
-    if (r.binHealth || r.reportIntervalS != null || r.healthIntervalS != null) {
-      if (store.devices.has(r.mac)) continue;
-      store.devices.set(r.mac, {
-        firstAt: seen,
-        lastAt: seen,
-        lastValidAt: seen,
-        lastJsonAt: null,
-        frames: 0,
-        lastType: null,
-        lastReject: null,
-      });
-      bin += 1;
-    } else if (r.hasHealth && now - seen < SEED_JSON_MAX_AGE_MS && !store.jsonSeen.has(r.mac)) {
-      store.jsonSeen.set(r.mac, seen);
-      json += 1;
-    }
+    store.devices.set(r.mac, {
+      firstAt: seen,
+      lastAt: seen,
+      lastValidAt: seen,
+      frames: 0,
+      lastType: null,
+      lastReject: null,
+    });
+    bin += 1;
   }
-  console.log(`[bin] komut biçimi DB'den yüklendi: ${bin} binary, ${json} JSON cihaz`);
-}
-
-export function noteDuplicateJson(mac: string): void {
-  store.duplicateJson += 1;
-  logOnce(
-    `${mac}:dupjson`,
-    "warn",
-    `[bin] ${mac}: binary gönderen cihazdan JSON telemetri geldi — ikinci kopya atlandı`,
-    Date.now(),
-  );
+  console.log(`[bin] binary cihazlar DB'den yüklendi: ${bin}`);
 }
 
 // ── Admin özeti ──────────────────────────────────────────────
@@ -436,7 +376,6 @@ export function noteDuplicateJson(mac: string): void {
 export type BinProtoSnapshot = {
   since: string;
   counts: Partial<Record<BinOutcome, number>>;
-  duplicateJson: number;
   /** Son 24 saatte alan tablosu uyuşmazlığı (FIELD / MISSING_FIELD) oldu mu. */
   alarm: { mac: string; at: string; outcome: BinOutcome; detail: string; label: string | null } | null;
   /** Son 24 saatte bozuk paket sayısı (CRC, kısa, taşma…). */
@@ -449,11 +388,16 @@ export type BinProtoSnapshot = {
     frames: number;
     lastType: string | null;
     lastReject: { at: string; outcome: BinOutcome; detail: string } | null;
-    /** Şu an komutlar bu cihaza hangi biçimde gider (tek cihaz komutu). */
-    commandFormat: "binary" | "json";
   }>;
-  /** MQTT_BINARY_COMMANDS=off ise false: bütün komutlar JSON. */
-  binaryCommands: boolean;
+  /** /data ya da /health'e JSON gönderen (reddedilen) MAC'ler, son mesaj sırasıyla. */
+  jsonRejected: Array<{
+    mac: string;
+    label: string | null;
+    firstAt: string;
+    lastAt: string;
+    count: number;
+    topic: "data" | "health";
+  }>;
   recent: Array<{ mac: string; label: string | null; at: string; outcome: BinOutcome; detail: string; hex: string }>;
 };
 
@@ -463,11 +407,7 @@ function labelFor(idx: TenancyIndex | undefined, mac: string): string | null {
   return cid ? (idx?.customersById.get(cid)?.name ?? null) : null;
 }
 
-export function binProtoSnapshot(
-  idx: TenancyIndex | undefined,
-  binaryCommands: boolean,
-  now = Date.now(),
-): BinProtoSnapshot {
+export function binProtoSnapshot(idx: TenancyIndex | undefined, now = Date.now()): BinProtoSnapshot {
   const iso = (t: number) => new Date(t).toISOString();
   const alarm =
     store.lastAlarm && now - store.lastAlarm.at < ALARM_WINDOW_MS
@@ -482,7 +422,6 @@ export function binProtoSnapshot(
   return {
     since: iso(store.since),
     counts: Object.fromEntries(store.counts),
-    duplicateJson: store.duplicateJson,
     alarm,
     corruptRecent: store.recent.filter((r) => CORRUPT_OUTCOMES.has(r.outcome) && now - r.at < ALARM_WINDOW_MS)
       .length,
@@ -498,9 +437,17 @@ export function binProtoSnapshot(
         lastReject: d.lastReject
           ? { at: iso(d.lastReject.at), outcome: d.lastReject.outcome, detail: d.lastReject.detail }
           : null,
-        commandFormat: binaryCommands && binCommandCapable(mac) ? "binary" : "json",
       })),
-    binaryCommands,
+    jsonRejected: [...store.jsonRejected.entries()]
+      .sort((a, b) => b[1].lastAt - a[1].lastAt)
+      .map(([mac, r]) => ({
+        mac,
+        label: labelFor(idx, mac),
+        firstAt: iso(r.firstAt),
+        lastAt: iso(r.lastAt),
+        count: r.count,
+        topic: r.topic,
+      })),
     recent: store.recent.map((r) => ({
       mac: r.mac,
       label: labelFor(idx, r.mac),

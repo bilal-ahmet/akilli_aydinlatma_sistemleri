@@ -1,7 +1,7 @@
 import mqtt, { type MqttClient } from "mqtt";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { binaryCommandsEnabled, getEnv, jsonMirrorEnabled } from "@/lib/env";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getEnv, jsonMirrorEnabled } from "@/lib/env";
 import { db, schema } from "@/lib/db";
 import { emitLiveEvent } from "@/lib/events";
 import { effectByNumber } from "@/lib/effects";
@@ -15,14 +15,10 @@ import { noteDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { linkDevicesByPartition } from "@/lib/gatewayLink";
 import { intervalSeconds } from "@/lib/deviceWindows";
 import {
-  binActive,
-  binCommandCapable,
-  groupTakesBinary,
   decodeBinUplink,
   forgetBrGateway,
   type BinUplinkResult,
-  noteDuplicateJson,
-  noteJsonUplink,
+  noteRejectedJson,
 } from "@/lib/binUplink";
 import { encodeBrCommand, encodeCommand, type BinaryCommand } from "@/lib/binproto/command";
 import { ShortIdTable } from "@/lib/binproto/shortIds";
@@ -41,14 +37,14 @@ import { HELLO_TEXT } from "@/lib/binproto/toJson";
 import {
   cmdTopic,
   zoneCmdTopic,
-  parseUplinkTopic,
+  parseJsonUplinkTopic,
   parseBinTopic,
   parseLwtTopic,
   jsonMirrorTopic,
   ALL_CMD,
   BIN_WILDCARD,
-  DATA_WILDCARD,
-  HEALTH_WILDCARD,
+  JSON_DATA_WILDCARD,
+  JSON_HEALTH_WILDCARD,
   LWT_WILDCARD,
   type UplinkSuffix,
 } from "@/lib/topics";
@@ -65,9 +61,7 @@ import {
   type Action,
   commandAckSchema,
   type CommandAck,
-  type CommandPayload,
   type D4iPeriodic,
-  type DataPayload,
   type DeviceHealth,
   type MaintenanceAction,
   type OtaStatus,
@@ -77,21 +71,20 @@ import {
  * MQTT client singleton (HiveMQ Cloud, TLS). Tek uzun ömürlü Node process'te
  * yaşar; globalThis ile cache'lenir (HMR'da çift bağlantı olmasın).
  *
- * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts):
- *  - subscribe "+/data"         → Meven:<MAC>/data mesajlarını işle
- *  - subscribe "+/health"       → Meven:<MAC>/health (firmware sürümü, OTA durumu)
- *  - subscribe "+/bin"          → Meven:<MAC>/bin: binary protokol (yeni
- *    firmware'in TÜM uplink'i). lib/binUplink.ts çözer. İlk bayt 0x01 (lamba):
- *    JSON karşılığı aşağıdaki JSON yoluyla (routeUplink) aynen işlenir. İlk bayt
- *    0x03 (Thread Border Router): ağ geçidi yoluna gider (handleBrUplink).
- *  - subscribe "+/lwt"          → Meven:<GW_ID>/lwt: ağ geçidinin bağlantı durumu.
- *  Ağ geçitleri JSON göndermez; kayıtlı ağ geçidi kimliğinden gelen JSON atılır.
- *  - publish   Meven:<MAC>/cmd  → tekil komut
+ * Topic şeması (ESP ekibi kontratı, bkz. src/lib/topics.ts). YALNIZCA binary
+ * protokol kabul edilir ve gönderilir; JSON desteği kaldırıldı.
+ *  - subscribe "+/bin"          → Meven:<MAC>/bin: cihazın TÜM uplink'i.
+ *    lib/binUplink.ts çözer. İlk bayt 0x01 (lamba): iç JSON karşılığı
+ *    routeUplink ile işlenir. İlk bayt 0x03 (Thread Border Router): ağ geçidi
+ *    yoluna gider (handleBrUplink).
+ *  - subscribe "+/lwt"          → Meven:<GW_ID>/lwt: ağ geçidinin bağlantı durumu
+ *    (MQTT will mesajı, `{"online":…}`; veri değil).
+ *  - subscribe "+/data", "+/health" → YALNIZCA görünürlük: eski (JSON) firmware
+ *    hâlâ buraya basıyorsa mesaj işlenmez, admin kartında "JSON gönderen cihaz"
+ *    olarak listelenir (noteRejectedJson).
+ *  - publish   Meven:<MAC>/cmd  → tekil komut (binary v1, kısa u16 id)
  *  - publish   Meven:<slug>/cmd → bölge komutu (tek publish)
  *  - publish   Meven:all/cmd    → toplu komut
- *  Komut biçimi topic başına seçilir: dinleyen kayıtlı cihazlardan en az biri
- *  binary gönderiyor ve hiçbiri JSON'cu olarak bilinmiyorsa binary (protokol
- *  v1, kısa u16 id), değilse JSON (bkz. publishCommand, groupTakesBinary).
  */
 
 const globalForMqtt = globalThis as unknown as {
@@ -118,8 +111,8 @@ export function getMqttClient(): MqttClient {
     // (idf_version, ağ adı) yalnızca bağlantı başına bir kez geliyor.
     client.subscribe(
       {
-        [DATA_WILDCARD]: { qos: 0 },
-        [HEALTH_WILDCARD]: { qos: 0 },
+        [JSON_DATA_WILDCARD]: { qos: 0 },
+        [JSON_HEALTH_WILDCARD]: { qos: 0 },
         [BIN_WILDCARD]: { qos: 1 },
         [LWT_WILDCARD]: { qos: 1 },
       },
@@ -135,12 +128,13 @@ export function getMqttClient(): MqttClient {
   client.on("message", (topic, payload) => {
     const binMac = parseBinTopic(topic);
     const lwtMac = binMac ? null : parseLwtTopic(topic);
-    const task = binMac
-      ? handleBinUplink(binMac, payload)
-      : lwtMac
-        ? handleGatewayLwt(lwtMac, payload)
-        : handleUplink(topic, payload);
-    void task.catch((err) => console.error("[mqtt] message handler error:", err));
+    if (binMac) {
+      void handleBinUplink(binMac, payload).catch((err) => console.error("[mqtt] message handler error:", err));
+    } else if (lwtMac) {
+      void handleGatewayLwt(lwtMac, payload).catch((err) => console.error("[mqtt] message handler error:", err));
+    } else {
+      rejectJsonUplink(topic, payload);
+    }
   });
 
   globalForMqtt.__fenerMqtt = client;
@@ -148,37 +142,27 @@ export function getMqttClient(): MqttClient {
 }
 
 /**
- * Meven:<MAC>/data ve Meven:<MAC>/health mesajlarını işle. /data'da üç ayrı
- * kontrat akıyor (bkz. types/lighting.ts parseUplink):
- *   - `{"type":"d4i_periodic", ...}` → DALI adresi başına durum + D4i telemetrisi
- *   - `{"status":"ok"|"error", ...}` → komutun cihazda işlenme sonucu
- *   - `{"deviceId": ...}`           → ilk kontrattaki tek/çok-lamba raporu
- * İlk iki formatta payload'da MAC yok; kimlik topic'ten okunur.
+ * Meven:<MAC>/data ve /health: eski (JSON) firmware'in uplink'i. İŞLENMEZ —
+ * yalnızca binary protokol kabul edilir. Cihaz admin kartında listelenir ki
+ * firmware'i güncellenmemiş cihaz sessizce "bağlantısız" kalmasın. HELLO
+ * (bağlanınca /data'ya basılan düz "data" metni) sayılmaz.
  */
-async function handleUplink(topic: string, raw: Buffer): Promise<void> {
-  const text = raw.toString();
-  // HELLO: cihaz bağlanınca /data'ya JSON değil düz "data" metni basar.
-  if (text.trim() === HELLO_TEXT) return;
-
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    console.warn(`[mqtt] JSON çözülemedi (${topic})`);
-    return;
-  }
-  return routeUplink(topic, parseUplinkTopic(topic), json, "json");
+function rejectJsonUplink(topic: string, raw: Buffer): void {
+  const parsed = parseJsonUplinkTopic(topic);
+  if (!parsed) return;
+  if (parsed.suffix === "data" && raw.toString().trim() === HELLO_TEXT) return;
+  noteRejectedJson(parsed.mac, parsed.suffix);
 }
 
 /**
- * Meven:<MAC>/bin: binary paketi çözüp JSON karşılığını, cihaz onu doğrudan
- * JSON basmış gibi routeUplink'e verir. Ret/atlama lib/binUplink.ts'te sayılır.
+ * Meven:<MAC>/bin: binary paketi çözüp iç JSON karşılığını routeUplink'e verir.
+ * Ret/atlama lib/binUplink.ts'te sayılır.
  *
  * Binary komut yanıtı (COMMAND_ACK): u16 id bellek içi `shortIds` eşlemesiyle
- * komutun UUID'sine (commands.request_id) çevrilir ve JSON ack'le aynı yoldan
- * (handleAck) işlenir. Eşlenemeyen ack'te (restart sonrası, süresi geçmiş,
- * id'siz CRC/biçim hatası) "en son bekleyen komut" TAHMİNİ yapılmaz — binary
- * ack'in id'si hep bizim verdiğimizdir, bulunamıyorsa yanlış komutu vurmayalım.
+ * komutun UUID'sine (commands.request_id) çevrilip handleAck'e verilir.
+ * Eşlenemeyen ack'te (restart sonrası, süresi geçmiş, id'siz CRC/biçim hatası)
+ * "en son bekleyen komut" TAHMİNİ yapılmaz — ack'in id'si hep bizim verdiğimizdir,
+ * bulunamıyorsa yanlış komutu vurmayalım.
  */
 async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   const result = await decodeBinUplink(mac, payload);
@@ -196,9 +180,7 @@ async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
   } catch (err) {
     console.error(`[zone] ${mac} uplink kancası hata verdi:`, err);
   }
-  if (result.kind === "json") {
-    return routeUplink(`Meven:${mac}/bin`, { mac, suffix: result.suffix }, result.json, "bin");
-  }
+  if (result.kind === "json") return routeUplink(mac, result.suffix, result.json);
   if (result.kind === "ack") {
     const parsed = commandAckSchema.safeParse(result.json);
     if (!parsed.success) {
@@ -210,7 +192,7 @@ async function handleBinUplink(mac: string, payload: Buffer): Promise<void> {
     if (ack.id != null && !requestId) {
       console.warn(`[mqtt] binary ack (${mac}) bilinmeyen komut id'si ${ack.id} — komut eşlenmedi`);
     }
-    return handleAck(mac, { ...ack, id: requestId }, { guess: false });
+    return handleAck(mac, { ...ack, id: requestId });
   }
   // hello / skip: yapılacak bir şey yok.
 }
@@ -237,57 +219,28 @@ function mirrorJson(mac: string, r: BinUplinkResult): void {
   getMqttClient().publish(jsonMirrorTopic(mac, suffix), body, { qos: 0 });
 }
 
-async function routeUplink(
-  topic: string,
-  parsedTopic: { mac: string; suffix: UplinkSuffix } | null,
-  json: unknown,
-  source: "json" | "bin",
-): Promise<void> {
-  // Ağ geçitleri yalnızca binary 0x03 basar (handleBrUplink). Kayıtlı ağ geçidi
-  // kimliğinden gelen JSON (eski gateway firmware'i) cihaz yoluna düşmesin.
-  if (parsedTopic && peekTenancy()?.gatewayOwner.has(parsedTopic.mac)) {
-    console.warn(`[mqtt] ağ geçidi ${parsedTopic.mac} JSON gönderdi (${topic}) — yalnızca binary 0x03 işlenir`);
-    return;
-  }
-
-  // Çift işleme koruması: binary gönderen cihazın JSON telemetrisi/health'i
-  // ikinci kopyadır (bkz. binActive). JSON ack'ler aşağıda ayrıca işlenir.
-  const duplicate = (mac: string) => source === "json" && binActive(mac);
-
-  if (parsedTopic?.suffix === "health") {
-    if (source === "json") noteJsonUplink(parsedTopic.mac);
-    if (duplicate(parsedTopic.mac)) return noteDuplicateJson(parsedTopic.mac);
+/**
+ * Çözülmüş binary paketin (lib/binproto/toJson) iç JSON'u: health ya da
+ * d4i_periodic. Komut yanıtı buraya gelmez (handleBinUplink'te ayrı yol).
+ */
+async function routeUplink(mac: string, suffix: UplinkSuffix, json: unknown): Promise<void> {
+  if (suffix === "health") {
     const h = deviceHealthSchema.safeParse(json);
     if (!h.success) {
-      console.warn(`[mqtt] bilinmeyen health payload (${topic})`);
+      console.warn(`[mqtt] bilinmeyen health payload (${mac})`);
       return;
     }
-    return handleHealth(parsedTopic.mac, h.data);
+    return handleHealth(mac, h.data);
   }
 
   const uplink = parseUplink(json);
   if (!uplink) {
-    console.warn(`[mqtt] bilinmeyen payload (${topic})`);
+    console.warn(`[mqtt] bilinmeyen payload (${mac})`);
     return;
   }
   if (uplink.kind === "ignored") return;
-
-  // Eski kontratta MAC payload'da, yenilerde yalnızca topic'te.
-  const mac = uplink.kind === "legacy" ? uplink.data.deviceId : (parsedTopic?.mac ?? null);
-  if (!mac) {
-    console.warn(`[mqtt] MAC çözülemedi (${topic})`);
-    return;
-  }
-  if (uplink.kind !== "ack") {
-    // Binary görülmüş cihazdan JSON telemetri → komutlar JSON'a döner
-    // (firmware geri dönüşü; bkz. binCommandCapable).
-    if (source === "json") noteJsonUplink(mac);
-    if (duplicate(mac)) return noteDuplicateJson(mac);
-  }
-
   if (uplink.kind === "d4i") return handleD4i(mac, uplink.data, json);
-  if (uplink.kind === "ack") return handleAck(mac, uplink.data);
-  return handleLegacyData(mac, uplink.data);
+  return handleAck(mac, uplink.data);
 }
 
 /**
@@ -507,22 +460,16 @@ async function handleD4i(mac: string, d: D4iPeriodic, raw: unknown): Promise<voi
 }
 
 /**
- * Komut yanıtı: `{"status":"ok"}` ya da `{"status":"error","error":"..."}`.
- * Firmware 1.0.9+ komutun `action`'ını ve gönderilen `id`'yi (= commands.
- * request_id) geri yollar → yanıt doğru komuta ve lambaya bağlanır. id'siz
- * yanıtta (eski firmware, "gecersiz json") hata o cihaza (ya da bölgesine)
- * giden EN SON bekleyen komuta yazılır. Hata `devices.last_error`'da rozet için
- * saklanır. Olaya bilerek `zoneSlug` konmaz: geçici bir komut hatası bölgeyi
+ * Komut yanıtı (binary COMMAND_ACK'in iç karşılığı): `{"status":"ok"}` ya da
+ * `{"status":"error","error":"..."}`. `id` kısa id'den çevrilmiş UUID'dir
+ * (= commands.request_id) → yanıt doğru komuta ve lambaya bağlanır. Hata
+ * `devices.last_error`'da rozet için saklanır. Olaya bilerek `zoneSlug` konmaz: geçici bir komut hatası bölgeyi
  * arızalı göstermemeli (bölge durumu telemetriden gelir).
  *
  * Bakım komutlarının (commission/ota_check) yanıtı ayrı yoldan gider
  * (handleMaintenanceAck): lamba hatası değildir, rozete/arıza geçmişine yazılmaz.
  */
-async function handleAck(
-  mac: string,
-  ack: CommandAck,
-  { guess = true }: { guess?: boolean } = {},
-): Promise<void> {
+async function handleAck(mac: string, ack: CommandAck): Promise<void> {
   const now = new Date();
   const at = now.toISOString();
   const requestId = ack.id != null && UUID_RE.test(String(ack.id)) ? String(ack.id) : undefined;
@@ -547,42 +494,15 @@ async function handleAck(
   const info = describeDeviceError(message);
   console.warn(`[mqtt] komut hatası (${mac}) [${info.code}]: ${message}`);
 
-  const { zone } = await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
+  await touchDevice(mac, now, { lastError: message, lastErrorAt: now });
 
-  // Önce id ile birebir eşleşme; satır henüz yazılmadıysa (recordCommand
-  // after()'ta) kanal bellek içi uçuş kaydından gelir.
+  // id ile birebir eşleşme; satır henüz yazılmadıysa (recordCommand after()'ta)
+  // kanal bellek içi uçuş kaydından gelir. Eşlenemeyen yanıtta tahmin yapılmaz
+  // (bkz. handleBinUplink); hata yine rozete ve arıza geçmişine yazılır.
   let channel: number | null | undefined;
-  let matched = false;
   if (requestId) {
     const row = await settleCommand(requestId, "failed", now);
-    if (row || flight) {
-      matched = true;
-      channel = row ? row.channel : (flight?.channel ?? null);
-    }
-  }
-
-  // Yedek: id yok ya da tanınmıyor → o cihaza giden en son bekleyen komut.
-  // Binary ack'te yapılmaz (bkz. handleBinUplink).
-  if (!matched && guess) {
-    const targets = commandTargets(mac, zone);
-    const [latest] = await db
-      .select({ id: schema.commands.id, channel: schema.commands.channel })
-      .from(schema.commands)
-      .where(
-        and(
-          inArray(schema.commands.targetId, targets),
-          eq(schema.commands.status, "pending"),
-        ),
-      )
-      .orderBy(desc(schema.commands.createdAt))
-      .limit(1);
-    if (latest) {
-      await db
-        .update(schema.commands)
-        .set({ status: "failed" })
-        .where(eq(schema.commands.id, latest.id));
-    }
-    channel = latest?.channel;
+    if (row || flight) channel = row ? row.channel : (flight?.channel ?? null);
   }
 
   // Geçmişe cihaz seviyesinde (channel = null) yazılır. Aynı anda tek bir
@@ -590,9 +510,9 @@ async function handleAck(
   // (devices.last_error ile aynı semantik).
   await syncFaultEvents(mac, null, [{ code: `command.${info.code}`, detail: message }], now);
 
-  // Reddedilen komutun kanalı: id ile eşleştiyse kesin, değilse en iyi tahmin
-  // ("bu channel DALI hattinda bulunamadi" gibi kanala özgü hatalarda
-  // kullanıcıya hangi lamba olduğunu göstermek için).
+  // Reddedilen komutun kanalı (id ile eşleştiyse): "bu channel DALI hattinda
+  // bulunamadi" gibi kanala özgü hatalarda kullanıcıya hangi lamba olduğunu
+  // göstermek için.
   emitLiveEvent({
     deviceId: mac,
     channel: channel ?? undefined,
@@ -868,85 +788,6 @@ export function forgetGatewayState(gatewayId: string): void {
   forgetBrGateway(gatewayId);
 }
 
-/** İlk kontrat (deviceId + brightness/relayStatus/channels): DB + bölge snapshot'ı + canlı event. */
-async function handleLegacyData(mac: string, d: DataPayload): Promise<void> {
-  const now = new Date();
-
-  // 0) Çok-lamba ise kanallardan cihaz-seviyesi agregat türet (bölge snapshot'ı
-  //    ve cihaz telemetri satırı için). channels yoksa top-level alanlar kullanılır.
-  let aggBrightness = d.brightness;
-  let aggIsOn = d.relayStatus ? d.relayStatus === "on" : undefined;
-  if (d.channels && d.channels.length > 0) {
-    const onCh = d.channels.filter((c) => c.relayStatus === "on");
-    aggIsOn = onCh.length > 0;
-    const withBr = onCh.filter((c) => typeof c.brightness === "number");
-    aggBrightness = withBr.length
-      ? Math.round(withBr.reduce((a, c) => a + (c.brightness ?? 0), 0) / withBr.length)
-      : aggIsOn
-        ? aggBrightness
-        : 0;
-  }
-  const aggRelay = aggIsOn === undefined ? d.relayStatus : aggIsOn ? "on" : "off";
-
-  // 1) Ham telemetriyi logla (cihaz-seviyesi agregat)
-  await db.insert(schema.deviceStatus).values({
-    deviceId: mac,
-    brightness: aggBrightness,
-    relayStatus: aggRelay,
-    temperature: toInt(d.temperature),
-    rssi: d.rssi,
-    status: d.status,
-  });
-
-  // 1b) Çok-lamba: her kanalı fixtures'a upsert et + kanal başına canlı yayınla
-  if (d.channels && d.channels.length > 0) {
-    for (const c of d.channels) {
-      const fxPatch: StatePatch & { status?: string; lastSeen?: Date } = {
-        status: c.status === "error" ? "fault" : "ok",
-        lastSeen: now,
-      };
-      if (c.relayStatus) fxPatch.isOn = c.relayStatus === "on";
-      if (typeof c.brightness === "number") fxPatch.brightness = c.brightness;
-      await upsertFixture(mac, c.ch, fxPatch);
-      emitLiveEvent({
-        deviceId: mac,
-        channel: c.ch,
-        isOn: c.relayStatus ? c.relayStatus === "on" : undefined,
-        brightness: c.brightness,
-        status: c.status ?? d.status,
-        kind: "telemetry",
-        at: now.toISOString(),
-      });
-    }
-  }
-
-  // 2) Cihazı bul, last_seen güncelle, bölgeyi çöz
-  const { zone } = await touchDevice(mac, now);
-
-  // 3) Bölge snapshot'ında YALNIZCA status (arıza) telemetriden güncellenir.
-  //    Parlaklık/açık-kapalı alttan üste yayılmaz (bkz. handleD4i).
-  if (zone) {
-    await db
-      .update(schema.zones)
-      .set({ status: d.status === "error" ? "fault" : "ok" })
-      .where(eq(schema.zones.id, zone.id));
-  }
-
-  // 4) Bekleyen komutları teslim edildi yap (device + bölge hedefi + all)
-  await markDelivered(mac, zone, now);
-
-  // 5) Dashboard'a canlı yayınla (cihaz-seviyesi agregat)
-  emitLiveEvent({
-    zoneSlug: zone?.slug,
-    deviceId: mac,
-    isOn: aggIsOn,
-    brightness: aggBrightness,
-    status: d.status,
-    kind: "telemetry",
-    at: now.toISOString(),
-  });
-}
-
 /** Aç/kapa/dim/efekt durum yaması — hem `zones` hem `fixtures` snapshot'ına uygulanır. */
 type StatePatch = { isOn?: boolean; brightness?: number; activeFx?: number | null };
 
@@ -1000,49 +841,12 @@ export type CommandInput = {
 };
 
 /**
- * ESP'ye giden JSON komut payload'ı (eski firmware ve binary'ye geçmemiş
- * topic'ler; binary karşılığı toBinaryCommand). Minimal tutulur.
- *
- * `channel` YALNIZCA tek lamba hedeflendiğinde gönderilir (0-63). Toplu
- * komutta (tüm cihaz / bölge / tüm sistem) alan payload'a HİÇ konmaz;
- * cihaz alanın yokluğundan "tüm lambalar"ı anlar. Bir dönem bunun için
- * broadcast 255 gönderiliyordu — firmware artık reddediyor
- * ("bilinmeyen action"), bu yüzden 255 kaldırıldı.
- *
- * `text` yalnızca doluysa eklenir: alan hiç gönderilmediğinde cihaz son
- * ayarlanan Mors metnini tekrar çalar, boş string göndermek bunu bozardı.
- *
- * İSTİSNA: tüm hattı birlikte süren efektlerde (`allLamps`, örn. Chase)
- * `channel` HİÇ konmaz — broadcast 255 bile gönderilse cihaz
- * "chase efekti tum lambalari surer, channel gondermeyin" ile reddeder.
+ * Kabloya gidecek kanal. `channel` YALNIZCA tek lamba hedeflendiğinde gider
+ * (0-63); toplu komutta (tüm cihaz / bölge / tüm sistem) alan pakette HİÇ
+ * yoktur, cihaz yokluğundan "tüm lambalar"ı anlar (broadcast 255 firmware'de
+ * reddedilir). Tüm hattı birlikte süren efektlerde (`allLamps`, örn. Chase)
+ * tek lamba seçilse bile kanal gönderilmez — cihaz reddeder.
  */
-function buildJsonPayload({
-  action,
-  value,
-  number,
-  channel,
-  text,
-  id,
-}: CommandInput & { id?: string }): string {
-  const ch = wireChannel({ action, number, channel });
-
-  const payload: CommandPayload = {
-    action,
-    ...(value != null ? { value } : {}),
-    ...(number != null ? { number } : {}),
-    ...(text ? { text } : {}),
-    // `channel` YALNIZCA tek lamba hedeflenmişse konur. Toplu komutta (tüm
-    // cihaz / bölge / tüm sistem) alan hiç gönderilmez — firmware broadcast
-    // için 255'i kabul etmiyor, alanın yokluğunu bekliyor. Tüm hattı süren
-    // efektler zaten kanal kabul etmez.
-    ...(ch != null ? { channel: ch } : {}),
-    // Cihaz yanıtında aynen geri gelir → hata doğru komuta bağlanır (handleAck).
-    ...(id ? { id } : {}),
-  };
-  return JSON.stringify(payload);
-}
-
-/** Kabloya gidecek kanal: tüm hattı süren efektlerde yok (tüm lambalar). */
 function wireChannel({
   action,
   number,
@@ -1096,39 +900,10 @@ function rememberInflight(requestId: string, entry: Omit<Inflight, "at">): void 
 const globalForShortIds = globalThis as unknown as { __fenerShortIds?: ShortIdTable };
 const shortIds = (globalForShortIds.__fenerShortIds ??= new ShortIdTable(INFLIGHT_TTL_MS));
 
-/** Tek cihaz topic'ine binary gidebilir mi (bkz. binCommandCapable). */
-function deviceTakesBinary(mac: string): boolean {
-  return binaryCommandsEnabled() && binCommandCapable(mac);
-}
-
 /**
- * Bölge topic'ine binary gidebilir mi? Bölgenin kayıtlı cihazlarından en az
- * biri binary-yetenekliyse ve hiçbiri JSON'cu (eski firmware) olarak
- * bilinmiyorsa binary. Hiç bağlanmamış / sessiz kayıtlar kararı etkilemez
- * (bkz. groupTakesBinary). Bellek içi (tenancy + binUplink), DB'ye gitmez
- * (Kural #10).
+ * Kablo komutunun (toWireCmd sonrası) binary karşılığı. Mors `text`'i yalnızca
+ * doluysa gider: alan yokken cihaz son ayarlanan metni tekrar çalar.
  */
-function zoneTakesBinary(slug: string): boolean {
-  if (!binaryCommandsEnabled()) return false;
-  const macs = peekTenancy()?.zoneMacs.get(slug);
-  return !!macs && groupTakesBinary(macs);
-}
-
-/** Alt grup topic'i: aynı kural, grubun üyeleri üzerinden. */
-function groupTopicTakesBinary(slug: string): boolean {
-  if (!binaryCommandsEnabled()) return false;
-  const macs = peekTenancy()?.groupMacs.get(slug);
-  return !!macs && groupTakesBinary(macs);
-}
-
-/** `Meven:all/cmd`: aynı kural, bütün kayıtlı cihazlar üzerinden. */
-function allTakesBinary(): boolean {
-  if (!binaryCommandsEnabled()) return false;
-  const idx = peekTenancy();
-  return !!idx && groupTakesBinary(idx.deviceZone.keys());
-}
-
-/** Kablo komutunun (toWireCmd sonrası) binary karşılığı. */
 function toBinaryCommand(wire: CommandInput, id: number): BinaryCommand {
   if (wire.action !== "dim" && wire.action !== "efekt") {
     throw new Error(`binary'de karşılığı olmayan action: ${wire.action}`);
@@ -1237,32 +1012,24 @@ export function publishCommand(
   cmd: CommandInput,
   zoneSlugs?: string[],
 ): { requestId: string; seq: number } {
-  // Topic başına biçim: binary yalnızca dinleyenlerin hepsi anlıyorsa.
-  // `Meven:all/cmd` aynı kuralı bütün kayıtlı cihazlar üzerinden uygular.
-  const topics: Array<{ topic: string; binary: boolean }> =
+  const topics: string[] =
     target === "device"
-      ? [{ topic: cmdTopic(id), binary: deviceTakesBinary(id) }]
-      : target === "zone"
-        ? [{ topic: zoneCmdTopic(id), binary: zoneTakesBinary(id) }]
-        : target === "group"
-          ? [{ topic: zoneCmdTopic(id), binary: groupTopicTakesBinary(id) }]
-          : target === "customer"
-            ? (zoneSlugs ?? []).map((slug) => ({ topic: zoneCmdTopic(slug), binary: zoneTakesBinary(slug) }))
-            : [{ topic: ALL_CMD, binary: allTakesBinary() }];
+      ? [cmdTopic(id)]
+      : target === "zone" || target === "group"
+        ? [zoneCmdTopic(id)]
+        : target === "customer"
+          ? (zoneSlugs ?? []).map(zoneCmdTopic)
+          : [ALL_CMD];
 
-  // Komut id'si publish'ten ÖNCE üretilir: JSON'da kablodaki `id` =
-  // commands.request_id; binary'de kısa id → shortIds ile aynı UUID.
+  // Komut id'si publish'ten ÖNCE üretilir (= commands.request_id); kabloya
+  // u16 kısa id gider, shortIds ack'te aynı UUID'ye geri çevirir.
   const requestId = randomUUID();
   // Tüm hedeflerde on/off → dim çevrilir (firmware on/off tanımıyor).
   const wire = toWireCmd(cmd);
-  let json: string | undefined;
-  let bin: Buffer | undefined;
   const client = getMqttClient();
-  for (const { topic, binary } of topics) {
-    const payload = binary
-      ? (bin ??= Buffer.from(encodeCommand(toBinaryCommand(wire, shortIds.issue(requestId)))))
-      : (json ??= buildJsonPayload({ ...wire, id: requestId }));
-    client.publish(topic, payload, { qos: 1 });
+  if (topics.length > 0) {
+    const payload = Buffer.from(encodeCommand(toBinaryCommand(wire, shortIds.issue(requestId))));
+    for (const topic of topics) client.publish(topic, payload, { qos: 1 });
   }
   rememberInflight(requestId, { channel: wireChannel(cmd) });
 
@@ -1277,9 +1044,7 @@ export function publishCommand(
  */
 export function publishMaintenance(mac: string, action: MaintenanceAction): { requestId: string } {
   const requestId = randomUUID();
-  const payload = deviceTakesBinary(mac)
-    ? Buffer.from(encodeCommand({ action, id: shortIds.issue(requestId) }))
-    : JSON.stringify({ action, id: requestId });
+  const payload = Buffer.from(encodeCommand({ action, id: shortIds.issue(requestId) }));
   getMqttClient().publish(cmdTopic(mac), payload, { qos: 1 });
   rememberInflight(requestId, { maintenance: action });
   if (action === "ota_check") noteOtaSent(mac);

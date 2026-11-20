@@ -17,7 +17,7 @@
  *   npm run mock:gateway 404CCA544698 --rlocs 5C01,6001    # komşu lamba RLOC16'ları
  *
  * Lamba bağı Thread partition eşleşmesiyle kurulur (lib/gatewayLink.ts):
- * `npm run mock:device <MAC> 2 --bin --partition 305419896 --rloc 0x5C01`.
+ * `npm run mock:device <MAC> 2 --partition 305419896 --rloc 0x5C01`.
  *
  * Ctrl+C bağlantıyı DISCONNECT göndermeden koparır → broker will'i
  * ({"online":false}, retained) yayınlar, panelde ağ geçidi anında "Bağlantı yok" olur.

@@ -1,42 +1,43 @@
 /*
  * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin güncel kontratını
- * birebir taklit eder:
+ * birebir taklit eder (varsayılan: binary protokol v1, Meven:<MAC>/bin):
  *   - subscribe Meven:<MAC>/cmd , Meven:<ZONE>/cmd , Meven:all/cmd
- *   - gelen { action, value, number, channel, id } komutunu DOĞRULAR ve sonucu
- *     Meven:<MAC>/data'ya {"action","id","status":"ok"} / {...,"status":"error","error":"..."}
- *     olarak yayınlar (firmware 1.0.9: action + id aynen geri gelir; hata
- *     metinleri firmware'dekiyle aynı)
- *   - her DALI adresi için periyodik {"type":"d4i_periodic", ...} raporu
+ *   - gelen binary komutu (action, value, number, channel, u16 id) DOĞRULAR ve
+ *     sonucu binary COMMAND_ACK olarak /bin'e basar (action + id aynen geri
+ *     gelir; hata kodları firmware'dekiyle aynı)
+ *   - her DALI adresi için periyodik D4I_PERIODIC raporu
  *   - bakım komutları: "commission" (yeni lamba bulur, boş kanala koyar) ve
  *     "ota_check" (checking → downloading → verifying → updated, sürüm artar)
- *   - Meven:<MAC>/health'e ~30 sn'de bir sağlık mesajı (OTA durumu dahil)
+ *   - ~30 sn'de bir HEALTH (OTA durumu dahil)
  *
  * Çalıştır:
  *   npm run mock:device                              # 2 kanal, MAC A842E3123456
  *   npm run mock:device A8:42:E3:12:34:56            # iki noktalı da olur
  *   npm run mock:device A842E3123456 4               # 4 DALI kanalı (adres 0..3)
  *   npm run mock:device A842E3123456 2 ataturk-bulvari   # bölge topic'ini de dinle
- *   npm run mock:device A842E3123456 3 ataturk-bulvari --bin   # binary protokol v1
- *   npm run mock:device A842E3123456 2 ataturk-bulvari --bin --interval 300 --health-interval 120
+ *   npm run mock:device A842E3123456 2 ataturk-bulvari --interval 300 --health-interval 120
+ *   npm run mock:device A842E3123456 2 ataturk-bulvari --json   # ESKİ (JSON) firmware
  *
  * `--interval <sn>` / `--health-interval <sn>`: D4i raporu ve health aralığı
  * (varsayılan 30). Biri verilirse cihaz yeni firmware gibi aralıkları
  * bağlantıdaki İLK health'te bildirir (`report_interval_s`,
  * `health_interval_s`; binary 0xBA / 0xB9), sonrakilerde göndermez.
  *
- * `--partition <n>` / `--rloc <n>` (yalnızca `--bin`): health'teki Thread
+ * `--partition <n>` / `--rloc <n>` (binary): health'teki Thread
  * partition ID ve RLOC16 (varsayılan 0x1A2B3C4D / 0x5C01). Ağ geçidi bağı
  * partition eşleşmesiyle kurulur: `npm run mock:gateway <GW> --partition <n>`
  * ile aynı değeri verin (lib/gatewayLink.ts).
  *
- * `--bin`: yeni firmware gibi d4i_periodic, health ve HELLO'yu binary olarak
- * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame). Komutlarda iki biçim
- * de kabul edilir (firmware geçiş dönemi): ilk bayt 0x01-0x1F ise binary
- * komut → binary COMMAND_ACK (/bin, u16 id aynen döner); `{` ise JSON komut →
- * JSON ack (/data). `--bin` olmadan eski firmware gibi davranır: binary komuta
- * "gecersiz json" döner.
+ * Varsayılan (binary): d4i_periodic, health ve HELLO'yu binary olarak
+ * Meven:<MAC>/bin'e basar (lib/binproto encodeFrame); binary komut → binary
+ * COMMAND_ACK (/bin, u16 id aynen döner). (`--bin` eski komutlarla uyum için
+ * kabul edilir, etkisi yok.)
  *
- * Dinamik bölge aboneliği (`--bin` ile varsayılan açık): cihaz dinlediği bölge
+ * `--json`: ESKİ firmware gibi /data ve /health'e JSON basar. Backend artık
+ * JSON kabul etmez — yalnızca admin "Binary protokol" kartındaki "JSON
+ * gönderen cihaz" uyarısını denemek içindir. Binary komuta "gecersiz json" döner.
+ *
+ * Dinamik bölge aboneliği (binary'de varsayılan açık): cihaz dinlediği bölge
  * topic'lerini "NVS"te (bellekte) tutar; zone_add / zone_remove / zone_clear /
  * zone_list binary komutlarıyla değişir, yeniden abone olur (reboot yok).
  * Başlangıç listesi `--zones a,b` ya da konumsal bölge, ikisi de yoksa
@@ -72,7 +73,7 @@ const RAW_ARGS = process.argv.slice(2);
 /** Değer alan bayraklar — değerleri konumsal argüman sayılmaz. */
 const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones", "--partition", "--rloc"]);
 const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
-const BIN = RAW_ARGS.includes("--bin");
+const BIN = !RAW_ARGS.includes("--json");
 function flagSeconds(name: string): number | undefined {
   const i = RAW_ARGS.indexOf(name);
   const v = i >= 0 ? Number(RAW_ARGS[i + 1]) : NaN;
@@ -301,7 +302,7 @@ function ledBlock(address: number, on: boolean): Record<string, unknown> {
   };
 }
 
-// ── Binary protokol v1 (--bin) ───────────────────────────────
+// ── Binary protokol v1 (varsayılan) ───────────────────────────────
 
 type BinFields = Array<readonly [string, FieldValue | null | undefined]>;
 

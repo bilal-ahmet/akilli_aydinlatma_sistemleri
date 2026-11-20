@@ -26,7 +26,7 @@ ESP32 (PubSubClient + WiFiClientSecure)
 ```
 
 **Şu an:** ESP32 WiFi → HiveMQ Cloud (TLS/8883) → Backend (Railway) → Neon Postgres. Dashboard, MQTT status'larını SSE ile canlı alır.
-**Binary protokol v1:** yeni firmware uplink'ini JSON yerine binary pakete çevirir (`Meven:<MAC>/bin`); backend çözüp aynı JSON yoluna verir (`src/lib/binproto`, bkz. aşağıda "Binary protokol v1" ve `firmware/BINARY-ENTEGRASYON.md`).
+**Yalnızca binary protokol v1:** cihazlar ve ağ geçitleri bütün uplink'i binary basar (`Meven:<MAC>/bin`), backend bütün komutları binary gönderir. **JSON kabul edilmez ve gönderilmez** (2026-11-20'de kaldırıldı). Backend paketi çözüp iç JSON biçimine çevirir ve onu işler (`src/lib/binproto`, bkz. aşağıda "Binary protokol v1" ve `firmware/BINARY-ENTEGRASYON.md`).
 **İleride:** LoRaWAN mimarisine geçilecek → `ESP32+LoRa → Gateway → Chirpstack → MQTT → Backend`
 
 ---
@@ -215,9 +215,11 @@ Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (a
   slug ile flaşlanmış / NVS'inde tutan cihazlar topic'i dinlemeye devam
   edebilir, slug başka müşteriye verilseydi onun komutlarını alırdı. Alt grup
   slug'ları bölgelerle aynı ad alanındadır.
-- Backend veri aboneliği `+/data` ve `+/health` (MQTT `+` joker'i `Meven:` ile
-  aynı seviyeye gömülemez); MAC topic'ten (`parseUplinkTopic`), eski kontratta
-  payload'daki `deviceId`'den okunur.
+- Backend veri aboneliği `+/bin` (MQTT `+` joker'i `Meven:` ile aynı seviyeye
+  gömülemez); MAC topic'ten okunur (`parseBinTopic`). `+/data` ve `+/health`'e
+  yalnızca **görünürlük için** abone olunur: eski (JSON) firmware'in mesajı
+  işlenmez, admin "Binary protokol" kartında "JSON gönderen cihaz" olarak
+  listelenir (`noteRejectedJson`).
 - **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
   topic'lerine ayrıca fanout yapmaz. Eski firmware bölgesini `ZONE_SLUG`'tan
   bilir (flash'lanmamış cihaz bölge komutu almaz); yeni firmware listeyi
@@ -251,7 +253,8 @@ saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
   fazla 3 deneme, sonra `no_response` (HELLO'da sürer). Aynı anda en fazla 8
   cihazda uçuşta komut.
 - **Yalnızca binary ve yalnızca `Meven:<MAC>/cmd`** (cihaz başka topic'ten
-  geleni -21 ile reddeder). JSON firmware'e zone komutu gitmez. Eski binary
+  geleni -21 ile reddeder). Yalnızca binary paketi görülmüş cihaza gider
+  (`binSeen`; açılışta DB'den tohumlanır), hiç bağlanmamış kayda değil. Eski binary
   firmware `zone_list`'e -5 döner → `unsupported`; health'te sürüm değişince
   yeniden denenir. -14/-15/-20 geri çekilmeli tekrar, -18/-19/-21 kalıcı hata
   (panelde görünür).
@@ -277,7 +280,7 @@ saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
   satırında "Bölge bilgisi gönderiliyor/uygulanamadı", Bakım sekmesinde "Bölge
   bilgisi" + "Şimdi doğrula" (`DeviceZoneSync.tsx`), admin'de "Bölge aboneliği"
   kartı (`admin/ZoneSync.tsx`).
-- Test: `npm run check:zonesync` (saf), `npm run mock:device <MAC> 2 --bin`
+- Test: `npm run check:zonesync` (saf), `npm run mock:device <MAC> 2`
   (varsayılan 3 bölgeli NVS; `--zones a,b`, `--no-zones` = eski binary firmware).
 - OTA bölge filtresi (`metadata.json → zones`) firmware/release aracındadır;
   backend'i ilgilendirmez — admin slug'ları alt grup kartında görür.
@@ -299,56 +302,43 @@ Guard `authorizeGroup` (tenancy; başka müşterinin grubu → 404). Audit:
 
 ### Binary protokol v1 (`Meven:<MAC>/bin`)
 
-Yeni firmware d4i_periodic, health, komut ack'i, commission sonucu ve HELLO'yu
-JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değer]…`
-+ CRC-16/CCITT-FALSE. d4i_periodic 2137 B'tan ≤170 B'a iner. `/data` ve
-`/health`'e artık yazmaz. Spesifikasyon: `firmware/MQTT-BINARY-PROTOKOL.html`
+Firmware d4i_periodic, health, komut ack'i, commission sonucu ve HELLO'yu
+kompakt binary paket olarak basar: `0x01` versiyon + `[alan kodu][değer]…`
++ CRC-16/CCITT-FALSE. d4i_periodic 2137 B'tan ≤170 B'a iner. **Tek kabul
+edilen biçim budur**; JSON firmware desteği kaldırıldı (bkz. "JSON reddi"). Spesifikasyon: `firmware/MQTT-BINARY-PROTOKOL.html`
 (firmware ekibi, rev 1.0). Entegrasyon notu: `firmware/BINARY-ENTEGRASYON.md`.
 
 - **Çözücü backend'in içinde** (`src/lib/binproto`, saf). Python köprüsü
   (`mqtt_bridge.py`) ayrı servis olarak çalışmaz; çevirme kuralları ondan
   birebir porte edildi (`toJson.ts`).
-- **Akış:** `lib/binUplink.ts → decodeBinUplink` (CRC, alan tablosu, JSON'a
-  çevirme) → `mqtt.ts → routeUplink`. Çıkan JSON, cihaz onu doğrudan basmış
-  gibi işlenir; aşağıdaki her şey değişmeden çalışır.
+- **Akış:** `lib/binUplink.ts → decodeBinUplink` (CRC, alan tablosu, iç JSON'a
+  çevirme) → `mqtt.ts → routeUplink` (health / d4i_periodic) ya da
+  `handleAck` (COMMAND_ACK). Aşağıdaki "Payload Formatları"ndaki JSON şekilleri
+  bu iç biçimdir, kabloda değil.
 - **Alan tablosu önce, OTA sonra.** `binproto/fields.ts`, firmware'deki
   `msg_fields.h`'nin kopyasıdır. Tanımsız alan kodu taşıyan paket tamamen
   atılır ve admin sayfasında kırmızı alarm çıkar (`GET /api/admin/binproto`,
   `admin/BinaryProtocol.tsx`). Firmware yeni alan eklerse önce tablo +
   `npm run check:binproto` + deploy, sonra OTA.
-- **Komutlar topic başına binary ya da JSON** (`publishCommand`, bellek içi
-  karar, DB'siz — Kural #10). Cihaz iki biçimi de kabul eder; binary komuta
-  `/bin`'e binary ack, JSON komuta `/data`'ya JSON ack döner.
-  - Tek cihaz (`Meven:<MAC>/cmd`, bakım dahil): cihaz binary-yetenekliyse
-    binary (`binCommandCapable`: geçerli `/bin` görülmüş VE ondan sonra JSON
-    telemetri/health gelmemiş — süre sınırı yok, seyrek rapor veren cihaz da
-    binary alır; OTA geri dönüşü JSON'a düşürür; bellek içi, restart'ta
-    DB'den tohumlanır).
-  - Toplu topic'ler (bölge, müşteri "Tüm Sistem"i bölge başına, `Meven:all/cmd`
-    bütün kayıtlı cihazlar üzerinden): dinleyen **kayıtlı** cihazlardan en az
-    biri binary-yetenekli VE hiçbiri JSON'cu (son uplink'i JSON telemetri/
-    health, `knownJsonDevice`) değilse binary; aksi halde JSON
-    (`groupTakesBinary`). **Hiç bağlanmamış / sessiz kayıt kararı etkilemez** —
-    eskiden "hepsi binary-yetenekli" şartı vardı, tek bir ölü kayıt bölgeyi
-    JSON'a çekiyordu ve yeni firmware JSON toplu komutu çözemiyordu.
-    Gerçekten karışık bölgede (canlı eski firmware + yeni) JSON gider.
-    Kayıtsız ama o slug'la flaşlanmış eski cihaz binary komutu anlamaz.
-  - **Açılışta DB'den tohumlanır** (`seedBinStateFromDb`, instrumentation):
-    binary işareti = `devices.health`'te `health_interval_s` anahtarı (bizim
-    çeviricimiz her zaman yazar) ya da bildirilmiş aralık; JSON işareti =
-    anahtarsız health + son 24 saatte görülmüş. Yoksa her deploy'dan sonra
-    cihazların ilk raporuna (15 dk) kadar komutlar JSON giderdi.
-  - Kapatma anahtarı: `MQTT_BINARY_COMMANDS=off` → her şey JSON.
+- **Bütün komutlar binary** (`publishCommand`, `publishMaintenance`,
+  zone ve gateway komutları; `lib/binproto/command.ts → encodeCommand`).
+  Tek cihaz, bölge, alt grup, müşteri "Tüm Sistem"i ve `Meven:all/cmd`
+  aynı paketi alır; topic başına biçim seçimi ve `MQTT_BINARY_COMMANDS`
+  kapatma anahtarı kaldırıldı. Binary komuta cihaz `/bin`'e binary ack döner.
+- **JSON reddi:** `Meven:<MAC>/data` ve `/health`'e gelen JSON (eski firmware)
+  işlenmez: `last_seen`, telemetri, ack, health yazılmaz; cihaz panelde
+  bağlantısız görünür. `lib/binUplink.ts → noteRejectedJson` MAC'i sayar,
+  admin "Binary protokol" kartı uyarı olarak listeler (`jsonRejected`), sunucu
+  logu saatte bir uyarır. HELLO metni (`"data"`) sayılmaz. Böyle bir cihaz
+  komut da alamaz (binary komutu çözemez): firmware güncellenmeli.
 - **Kısa komut id'si:** binary'de `COMMAND_ID` u16'dır, UUID kabloya çıkmaz.
   Backend genelinde TEK dönen sayaç (`binproto/shortIds.ts`, rastgele başlangıç,
   0 atlanır, 10 dk TTL) — cihaz başına değil, çünkü bölge komutu tek id ile çok
   cihaza gider. Binary ack'in id'si UUID'ye çevrilip `handleAck`'e verilir;
-  DB/API/SSE/mobil UUID'yi görmeye devam eder. **Eşlenemeyen binary ack'te
-  "en son bekleyen komut" tahmini yapılmaz** (`guess: false`); hata yine
-  rozete ve arıza geçmişine yazılır.
-- **Çift işleme koruması:** son 10 dk'da geçerli `/bin` gönderen MAC'in JSON
-  telemetrisi ve health'i atlanır (`binActive`), JSON ack işlenir. Python
-  köprüsü canlı broker'da yalnızca `--watch` / `--compare` ile çalıştırılır.
+  DB/API/SSE/mobil UUID'yi görmeye devam eder. **Eşlenemeyen ack'te "en son
+  bekleyen komut" tahmini yapılmaz**; hata yine rozete ve arıza geçmişine
+  yazılır. Python köprüsü canlı broker'da yalnızca `--watch` / `--compare`
+  ile çalıştırılır.
 - **Bir-kezlik health alanları** (`idf_version`, derleme zamanı, Thread ağ adı)
   bağlantı başına bir kez gelir; cihaz başına bellekte tutulur. Önbellek boşsa
   `devices.health`'ten tohumlanır.
@@ -360,12 +350,14 @@ JSON yerine kompakt binary pakete çevirir: `0x01` versiyon + `[alan kodu][değe
   listesi) verilirse çözülen her paketin JSON karşılığı (Python köprüsü
   çıktısının aynısı; ack'te u16 id) `Meven:<MAC>/json/data|health`'e,
   reddedilen paketin nedeni + hex'i `Meven:<MAC>/json/reject`'e basılır.
-  İzlemek için `+/json/#`. Varsayılan kapalı. Topic bilerek `/data`,
-  `/health` değil: backend kendi aynasını cihaz mesajı sanıp ikinci kez
-  işlerdi (komut biçimi JSON'a düşer, ack yanlış komuta bağlanırdı).
+  İzlemek için `+/json/#`. Varsayılan kapalı. Backend'in ürettiği bir
+  izleme akışıdır, cihazdan JSON almak değildir. Topic bilerek `/data`,
+  `/health` değil: backend oraları dinler, kendi aynasını "JSON gönderen
+  cihaz" sayardı.
 - **Yok sayılanlar:** ilk bayt `0x02` LoRa gateway protokolüdür (henüz
-  desteklenmez, sayılır). HELLO JSON değildir, `/data`'ya düz `"data"` metni
-  olarak gelir. `dali_status`, `d4i` (tek bank) ve `commission_result` tipleri
+  desteklenmez, sayılır). Binary HELLO `/bin`'e gelir (bölge senkronu
+  tetikleyicisi); eski firmware'in `/data`'ya bastığı düz `"data"` metni
+  yok sayılır. `dali_status`, `d4i` (tek bank) ve `commission_result` tipleri
   sessizce atlanır (`parseUplink → kind:"ignored"`).
 - **Python'dan sapmalar:** eksik zorunlu alan paketi `MISSING_FIELD` ile
   reddettirir (Python'da köprü çöküyor). Maskeli `load_power` `value: null`
@@ -378,8 +370,10 @@ topic şemasını** kullanır ama verilerini **yalnızca binary** basar: paketin
 ilk baytı **0x03** (lamba 0x01). GW_ID = Wi-Fi STA MAC (`Meven:` öneki kimliğe
 dahil değil). Kontrat: `firmware/GATEWAY-ENTEGRASYON.md`; alan tablosu ve
 örnek paketler: `firmware/BR-BINARY-PROTOKOL.md` (firmware ekibinin belgesi).
-**JSON gateway kontratı kaldırıldı**: kayıtlı gateway kimliğinden gelen
-JSON `/data|/health` uyarıyla atılır, 0x01 paketi `GATEWAY` ile reddedilir.
+**JSON gateway kontratı kaldırıldı**: `/data|/health`'e gelen JSON işlenmez
+(admin kartında "JSON gönderen cihaz"), kayıtlı gateway kimliğinden gelen 0x01
+paketi `GATEWAY` ile reddedilir. `/lwt` JSON'u (`{"online":…}`) veri değil,
+MQTT will mesajıdır; kalır.
 
 ```
 Meven:<GW_ID>/bin  ← 0x03: BR_HEALTH (bağlanınca + ~300 sn), BR_NEIGHBORS + BR_ROUTES
@@ -390,7 +384,7 @@ Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa i
 
 - **Çözücü:** `binproto/codec.ts` ilk bayta göre tablo seçer (0x01 `fields.ts`,
   0x03 `brFields.ts`). `binUplink.ts → decodeBrUplink` sayaç/alarmı lambayla
-  paylaşır ama cihaz binary durumuna (`binActive`, `binCommandCapable`)
+  paylaşır ama cihaz binary durumuna (`binSeen`, admin cihaz listesi)
   yazmaz; BR retleri "BR" önekli. Çeviri `brToJson.ts` (saf): health zarfı
   (`fw`, `uptime_s`, `uplink{kind:"wifi",…}`, `thread{…, partition_id: metin,
   pan_id:"0x…"}`, `counters` (son health'ten fark), `ota`), topoloji sayfası,
@@ -428,7 +422,7 @@ Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa i
   kaldırılır.
 - Test: `npm run check:binproto` (belgedeki 5 örnek paket, komut baytları,
   birleştirici), `npm run mock:gateway <GW_ID> --partition <n> [--interval s]
-  [--rlocs 5C01,…]`, `npm run mock:device <MAC> 2 <bölge> --bin --partition <n> --rloc <n>`.
+  [--rlocs 5C01,…]`, `npm run mock:device <MAC> 2 <bölge> --partition <n> --rloc <n>`.
 
 ### QoS Seviyeleri
 
@@ -440,6 +434,9 @@ Meven:<GW_ID>/cmd  → 0x03 COMMAND: report_now (6) | ota_check (5), u16 kısa i
 ## Payload Formatları
 
 ### Command Payload (Backend → ESP32, `Meven:<MAC>/cmd` veya `Meven:all/cmd`)
+
+> Kabloda **binary** gider (`encodeCommand`, u16 kısa id). Aşağıdaki JSON
+> komutun mantıksal alanlarını gösterir; binary paket aynı alanları taşır.
 
 ```json
 { "action": "dim", "value": 75, "channel": 3, "id": "51f2d445-ec29-42d7-a2a9-901682322c49" }
@@ -454,13 +451,13 @@ sahada cihaz başına en fazla 5 lamba, kanal **0–4** kullanır (taramada atan
 üretir ve **her** komuta koyar; cihaz yanıtında aynen geri yollar (bkz. Komut
 yanıtı). Bölge/"Tüm Sistem" komutunda tek id vardır; toplu komuta cihaz
 başarı cevabı dönmez (bkz. Komut yanıtı).
-Binary komutta kabloda UUID yerine u16 kısa id gider (bkz. Binary protokol v1).
+Kabloda UUID yerine u16 kısa id gider (bkz. Binary protokol v1).
 
 > **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
 > "Tüm cihaz"ı, bölge, "Tüm Sistem") payload'da `channel` **bulunmaz**; cihaz
 > alanın yokluğundan tüm lambaları anlar. Bir dönem bunun için DALI broadcast
 > adresi (255) gönderiliyordu — **firmware bunu artık reddediyor**
-> (`"bilinmeyen action"`), o yüzden 255 tamamen kaldırıldı (`buildPayload`).
+> (`"bilinmeyen action"`), o yüzden 255 tamamen kaldırıldı (`wireChannel`).
 > API kontratı zaten aynıydı: `channel` yokluğu = tüm cihaz. Sahada doğrulamak
 > için: `npm run watch:cmd`.
 
@@ -576,11 +573,11 @@ gönderilmez, alan payload'a hiç konmaz. Girdi `normalizeMorseText` ile indirge
 (Türkçe harfler ASCII'ye: Ş→S, desteklenmeyen karakterler atılır) — hem
 dashboard'da anlık, hem `commandRequestSchema`'da sunucu tarafında.
 
-### Data Payload (ESP32 → Backend, `Meven:<MAC>/data`)
+### Data Payload (ESP32 → Backend, `Meven:<MAC>/bin` → iç JSON)
 
-Bu topic'te **üç kontrat** akar; ayrım `src/types/lighting.ts` → `parseUplink`
-içinde yapılır. Yeni iki formatta payload'da `deviceId` **yoktur** — MAC
-topic'ten çözülür (`macFromDataTopic`).
+Cihaz binary basar; aşağıdaki JSON şekilleri çözülmüş paketin **iç** biçimidir
+(`lib/binproto/toJson.ts`). İki tür vardır; ayrım `src/types/lighting.ts` →
+`parseUplink` içinde yapılır. MAC topic'ten çözülür (`parseBinTopic`).
 
 **1. Komut yanıtı** — cihaz tekil (`Meven:<MAC>/cmd`) komuttan sonra sonucu yayınlar:
 
@@ -597,14 +594,12 @@ topic'ten çözülür (`macFromDataTopic`).
 ```json
 { "action": "dim", "id": "51f2d445-…", "status": "ok" }
 { "action": "dim", "id": "51f2d445-…", "status": "error", "error": "bilinmeyen action" }
-{ "status": "error", "error": "gecersiz json" }      // eski firmware / bozuk JSON: action, id yok
 ```
 
 Hata metni SSE ile dashboard'a gider: sağ altta bildirim + cihaz kartında rozet
 (`devices.last_error`, sonraki `ok` yanıtında temizlenir). Yanıt **`id` ile o
 komuta** bağlanır (`commands.status` → `delivered` / `failed`) ve komutun
-`channel`'ı olaya eklenir. `id` yoksa (ya da UUID değilse) eski tahmin: o
-cihaza giden en son bekleyen komut `failed` olur.
+`channel`'ı olaya eklenir. Kısa id eşlenemezse komut tahmin edilmez.
 
 > **Ack, `commands` satırından önce gelebilir** (INSERT `after()`'ta, Kural #10).
 > Bu yüzden `publishCommand` id'yi bellek içi `inflight` haritasına yazar
@@ -678,37 +673,9 @@ Arıza sayaçları 1 baytlıktır ve tavana ulaşınca saymayı bırakır; firmw
 (`readCounter`). Panel `253` yerine `253+` yazar — sayaçlar birbirinden
 bağımsızdır, `general_failure_count` diğerlerinin toplamı **değildir**.
 
-**3. Eski rapor (geriye uyum)** — `deviceId` alanı olan ilk kontrat:
-
-```json
-{
-  "deviceId": "A842E3123456",
-  "brightness": 75,
-  "relayStatus": "on",
-  "temperature": 42,
-  "rssi": -67,
-  "status": "ok"
-}
-```
-
-Çok-lamba (DALI kanalları) — her lamba `channels[]` içinde kanal başına raporlanır:
-
-```json
-{
-  "deviceId": "A842E3123456",
-  "temperature": 42, "rssi": -67, "status": "ok",
-  "channels": [
-    { "ch": 0, "brightness": 45, "relayStatus": "on" },
-    { "ch": 1, "brightness": 80, "relayStatus": "on" },
-    { "ch": 2, "brightness": 0,  "relayStatus": "off" }
-  ]
-}
-```
-
-`relayStatus`: `"on"` | `"off"` · `status`: `"ok"` | `"error"`. `channels` gelince her
-kanal `fixtures` tablosuna upsert edilir; bölge snapshot'ı kanallardan türetilen
-cihaz-seviyesi agregatla (açık kanal varsa `isOn`, parlaklık açık kanal ortalaması)
-rafine edilir. `channels` yoksa mevcut tek-lamba davranışı korunur.
+> **Eski JSON rapor kontratı** (`deviceId` + `brightness`/`relayStatus`/
+> `channels[]`) 2026-11-20'de kaldırıldı. `device_status` tablosu ve onu
+> okuyan uçlar yalnızca eski kayıtlar için durur; yeni satır yazılmaz.
 
 > **LoRa Notu:** Payload yapısı kasıtlı olarak minimal tutulmuştur. LoRa'ya geçişte JSON yerine binary encoding kullanılacak ancak action/value/MAC semantiği değişmeyecek. Transport katmanı değişir, kontrat değişmez.
 
@@ -1474,10 +1441,6 @@ NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=
 GOOGLE_MAPS_DAILY_LIMIT=
 GOOGLE_MAPS_MONTHLY_LIMIT=
 
-# Binary komut gönderimi (opsiyonel; varsayılan açık, yalnızca binary gönderen
-# cihazlara). Sahada sorun çıkarsa off → bütün komutlar JSON.
-MQTT_BINARY_COMMANDS=
-
 # Binary uplink'in JSON aynası (opsiyonel, izleme): all | MAC1,MAC2 | boş=kapalı.
 # Meven:<MAC>/json/data|health|reject topic'lerine basar.
 MQTT_JSON_MIRROR=
@@ -1515,9 +1478,10 @@ MQTT_ZONE_SYNC=
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (`GatewayView.onlineWindowMs ?? 2 dk` + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
-18. **Gateway mesajı paket sürüm baytıyla ayrılır.** Ağ geçitleri yalnızca binary basar, ilk bayt 0x03 (lamba 0x01). `decodeBinUplink` 0x03'ü `handleBrUplink`'e verir; kayıtlı gateway kimliğinden gelen JSON ve 0x01 paketi atılır (cihaz yoluna girmez). Gateway'e lamba / zone komutu gitmez; yalnızca `report_now` ve `ota_check` (`publishGatewayCommand`).
-19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` (lamba, 0x01) ve `brFields.ts` (Border Router, 0x03) firmware'in `msg_fields.h` kopyalarıdır; iki tablo ayrıdır (aynı kod farklı anlam taşıyabilir); tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Komut biçimi topic başına seçilir: toplu topic'te (bölge, `all`) kayıtlı dinleyenlerden en az biri binary gönderiyor ve hiçbiri JSON'cu değilse binary (u16 kısa id), değilse JSON; sessiz kayıtlar kararı etkilemez. Bkz. "Binary protokol v1".
+18. **Gateway mesajı paket sürüm baytıyla ayrılır.** Ağ geçitleri yalnızca binary basar, ilk bayt 0x03 (lamba 0x01). `decodeBinUplink` 0x03'ü `handleBrUplink`'e verir; kayıtlı gateway kimliğinden gelen 0x01 paketi atılır (cihaz yoluna girmez). Gateway'e lamba / zone komutu gitmez; yalnızca `report_now` ve `ota_check` (`publishGatewayCommand`).
+19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` (lamba, 0x01) ve `brFields.ts` (Border Router, 0x03) firmware'in `msg_fields.h` kopyalarıdır; iki tablo ayrıdır (aynı kod farklı anlam taşıyabilir); tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Bkz. "Binary protokol v1".
 20. **Cihazın dinlediği bölge topic'leri panelden yönetilir (yeni firmware).** Zone komutları yalnızca binary ve yalnızca `Meven:<MAC>/cmd`'ye gider; backend istenen durumu (bölge + alt gruplar) tutar, cihazı ona getirir (`lib/zoneSync`). Bölge/alt grup/cihaz silmek yalnızca DB işi değildir: üyelere `zone_remove`/`zone_clear` gider. Grup komutu yalnızca bütün üyeler senkronsa tek publish'tir; değilse üyelere cihaz komutu.
+21. **Yalnızca binary protokol.** Cihazdan JSON kabul edilmez, cihaza JSON gönderilmez (komut, bakım, zone, gateway hepsi binary). `/data` ve `/health` aboneliği yalnızca eski firmware'i admin kartında göstermek içindir; oraya gelen mesaj işlenmez. JSON yolu geri eklenmez; binary'de karşılığı olmayan bir ihtiyaç çıkarsa önce firmware ekibiyle alan tablosu (`fields.ts`) genişletilir.
 
 ---
 
@@ -1553,7 +1517,7 @@ MQTT_ZONE_SYNC=
 │   │   ├── binproto/                     # binary protokol v1: fields (alan tablosu), codec, toJson, command, shortIds (saf)
 │   │   ├── zoneSync/                     # dinamik bölge aboneliği: plan.ts (saf), engine.ts (sunucu)
 │   │   ├── zoneGroups.ts                 # alt grup listesi (sunucu)
-│   │   ├── binUplink.ts                  # /bin alımı: sayaçlar, alarm, health önbelleği, binActive
+│   │   ├── binUplink.ts                  # /bin alımı: sayaçlar, alarm, health önbelleği, binSeen, JSON reddi
 │   │   ├── events.ts                     # in-memory event bus (MQTT→SSE)
 │   │   ├── faults.ts                     # arıza kodu kataloğu (saf; client de kullanır)
 │   │   ├── faultLog.ts                   # fault_events senkronu (yalnız değişimde yazar)

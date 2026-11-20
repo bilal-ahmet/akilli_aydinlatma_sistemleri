@@ -43,23 +43,41 @@ export function BinaryProtocol() {
   }, [load]);
   useReconcile(load);
 
-  if (!snap || (snap.devices.length === 0 && snap.recent.length === 0)) return null;
+  if (!snap || (snap.devices.length === 0 && snap.recent.length === 0 && snap.jsonRejected.length === 0)) {
+    return null;
+  }
 
   const accepted = snap.counts.accepted ?? 0;
   const problems = Object.entries(snap.counts).filter(([k, n]) => k !== "accepted" && (n ?? 0) > 0);
   const binDevices = snap.devices.filter((d) => d.lastValidAt !== null);
-  const binCmdDevices = snap.devices.filter((d) => d.commandFormat === "binary").length;
 
   return (
     <section aria-label="Binary protokol" className="rounded-2xl border border-border bg-panel p-5">
       <h2 className="font-display text-base font-semibold text-text">Binary protokol</h2>
       <p className="mt-1 max-w-2xl text-xs text-muted">
-        Yeni firmware&apos;li cihazlar verilerini <code className="font-mono">Meven:&lt;MAC&gt;/bin</code>
-        &apos;e binary basar; sunucu çözüp JSON ile aynı yoldan işler. Sayaçlar sunucunun son
-        açılışından beri ({formatAgo(snap.since, now)}). Toplu komutlar (bölge, tüm sistem), dinleyen cihazlardan en az biri binary
-        gönderiyor ve hiçbiri JSON gönderen eski firmware değilse binary gider; aksi halde JSON.
-        Hiç bağlanmamış kayıtlar kararı etkilemez.
+        Cihazlar verilerini <code className="font-mono">Meven:&lt;MAC&gt;/bin</code>&apos;e binary
+        basar, bütün komutlar binary gider. JSON kabul edilmez: eski firmware&apos;in{" "}
+        <code className="font-mono">/data</code>, <code className="font-mono">/health</code> mesajları
+        işlenmez, cihaz aşağıda ayrıca listelenir. Sayaçlar sunucunun son açılışından beri (
+        {formatAgo(snap.since, now)}).
       </p>
+
+      {snap.jsonRejected.length > 0 ? (
+        <div role="alert" className="mt-3 rounded-lg bg-warn/15 px-3 py-2 text-sm text-text">
+          <p className="font-semibold">
+            {snap.jsonRejected.length} cihaz hâlâ JSON gönderiyor, verisi işlenmiyor ve komut
+            alamıyor. Firmware güncellenmeli.
+          </p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-xs">
+            {snap.jsonRejected.map((j) => (
+              <li key={j.mac}>
+                <span className="font-mono">{formatMac(j.mac)}</span> · {j.label ?? "kayıtsız"} · son mesaj{" "}
+                {formatAgo(j.lastAt, now)} (/{j.topic}) · {j.count} mesaj
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {snap.alarm ? (
         <div role="alert" className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
@@ -81,10 +99,6 @@ export function BinaryProtocol() {
         {problems.length > 0
           ? ` · ${problems.map(([k, n]) => `${OUTCOME_LABEL[k] ?? k}: ${n}`).join(", ")}`
           : " · ret yok"}
-        {snap.duplicateJson > 0 ? ` · atlanan JSON kopyası: ${snap.duplicateJson}` : ""}
-        {snap.binaryCommands
-          ? ` · ${binCmdDevices} cihaza komut binary gidiyor`
-          : " · binary komut kapalı (MQTT_BINARY_COMMANDS=off), komutlar JSON"}
       </p>
 
       <details className="mt-3 text-xs">
@@ -95,8 +109,7 @@ export function BinaryProtocol() {
               <span className="font-mono text-text">{formatMac(d.mac)}</span>
               <span className="text-muted">{d.label ?? "kayıtsız"}</span>
               <span className="text-muted">
-                son paket {formatAgo(d.lastAt, now)} · {d.lastType ?? "—"} · {d.frames} paket · komut{" "}
-                {d.commandFormat === "binary" ? "binary" : "JSON"}
+                son paket {formatAgo(d.lastAt, now)} · {d.lastType ?? "—"} · {d.frames} paket
               </span>
               {d.lastReject ? (
                 <span className="text-danger">
