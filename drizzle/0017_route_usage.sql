@@ -1,0 +1,1 @@
+ALTER TABLE "map_usage" ADD COLUMN "route_requests" integer DEFAULT 0 NOT NULL;

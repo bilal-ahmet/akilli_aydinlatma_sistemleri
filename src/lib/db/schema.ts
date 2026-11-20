@@ -529,6 +529,8 @@ export const schedules = pgTable(
 export const mapUsage = pgTable("map_usage", {
   day: varchar("day", { length: 10 }).primaryKey(), // YYYY-MM-DD (UTC)
   googleLoads: integer("google_loads").notNull().default(0),
+  /** Google Routes API istekleri (yol tarifi, `lib/googleRoutes.ts`). */
+  routeRequests: integer("route_requests").notNull().default(0),
 });
 
 export type CustomerRow = typeof customers.$inferSelect;

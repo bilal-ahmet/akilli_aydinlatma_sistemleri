@@ -932,8 +932,26 @@ Body: { zoneSlug, code, name?, lat?, lng?, locationSource?: map|manual|gps|impor
     anda ekranda olan harita sayısı. Mini haritalar ekrana yaklaşınca alır,
     uzaklaşınca bırakır. **Google haritasını bileşen içinde `new
     google.maps.Map` ile kurmayın.**
-  - **Yalnızca Maps JavaScript API.** Places, Geocoding, Routes, Street View,
-    Static Maps kullanılmaz (ayrı faturalanır); `clickableIcons: false`.
+  - **Tarayıcıda yalnızca Maps JavaScript API.** Places, Geocoding, Street
+    View, Static Maps kullanılmaz (ayrı faturalanır); `clickableIcons: false`.
+    Tek istisna **Routes API** (yol tarifi): yalnızca sunucudan, ayrı anahtarla
+    ve kota sayacıyla (aşağıda).
+  - **Yol tarifi** (direk paneli → "Yol tarifi", `_components/PoleRoute.tsx`):
+    başlangıç = Konumum (GPS) · Haritada seç · başka direk · adres; Araç/Yaya.
+    `POST /api/map/route { poleId, mode, origin: {kind:"point",lat,lng} |
+    {kind:"pole",poleId} | {kind:"address",text} }` (`authorizePole` read,
+    bütün roller; başlangıç direği aynı müşteriden). Sunucu
+    `lib/googleRoutes.ts` → Compute Routes, **Essentials SKU'su**: alan maskesi
+    + `TRAFFIC_UNAWARE` (trafik/rota değiştirici eklemeyin, Pro'ya çıkar);
+    adresi Routes kendisi çözer (ayrı Geocoding yok). 10 dk bellek önbelleği,
+    kullanıcı başına 10 dk'da 20 istek, sayaç `claimGoogleUsage("route")`
+    (`map_usage.route_requests`, `GOOGLE_ROUTES_DAILY/MONTHLY_LIMIT`, boş =
+    100 / 5000). Çizilemeyen durum hata değil `{ provider: "none", reason }`
+    (unconfigured | quota | rate_limited | failed). **Google kuralı: rota
+    yalnızca Google haritasında çizilir** (`PoleMapProps.route`, MapLibre yok
+    sayar); harita OSM'deyken (`onProvider`) istek atılmaz. Her durumda
+    ücretsiz "Navigasyonda aç / Google Haritalar'da aç" bağlantısı
+    (`_lib/polyline.ts → googleMapsDirUrl`). Test: `npm run check:route`.
   - Çalışma anı hatası (`gm_authFailure`, hata kutusu) → o sekmede MapLibre.
   - Google 3B: binalar Google'dan, direkler `_lib/googlePoles3d.ts`
     (`WebGLOverlayView` + three.js, `InstancedMesh`; 3B ilk açılınca yüklenir).
@@ -1457,6 +1475,11 @@ NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=
 # Uygulama içi kota (harita yüklemesi, tüm müşteriler ortak). Boş = 250 / 8000.
 GOOGLE_MAPS_DAILY_LIMIT=
 GOOGLE_MAPS_MONTHLY_LIMIT=
+# Yol tarifi: SUNUCU anahtarı, yalnızca Routes API (NEXT_PUBLIC_ değil). Boşsa
+# rota çizilmez, Google Haritalar bağlantısı verilir. Sınırlar boş = 100 / 5000.
+GOOGLE_ROUTES_API_KEY=
+GOOGLE_ROUTES_DAILY_LIMIT=
+GOOGLE_ROUTES_MONTHLY_LIMIT=
 
 # Binary uplink'in JSON aynası (opsiyonel, izleme): all | MAC1,MAC2 | boş=kapalı.
 # Meven:<MAC>/json/data|health|reject topic'lerine basar.

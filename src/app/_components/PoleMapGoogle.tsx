@@ -24,6 +24,9 @@ import type { MapPole, PoleMapProps } from "./PoleMap";
 const STYLE_ID = "pm-google-style";
 const LABEL_ZOOM = 17;
 const MAX_TILT = 67.5;
+/** Yol tarifi çizgisi (direk durum renklerinden ayrışan mavi). */
+const ROUTE_COLOR = "#1a73e8";
+const ROUTE_COLOR_DARK = "#6fa8ff";
 
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) return;
@@ -45,6 +48,8 @@ ${states}
 .pm-cluster{display:grid;place-items:center;border-radius:50%;transform:translateY(50%);background:#3b3833;color:#fff;font:700 12px/1 system-ui,sans-serif;border:3px solid rgba(255,255,255,.75);cursor:pointer}
 [data-pm-dark="1"] .pm-cluster{background:#e8e3d8;color:#1d1c1a;border-color:rgba(29,28,26,.6)}
 .pm-cluster[data-problem="1"],[data-pm-dark="1"] .pm-cluster[data-problem="1"]{background:${POLE_RED};color:#fff}
+.pm-route-start{box-sizing:border-box;width:18px;height:18px;border-radius:50%;transform:translateY(50%);background:${ROUTE_COLOR};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+[data-pm-dark="1"] .pm-route-start{background:${ROUTE_COLOR_DARK};border-color:#1d1c1a}
 `;
   document.head.appendChild(style);
 }
@@ -105,6 +110,7 @@ export function PoleMapGoogle({
   view3d = false,
   rotateDrag = false,
   preview = null,
+  route = null,
   className = "",
 }: PoleMapProps & { handle: GoogleMapHandle; dark: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -315,6 +321,58 @@ export function PoleMapGoogle({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editKey, map]);
+
+  // ── Yol tarifi: çizgi + başlangıç işareti; key değişince rota çerçevelenir ──
+  // Havuza dönen haritada çizgi kalmasın: temizlik söküm etkisinde de çalışır.
+  const routeKey = route ? `${route.key}:${dark ? 1 : 0}` : "";
+  useEffect(() => {
+    if (!route || route.path.length < 2) return;
+    const color = dark ? ROUTE_COLOR_DARK : ROUTE_COLOR;
+    const halo = new google.maps.Polyline({
+      map,
+      path: route.path,
+      strokeColor: dark ? "#1d1c1a" : "#ffffff",
+      strokeOpacity: 0.9,
+      strokeWeight: 9,
+      clickable: false,
+      zIndex: 10,
+    });
+    const line = new google.maps.Polyline({
+      map,
+      path: route.path,
+      strokeColor: color,
+      strokeOpacity: 1,
+      strokeWeight: 5,
+      clickable: false,
+      zIndex: 11,
+    });
+    const el = document.createElement("div");
+    el.className = "pm-route-start";
+    el.title = "Başlangıç";
+    const start = new google.maps.marker.AdvancedMarkerElement({
+      map,
+      position: route.start,
+      content: el,
+      zIndex: 4000,
+    });
+    const bounds = new google.maps.LatLngBounds();
+    for (const p of route.path) bounds.extend(p);
+    // Rota direk panelinin altında kalmasın: panel geniş ekranda sağda
+    // (~340 px), dar ekranda altta (yüksekliğin ~%62'si) — MapView düzeni.
+    const wide = div.clientWidth >= 640;
+    map.fitBounds(
+      bounds,
+      wide
+        ? { top: 64, left: 64, bottom: 64, right: 420 }
+        : { top: 48, left: 32, right: 32, bottom: Math.round(div.clientHeight * 0.62) + 24 },
+    );
+    return () => {
+      halo.setMap(null);
+      line.setMap(null);
+      unmap(start);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey, map]);
 
   // ── 3B görünüm: kamera eğilir, direk modelleri açılır / kapanır ──
   const was3d = useRef(false);

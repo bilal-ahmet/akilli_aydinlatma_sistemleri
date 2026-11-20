@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { DeviceView, PoleView } from "@/app/_lib/types";
 import { useLighting } from "@/app/_lib/lighting";
 import { usePanel, useTechnical } from "@/app/_lib/panel";
@@ -21,7 +21,8 @@ import { effectByNumber } from "@/lib/effects";
 import { faultCategoryLabel } from "@/lib/faults";
 import { DeviceQuickControls } from "../DeviceQuickControls";
 import { useDialogs } from "../PanelDialogs";
-import type { MapPole } from "../PoleMap";
+import type { MapPole, MapRoute } from "../PoleMap";
+import { PoleRoute } from "../PoleRoute";
 
 // WebGL: yalnız istemcide yüklenir.
 const PoleMap = dynamic(() => import("../PoleMap").then((m) => m.PoleMap), {
@@ -52,6 +53,8 @@ function PolePanel({
   onMoveSave,
   onMoveCancel,
   busy,
+  routeSlot,
+  onRouteOpen,
 }: {
   pole: PoleView;
   state: PoleState;
@@ -63,6 +66,9 @@ function PolePanel({
   onMoveSave: () => void;
   onMoveCancel: () => void;
   busy: boolean;
+  /** Açıksa yol tarifi bölümü (panelin başında). */
+  routeSlot: ReactNode;
+  onRouteOpen: () => void;
 }) {
   const technical = useTechnical();
   const { canWrite, customerSlug } = usePanel();
@@ -113,6 +119,8 @@ function PolePanel({
             </div>
           </div>
         ) : null}
+
+        {routeSlot}
 
         {/* Cihaz */}
         <section className="flex flex-col gap-1.5">
@@ -214,6 +222,11 @@ function PolePanel({
             </>
           ) : null}
           {pole.notes ? <p className="mt-1 text-[13px] text-ink-2">{pole.notes}</p> : null}
+          {pole.lat !== null && pole.lng !== null && !routeSlot && !moving ? (
+            <button type="button" onClick={onRouteOpen} className="btn-line mt-2 h-9 text-[13px]">
+              Yol tarifi
+            </button>
+          ) : null}
         </section>
       </div>
 
@@ -259,6 +272,12 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
   const [view3d, setView3d] = useState(false);
   /** 3B'de sürükleme: kaydır (varsayılan) ya da döndür. */
   const [rotateDrag, setRotateDrag] = useState(false);
+  /** Yol tarifi: panel açık mı, çizilen rota, haritada başlangıç seçimi. */
+  const [routeOpen, setRouteOpen] = useState(false);
+  const [route, setRoute] = useState<MapRoute | null>(null);
+  const [pickingOrigin, setPickingOrigin] = useState(false);
+  const [originPoint, setOriginPoint] = useState<{ lat: number; lng: number } | null>(null);
+  const [provider, setProvider] = useState<"google" | "osm" | null>(null);
 
   const stateOf = poleStateResolver(devices, faultsByDevice, now);
   const byMac = new Map(devices.map((d) => [d.deviceId, d]));
@@ -276,7 +295,14 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
 
   const selected = selectedId ? poles.find((p) => p.id === selectedId) : undefined;
   const initialFocus = poles.find((p) => p.id === initialPole && p.lat !== null);
-  const pickMode = adding || placing !== null;
+  const pickMode = adding || placing !== null || pickingOrigin;
+
+  function closeRoute() {
+    setRouteOpen(false);
+    setRoute(null);
+    setPickingOrigin(false);
+    setOriginPoint(null);
+  }
 
   function toggleState(s: PoleState) {
     setHidden((h) => {
@@ -288,6 +314,11 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
   }
 
   async function handleAddAt(lat: number, lng: number) {
+    if (pickingOrigin) {
+      setOriginPoint({ lat, lng });
+      setPickingOrigin(false);
+      return;
+    }
     if (placing) {
       setBusy(true);
       setError(null);
@@ -378,6 +409,7 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
               type="button"
               onClick={() => {
                 setPlacing(null);
+                setPickingOrigin(false);
                 setAdding((a) => !a);
               }}
               className={`h-9 px-3.5 text-[13px] ${adding ? "btn-line" : "btn-glow"}`}
@@ -390,14 +422,17 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
 
       {pickMode ? (
         <p className="rounded-xl bg-accent-soft px-4 py-2.5 text-[13px] text-text">
-          {placing
-            ? `Direk ${placing.code} için haritada yerine tıklayın.`
-            : "Yeni direğin yerine haritada tıklayın."}{" "}
+          {pickingOrigin
+            ? "Yol tarifi için başlangıç noktasına haritada tıklayın."
+            : placing
+              ? `Direk ${placing.code} için haritada yerine tıklayın.`
+              : "Yeni direğin yerine haritada tıklayın."}{" "}
           <button
             type="button"
             onClick={() => {
               setAdding(false);
               setPlacing(null);
+              setPickingOrigin(false);
             }}
             className="font-medium text-accent hover:underline"
           >
@@ -426,6 +461,7 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
                   disabled={!canWrite}
                   onClick={() => {
                     setAdding(false);
+                    setPickingOrigin(false);
                     setPlacing(p);
                   }}
                   className={`rounded-lg border px-2.5 py-1 text-[12.5px] transition-colors disabled:cursor-default ${
@@ -452,6 +488,7 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
           selectedId={selectedId}
           onSelect={(id) => {
             if (moving) return;
+            if (id !== selectedId) closeRoute();
             setSelectedId(id);
           }}
           addMode={pickMode && !busy}
@@ -461,6 +498,8 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
           fitKey={zoneFilter}
           view3d={view3d}
           rotateDrag={rotateDrag}
+          route={routeOpen && !moving ? route : null}
+          onProvider={setProvider}
           focus={
             initialFocus && initialFocus.lat !== null && initialFocus.lng !== null
               ? { key: initialFocus.id, lat: initialFocus.lat, lng: initialFocus.lng }
@@ -511,11 +550,13 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
               device={selected.deviceId ? byMac.get(selected.deviceId) : undefined}
               now={now}
               onClose={() => {
+                closeRoute();
                 setSelectedId(null);
                 setMoving(null);
               }}
               moving={moving?.id === selected.id}
               onMoveStart={() => {
+                closeRoute();
                 if (selected.lat !== null && selected.lng !== null) {
                   setMoving({ id: selected.id, lat: selected.lat, lng: selected.lng });
                 } else {
@@ -525,6 +566,26 @@ export function MapView({ initialZone = "", initialPole = "" }: { initialZone?: 
               onMoveSave={saveMove}
               onMoveCancel={() => setMoving(null)}
               busy={busy}
+              onRouteOpen={() => setRouteOpen(true)}
+              routeSlot={
+                routeOpen && selected.lat !== null && selected.lng !== null ? (
+                  <PoleRoute
+                    pole={{ ...selected, lat: selected.lat, lng: selected.lng }}
+                    poles={poles}
+                    provider={provider}
+                    picking={pickingOrigin}
+                    pickedPoint={originPoint}
+                    onStartPick={() => {
+                      setAdding(false);
+                      setPlacing(null);
+                      setPickingOrigin(true);
+                    }}
+                    onCancelPick={() => setPickingOrigin(false)}
+                    onRoute={setRoute}
+                    onClose={closeRoute}
+                  />
+                ) : null
+              }
             />
           </div>
         ) : null}

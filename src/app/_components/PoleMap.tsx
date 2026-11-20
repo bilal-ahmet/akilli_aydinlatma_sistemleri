@@ -60,7 +60,21 @@ export interface PoleMapProps {
   view3d?: boolean;
   /** 3B'de sol tuşla / tek parmakla sürükleme haritayı kaydırmak yerine döndürür. */
   rotateDrag?: boolean;
+  /**
+   * Yol tarifi (Google Routes sonucu). YALNIZCA Google haritasında çizilir
+   * (Google kuralı); MapLibre sürümü yok sayar. `key` değişince rota
+   * çerçevelenir.
+   */
+  route?: MapRoute | null;
+  /** Seçicinin karar verdiği sağlayıcı (rota çizilebilir mi?). */
+  onProvider?: (provider: "google" | "osm") => void;
   className?: string;
+}
+
+export interface MapRoute {
+  key: string;
+  path: Array<{ lat: number; lng: number }>;
+  start: { lat: number; lng: number };
 }
 
 const PoleMapGoogle = dynamic(() => import("./PoleMapGoogle").then((m) => m.PoleMapGoogle), {
@@ -105,6 +119,18 @@ export function PoleMap(props: PoleMapProps) {
       if (held) releaseGoogleMap(held);
     };
   }, [wantGoogle, kind, scheme, key]);
+
+  const provider: "google" | "osm" | null = !wantGoogle
+    ? "osm"
+    : !google || google.key !== key
+      ? null
+      : google.handle
+        ? "google"
+        : "osm";
+  const { onProvider } = props;
+  useEffect(() => {
+    if (provider) onProvider?.(provider);
+  }, [provider, onProvider]);
 
   if (!wantGoogle) return <PoleMapLibre {...props} />;
   // Tema / tür değiştiyse yeni harita gelene kadar bekle.
