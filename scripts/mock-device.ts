@@ -1,7 +1,8 @@
 /*
  * Sanal ESP32 (mock device) — donanımsız test. ESP ekibinin güncel kontratını
  * birebir taklit eder (varsayılan: binary protokol v1, Meven:<MAC>/bin):
- *   - subscribe Meven:<MAC>/cmd , Meven:<ZONE>/cmd , Meven:all/cmd
+ *   - subscribe Meven:<MAC>/cmd , Meven:all/cmd (bölge / alt grup topic'lerini
+ *     DİNLEMEZ: backend bölge komutunu cihaz başına MAC topic'ine gönderir)
  *   - gelen binary komutu (action, value, number, channel, u16 id) DOĞRULAR ve
  *     sonucu binary COMMAND_ACK olarak /bin'e basar (action + id aynen geri
  *     gelir; hata kodları firmware'dekiyle aynı)
@@ -14,7 +15,7 @@
  *   npm run mock:device                              # 2 kanal, MAC A842E3123456
  *   npm run mock:device A8:42:E3:12:34:56            # iki noktalı da olur
  *   npm run mock:device A842E3123456 4               # 4 DALI kanalı (adres 0..3)
- *   npm run mock:device A842E3123456 2 ataturk-bulvari   # bölge topic'ini de dinle
+ *   npm run mock:device A842E3123456 2 ataturk-bulvari   # NVS'teki başlangıç bölgesi
  *   npm run mock:device A842E3123456 2 ataturk-bulvari --interval 300 --health-interval 120
  *   npm run mock:device A842E3123456 2 ataturk-bulvari --json   # ESKİ (JSON) firmware
  *
@@ -37,9 +38,10 @@
  * JSON kabul etmez — yalnızca admin "Binary protokol" kartındaki "JSON
  * gönderen cihaz" uyarısını denemek içindir. Binary komuta "gecersiz json" döner.
  *
- * Dinamik bölge aboneliği (binary'de varsayılan açık): cihaz dinlediği bölge
- * topic'lerini "NVS"te (bellekte) tutar; zone_add / zone_remove / zone_clear /
- * zone_list binary komutlarıyla değişir, yeniden abone olur (reboot yok).
+ * Dinamik bölge listesi (binary'de varsayılan açık): cihaz bölge + alt grup
+ * slug'larını "NVS"te (bellekte) tutar; zone_add / zone_remove / zone_clear /
+ * zone_list binary komutlarıyla değişir. Liste topic aboneliği DEĞİLDİR
+ * (firmware bölge topic'lerini dinlemez).
  * Başlangıç listesi `--zones a,b` ya da konumsal bölge, ikisi de yoksa
  * firmware'in varsayılan üç bölgesi. Kurallar firmware planıyla aynı: yalnızca
  * Meven:<MAC>/cmd'den (-21), slug a-z0-9- 1-32 ve `all` değil (-18), pakette
@@ -47,8 +49,9 @@
  * -21 hariç), zone_list ack'i listenin tamamını. `--no-zones`: zone
  * komutlarını tanımayan eski binary firmware (-5 bilinmeyen action).
  *
- * Toplu komuta (bölge topic'i, Meven:all/cmd) başarı cevabı verilmez, hata
- * cevabı 0-3 sn gecikmeyle gider (firmware kararı + önerimiz).
+ * Toplu komuta (Meven:all/cmd) başarı cevabı verilmez, hata cevabı 0-3 sn
+ * gecikmeyle gider (firmware kararı + önerimiz). Bölge / alt grup / "Tüm
+ * Sistem" komutları MAC topic'inden geldiği için normal cevaplanır.
  *
  * Not: adres 0 bilerek `d4i_supported:false` raporlar (sahadaki örnekle aynı) —
  * dashboard'un D4i'siz sürücüyü de doğru gösterdiğini test etmek için.
@@ -117,7 +120,6 @@ const T_ALL = "Meven:all/cmd";
 const T_DATA = `Meven:${MAC}/data`;
 const T_HEALTH = `Meven:${MAC}/health`;
 const T_BIN = `Meven:${MAC}/bin`;
-const zoneTopic = (slug: string) => `Meven:${slug}/cmd`;
 
 /** Kanal durumu — firmware gibi 0-254 DALI arc level tutulur. */
 type ChannelState = { level: number; on: boolean; fx: number | null };
@@ -149,7 +151,7 @@ const MAX_COMMISSION_CH = 4;
 let current: { action?: unknown; id?: unknown; binary?: boolean } = {};
 
 /**
- * Komut toplu topic'ten mi geldi (bölge / Meven:all/cmd)? Firmware toplu
+ * Komut toplu topic'ten mi geldi (Meven:all/cmd)? Firmware toplu
  * komuta başarı cevabı DÖNMEZ (yüzlerce cihazın aynı anda cevabı ağı tıkar).
  * Mock hata cevabını 0-3 sn rastgele gecikmeyle verir — firmware ekibine
  * önerdiğimiz davranış; backend bunu id ile bölge komutuna bağlar.
@@ -623,7 +625,7 @@ client.on("connect", () => {
   console.log(`✓ HiveMQ bağlandı — sanal cihaz ${MAC} (${CH_COUNT} kanal)${BIN ? " · binary protokol v1" : ""}`);
   healthStaticSent = false; // yeni bağlantı: bir-kezlik health alanları tekrar gider
   intervalsSent = false;
-  const topics = [T_CMD, T_ALL, ...nvsZones.map(zoneTopic)]; // yeniden bağlanmada güncel NVS listesi
+  const topics = [T_CMD, T_ALL]; // bölge topic'leri dinlenmez (NVS listesi yalnızca kayıt)
   client.subscribe(topics, { qos: 2 }, (err) => { // CMD_QOS
     if (err) return console.error("subscribe hatası:", err.message);
     console.log(`  dinleniyor:\n    ${topics.join("\n    ")}`);
@@ -841,13 +843,9 @@ let zonesInCmd: string[] = [];
 
 const ZONE_RE = /^[a-z0-9-]{1,32}$/;
 
-/** Bölge listesini değiştirir ve abonelikleri günceller (reboot yok). */
+/** Bölge listesini değiştirir (yalnızca NVS kaydı; topic aboneliği yok). */
 function applyZones(next: string[]): void {
-  const removed = nvsZones.filter((z) => !next.includes(z));
-  const added = next.filter((z) => !nvsZones.includes(z));
   nvsZones = next;
-  if (removed.length) client.unsubscribe(removed.map(zoneTopic));
-  if (added.length) client.subscribe(added.map(zoneTopic), { qos: 2 });
   console.log(`  NVS bölgeleri: [${nvsZones.join(", ")}]`);
 }
 

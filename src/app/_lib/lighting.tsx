@@ -75,8 +75,8 @@ function sendDevice(api: ApiFn, mac: string, body: CommandBody) {
 }
 
 /**
- * Müşterinin "Tüm Sistem"i → müşterinin her bölge topic'ine publish (sunucu
- * tarafında fanout; Meven:all/cmd diğer müşterileri de sürerdi).
+ * Müşterinin "Tüm Sistem"i → müşterinin her cihazının MAC topic'ine publish
+ * (sunucu tarafında fanout; Meven:all/cmd diğer müşterileri de sürerdi).
  */
 function sendAll(api: ApiFn, body: CommandBody) {
   return postCommand(api, `/api/command/all`, body);

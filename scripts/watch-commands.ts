@@ -6,7 +6,7 @@
  * Salt okunur — hiçbir şey publish etmez, DB'ye dokunmaz.
  *
  * Çalıştır:
- *   npm run watch:cmd              # tüm cmd topic'leri (cihaz + bölge + all)
+ *   npm run watch:cmd              # tüm cmd topic'leri (cihaz + all; bölge topic'i görülürse uyarır)
  *   npm run watch:cmd 1CC3ABF99E18 # yalnızca bu MAC'in topic'i
  *
  * Kullanım: bunu açık bırak, dashboard'dan komutu tetikle, çıktıya bak.
@@ -138,7 +138,12 @@ client.on("message", (topic, raw) => {
             ? `  ✓ bölge aboneliği komutu`
             : `  ✗ HATA: zone komutu yalnızca Meven:<MAC>/cmd'ye gider — cihaz -21 ile reddeder`,
         );
-      } else for (const n of audit(cmd)) console.log(`  ${n}`);
+      } else {
+        for (const n of audit(cmd)) console.log(`  ${n}`);
+        // Cihazlar bölge / alt grup topic'lerini dinlemez; backend bölge
+        // komutunu cihaz başına MAC topic'ine gönderir (lib/mqtt.ts publishCommand).
+        if (kind === "bölge") console.log(`  ✗ HATA: bölge topic'ine komut — cihazlar dinlemiyor, MAC topic'lerine gitmeli`);
+      }
     }
     console.log();
     return;

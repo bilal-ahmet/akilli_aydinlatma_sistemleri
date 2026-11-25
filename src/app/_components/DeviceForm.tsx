@@ -38,7 +38,9 @@ export function DeviceDialog({
   const [error, setError] = useState<string | null>(null);
 
   const zoneChanged = device ? zoneSlug !== device.zoneSlug : false;
-  // Yeni firmware bölgesini panelden alır (lib/zoneSync); eskisi ZONE_SLUG'tan.
+  // Bölge komutları cihaz başına MAC topic'ine gittiği için bölge değişikliği
+  // komutlar için hemen geçerlidir. Yeni firmware ayrıca bölge listesini NVS'te
+  // tutar (lib/zoneSync); bilgi notu yalnızca onu destekleyen cihazda gösterilir.
   const dynamicZones = zoneSyncCapable(device?.zoneSync);
   // Seçili bölgedeki boş direkler + cihazın şu anki direği (bir direkte tek cihaz).
   const poleOptions = poles.filter(
@@ -129,22 +131,6 @@ export function DeviceDialog({
               <span className="font-mono">{device.zoneSlug ?? "eski bölge"}</span> ve alt grupları
               bırakılır, <span className="font-mono">{zoneSlug}</span> eklenir (zone_remove/clear +
               zone_add). Çevrimdışıysa HELLO&apos;da uygulanır. Eski bölgenin alt grup üyelikleri silinir.
-            </p>
-          ) : null}
-          {device && zoneChanged && !dynamicZones && !technical ? (
-            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
-              Bu değişiklik, teknik ekip cihazı yeniden ayarlayınca sahada geçerli olur.
-            </p>
-          ) : null}
-          {device && zoneChanged && !dynamicZones && technical ? (
-            <p className="mt-2 rounded-[10px] bg-accent-soft px-3 py-2 text-[12.5px] leading-relaxed text-text">
-              <span className="font-semibold text-accent">Cihazın yeniden flaşlanması gerekir.</span>{" "}
-              Cihaz hangi bölge komutlarını dinleyeceğini firmware&apos;deki{" "}
-              <code className="font-mono">ZONE_SLUG</code>&apos;tan bilir. Bu değişiklik yalnızca
-              dashboard kaydını taşır: cihaz flaşlanana kadar{" "}
-              <span className="font-mono">{device.zoneSlug ?? "eski bölge"}</span> komutlarını almaya
-              devam eder, <span className="font-mono">{zoneSlug}</span> komutlarını almaz. Tekil ve
-              &quot;Tüm Sistem&quot; komutları etkilenmez.
             </p>
           ) : null}
         </div>

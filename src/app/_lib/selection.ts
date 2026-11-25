@@ -221,10 +221,10 @@ export function tooFewLamps(d: DeviceView, effect: Effect | undefined): boolean 
  *    (Kural #3); o cihazlar ayrıca komut almaz.
  *  - `opts.groups` verilirse: kalan cihazlar arasında bir alt grubun (≥2 üye)
  *    bütün üyeleri tamamen seçiliyse tek grup komutu gider (büyükten küçüğe,
- *    örtüşmesiz). Grup topic'i yalnızca grubu cihazına uygulamış üyelere
- *    ulaştığı için anlık komutta `"synced"`: tüm üyeler `zoneSync.status ===
- *    "synced"` olmalı. Zamanlama kaydında `"any"`: karar çalışma anında verilir
- *    (lib/commandPlan.ts runPlan).
+ *    örtüşmesiz). Grup komutu sunucuda üyelerin MAC topic'lerine açıldığı
+ *    için her üyeye ulaşır → panel ve zamanlama `"any"` kullanır. `"synced"`
+ *    (tüm üyeler `zoneSync.status === "synced"`) grup topic'i döneminden
+ *    kalmadır; mobil kopyası kırılmasın diye duruyor.
  */
 export function planTargets(
   sel: Selection,

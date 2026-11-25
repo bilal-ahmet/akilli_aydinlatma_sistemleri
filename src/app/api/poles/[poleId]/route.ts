@@ -37,8 +37,8 @@ export async function GET(req: Request, { params }: Params) {
  * Konum: `lat` + `lng` birlikte; ikisi de null → konum silinir. Kaynak
  * verilmezse "manual" sayılır (harita "map", mobil GPS "gps" gönderir).
  *
- * Bölge değişince bağlı cihaz direkle gitmez (cihazın bölgesi firmware'deki
- * ZONE_SLUG'a bağlı): cihaz bağlıyken bölge değişikliği reddedilir, aynı
+ * Bölge değişince bağlı cihaz direkle gitmez (cihazın bölgesi cihaz
+ * kaydından değişir): cihaz bağlıyken bölge değişikliği reddedilir, aynı
  * istekte `deviceMac: ""` ile bağ kaldırılırsa kabul edilir.
  */
 export async function PATCH(req: Request, { params }: Params) {

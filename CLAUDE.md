@@ -190,9 +190,9 @@ Cihaz kimliği = **MAC adresi, iki noktasız** (örn. `A842E3123456`). Topic'ler
 MAC'e göre üretilir (`src/lib/topics.ts`).
 
 ```
-Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz bazlı komut)
-Meven:<slug>/cmd   ← Backend publish, o bölgedeki ESP32'ler subscribe (bölge komutu)
-Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (toplu komut)
+Meven:<MAC>/cmd    ← Backend publish, ESP32 subscribe (cihaz komutu; bölge, alt grup ve
+                     "Tüm Sistem" komutu da cihaz başına buraya gider)
+Meven:all/cmd      ← Backend publish, TÜM ESP32'ler subscribe (admin'in global komutu)
 Meven:<MAC>/data   ← ESP32 publish, Backend subscribe (durum/telemetri + komut yanıtı)
 Meven:<MAC>/health ← ESP32 publish, Backend subscribe (~30 sn: firmware sürümü, OTA durumu)
 Meven:<MAC>/bin    ← ESP32 (yeni firmware) publish, Backend subscribe (QoS 2): binary protokol v1, TÜM uplink
@@ -200,13 +200,15 @@ Meven:<GW>/bin     ← Ağ geçidi (Border Router) publish: binary 0x03 (bkz. "G
 Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (abonelik +/lwt)
 ```
 
-- **Bölge komutu = tek publish** (Kural #3): backend `Meven:<slug>/cmd`'ye bir kez
-  yayınlar, cihaz listesini DB'den çözmez. ESP kendi bölge slug'ını firmware'deki
-  `ZONE_SLUG`'tan bilir ve o topic'e subscribe olur.
-- **Müşterinin "Tüm Sistem"i = müşterinin HER bölge topic'ine ayrı publish**
-  (`publishCommand("customer", …)`, bölge listesi tenancy index'inden; Kural
-  #3'ün bilinçli istisnası). `Meven:all/cmd`'ye tüm müşterilerin cihazları
-  abone olduğu için müşteri "Tüm Sistem"i oraya GİTMEZ.
+- **Cihazlar bölge / alt grup topic'lerini (`Meven:<slug>/cmd`) DİNLEMEZ**
+  (firmware kararı, 2026-11): yalnızca kendi `Meven:<MAC>/cmd`'sini ve
+  `Meven:all/cmd`'yi.
+- **Bölge komutu = bölgedeki her cihazın MAC topic'ine ayrı publish** (Kural #3):
+  `publishCommand("zone", …)` cihaz listesini **bellek içi tenancy index'inden**
+  (`zoneMacs`) okur, DB'ye gitmez. Hepsi aynı paketi (tek requestId / tek kısa
+  id) alır, `commands`'a tek satır yazılır. Alt grup (`groupMacs`) ve müşterinin
+  "Tüm Sistem"i (`customer.macs`) de aynı şekilde açılır. `Meven:all/cmd`'ye
+  tüm müşterilerin cihazları abone olduğu için müşteri "Tüm Sistem"i oraya GİTMEZ.
 - **`Meven:all/cmd` yalnızca admin'in global acil komutudur**
   (`POST /api/admin/command/global`) — bütün müşterilerin bütün lambaları.
 - **Bölge slug'ı = topic, global benzersiz, ≤32 karakter.** `all`, 12 haneli hex (MAC
@@ -220,21 +222,22 @@ Meven:<GW>/lwt     ← Ağ geçidi bağlantı durumu, retained {"online":…} (a
   yalnızca **görünürlük için** abone olunur: eski (JSON) firmware'in mesajı
   işlenmez, "JSON gönderen cihaz" olarak sayılır (`noteRejectedJson`,
   `GET /api/admin/binproto → jsonRejected`).
-- **Not:** Bölge komutu SADECE `Meven:<slug>/cmd`'ye gider; backend MAC
-  topic'lerine ayrıca fanout yapmaz. Eski firmware bölgesini `ZONE_SLUG`'tan
-  bilir (flash'lanmamış cihaz bölge komutu almaz); yeni firmware listeyi
-  NVS'te tutar ve panelden alır (aşağıda "Dinamik bölge aboneliği"). (Geçiş
-  döneminde geçici MAC fanout'u vardı; kaldırıldı — cihazlar komutu iki kez
-  alıyordu.)
+- **Not:** Backend `Meven:<slug>/cmd`'ye hiç komut basmaz (`npm run watch:cmd`
+  görürse hata yazar). Cihaz bölge değiştirince yeni bölgenin komutlarını
+  hemen alır; yeniden flaşlama gerekmez. Yeni firmware bölge + alt grup
+  listesini yine NVS'te tutar (aşağıda "Dinamik bölge aboneliği"), ama komut
+  teslimi bu listeye bağlı değildir.
 - `Meven:<MAC>/cmd`'ye ayrıca bölge aboneliği komutları gider (zone_add /
   zone_remove / zone_clear / zone_list, yalnızca binary); alt grup topic'leri
   de `Meven:<grup-slug>/cmd` biçimindedir.
 
 ### Dinamik bölge aboneliği (zone sync) ve alt gruplar
 
-Yeni firmware dinlediği bölge topic'lerini firmware'e gömülü `ZONE_SLUG`'tan
-değil **NVS'ten** okur; liste panelden yönetilir (firmware ekibinin "Dinamik
-zone ve bölgesel OTA" planı). Backend **komut kuyruğu değil istenen durum**
+Yeni firmware bölge + alt grup listesini **NVS'te** tutar; liste panelden
+yönetilir (firmware ekibinin "Dinamik zone ve bölgesel OTA" planı). Cihazlar
+artık bölge topic'lerini dinlemediği için komut teslimi bu listeye bağlı
+değildir (komutlar cihaz başına MAC topic'ine gider); liste OTA bölge filtresi
+gibi firmware işleri için senkron tutulur. Backend **komut kuyruğu değil istenen durum**
 saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
 
 - **İstenen** = cihazın bölge slug'ı + üyesi olduğu **alt grupların** slug'ları
@@ -269,10 +272,11 @@ saklar ve cihazı ona getirir (`src/lib/zoneSync/`):
   Cihaz başına bölge + en fazla 15 alt grup (firmware 16 sınırı). Bölge
   değişince cihaz eski bölgenin gruplarından çıkar.
 - **Grup komutu** (`publishCommand("group")`, `POST /api/zones/:z/groups/:g/command`)
-  tek publish'tir ama yalnızca grubu uygulamış (senkron) cihaza ulaşır. Bu
-  yüzden panel (`planTargets(..., { groups: "synced" })`) ve zamanlayıcı
-  (`runPlan`) tüm üyeler `synced` ise grup komutu, değilse üyelere cihaz komutu
-  gönderir. Zamanlama hedefi `groups` saklar (karar çalışma anında).
+  üyelerin MAC topic'lerine ayrı publish'tir, tek `commands` satırı; senkron
+  durumundan bağımsız her üyeye ulaşır. Panel (`planTargets(..., { groups:
+  "any" })`) ve zamanlayıcı (`runPlan`) grubun bütün üyeleri seçiliyse grup
+  komutu gönderir (çok lambalı efektte lambası yetmeyen üye varsa cihaz
+  komutlarına düşer). Zamanlama hedefi `groups` saklar.
 - Yeni bölge slug'ları da **≤32** (`allocateZoneSlug`); 32'yi aşan eski slug
   cihaza gönderilemez, `GET /api/admin/zone-sync`'te listelenir.
 - Panel: bölge detayında "Alt gruplar" kartı (`ZoneGroups.tsx`), seçim
@@ -322,8 +326,8 @@ edilen biçim budur**; JSON firmware desteği kaldırıldı (bkz. "JSON reddi").
   `npm run check:binproto` + deploy, sonra OTA.
 - **Bütün komutlar binary** (`publishCommand`, `publishMaintenance`,
   zone ve gateway komutları; `lib/binproto/command.ts → encodeCommand`).
-  Tek cihaz, bölge, alt grup, müşteri "Tüm Sistem"i ve `Meven:all/cmd`
-  aynı paketi alır; topic başına biçim seçimi ve `MQTT_BINARY_COMMANDS`
+  Tek cihaz, bölge, alt grup, müşteri "Tüm Sistem"i (bu üçü cihaz başına
+  MAC topic'ine) ve `Meven:all/cmd` aynı paketi alır; topic başına biçim seçimi ve `MQTT_BINARY_COMMANDS`
   kapatma anahtarı kaldırıldı. Binary komuta cihaz `/bin`'e binary ack döner.
 - **JSON reddi:** `Meven:<MAC>/data` ve `/health`'e gelen JSON (eski firmware)
   işlenmez: `last_seen`, telemetri, ack, health yazılmaz; cihaz panelde
@@ -463,8 +467,9 @@ aydınlatma bağlanabilir; her biri bu kanal no ile ayrı sürülür. Firmware 1
 sahada cihaz başına en fazla 5 lamba, kanal **0–4** kullanır (taramada atanır).
 `id`: komut kimliği = `commands.request_id`. `publishCommand` publish'ten ÖNCE
 üretir ve **her** komuta koyar; cihaz yanıtında aynen geri yollar (bkz. Komut
-yanıtı). Bölge/"Tüm Sistem" komutunda tek id vardır; toplu komuta cihaz
-başarı cevabı dönmez (bkz. Komut yanıtı).
+yanıtı). Bölge/alt grup/"Tüm Sistem" komutunda bütün cihazlara aynı id gider
+ve her cihaz (MAC topic'inden aldığı için) yanıt döner; yalnızca
+`Meven:all/cmd`'ye cevap dönmez (bkz. Komut yanıtı).
 Kabloda UUID yerine u16 kısa id gider (bkz. Binary protokol v1).
 
 > **⚠ TÜM LAMBALAR = `channel` alanını HİÇ GÖNDERME.** Toplu komutlarda (cihazın
@@ -507,7 +512,7 @@ tek lamba seçilse bile `channel` alanını hiç koymaz,
 `DeviceControlModal` tek lamba seçili olsa da komutu cihazın tamamına gönderir,
 `EffectPicker` lambası yetmeyen efektleri pasif gösterir (`lampCount` yalnızca
 tek cihaz hedefinde bilinir; bölge/"tüm sistem"de efekt sunulur, yetersiz cihaz
-efekti başlatmaz — toplu komuta cevap dönmediği için hatası panelde görünmez). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
+efekti başlatmaz — cihaz MAC topic'inden aldığı için hata yanıtı döner ve o cihazın rozetinde görünür; yalnızca `Meven:all/cmd`'de görünmez). Cihaz ayrıca aynı anda en fazla 4 kanalda efekt çalıştırır
 — dolduğunda `efekt baslatilamadi (bos slot yok…)` döner.
 
 **Çok lambalı efekt cihaz geneli durur.** Böyle bir efekt çalışırken bir lambada
@@ -593,16 +598,18 @@ Cihaz binary basar; aşağıdaki JSON şekilleri çözülmüş paketin **iç** b
 (`lib/binproto/toJson.ts`). İki tür vardır; ayrım `src/types/lighting.ts` →
 `parseUplink` içinde yapılır. MAC topic'ten çözülür (`parseBinTopic`).
 
-**1. Komut yanıtı** — cihaz tekil (`Meven:<MAC>/cmd`) komuttan sonra sonucu yayınlar:
+**1. Komut yanıtı** — cihaz `Meven:<MAC>/cmd` komutundan sonra sonucu yayınlar.
+Bölge, alt grup ve "Tüm Sistem" komutları da cihaz başına MAC topic'ine
+gittiği için **her cihaz yanıt döner** (aynı id): `ok` o cihazın rozetini
+temizler, `error` o cihazın rozetine/arıza geçmişine yazılır ve toast olur;
+toplu komutun `commands` satırı ilk `ok`'ta `delivered`, herhangi bir cihaz
+hata verirse `failed` olur (`settleCommand`). Bedeli: N cihaz = N yanıt
+(Thread uplink'i, ack başına birkaç DB yazımı).
 
-> **Toplu komuta (bölge, "Tüm Sistem", `Meven:all/cmd`) cihaz cevap DÖNMEZ**
-> (firmware kararı: yüzlerce cihazın aynı anda cevabı Thread ağını tıkar).
-> Yanıt yalnızca `Meven:<MAC>/cmd` komutlarına gelir. Toplu komutun `commands`
-> satırı cihazın sonraki telemetrisiyle `delivered` olur (`markDelivered` →
-> `commandTargets`: MAC, bölge, müşteri, `all`). Firmware toplu komutta
-> yalnızca hata cevabını rastgele gecikmeyle göndermeye karar verirse id ile
-> bölge komutuna bağlanır (kod hazır); vermezse toplu komut hataları (ör.
-> yetersiz lambalı efekt) panelde görünmez.
+> **`Meven:all/cmd`'ye cihaz cevap DÖNMEZ** (firmware kararı: yüzlerce
+> cihazın aynı anda cevabı Thread ağını tıkar). Bu komutun `commands` satırı
+> cihazın sonraki telemetrisiyle `delivered` olur (`markDelivered` →
+> `commandTargets`: MAC, bölge, grup, müşteri, `all`).
 
 
 ```json
@@ -737,7 +744,7 @@ PATCH           /api/zones/:slug { customerSlug } # (admin) bölgeyi cihazlarıy
 ```
 POST /api/zones/:zoneId/command
 POST /api/devices/:deviceId/command       # channel ile tek lamba, yoksa tüm cihaz
-POST /api/command/all?customer=<slug>     # müşterinin "Tüm Sistem"i (bölge topic'lerine fanout)
+POST /api/command/all?customer=<slug>     # müşterinin "Tüm Sistem"i (müşterinin her cihazının MAC topic'ine)
 
 Body:
 {
@@ -759,14 +766,12 @@ PATCH  /api/devices/:deviceId    → bölge / isim / MAC güncelle { zoneSlug?, 
 DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 ```
 
-> **Bölge değişikliği:** dinamik bölge aboneliğini destekleyen (yeni)
-> firmware'de yeni bölge cihaza gönderilir (zone sync; çevrimdışıysa HELLO'da),
-> cihaz eski bölgenin alt gruplarından çıkarılır. **Eski firmware'de** cihazın
-> hangi `Meven:<slug>/cmd` topic'ini dinlediği `ZONE_SLUG`'tan gelir; cihaz
-> yeniden flaşlanana kadar eski bölgenin toplu komutlarını almaya devam eder.
-> Tekil (MAC) ve `Meven:all/cmd` komutları etkilenmez. Dashboard uyarıyı cihazın
-> `zoneSync` durumuna göre seçer. Cihaz silinince istenen liste ∅ olur →
-> bağlandığında `zone_clear`.
+> **Bölge değişikliği** komutlar için hemen geçerlidir: bölge/alt grup/"Tüm
+> Sistem" komutu cihaz başına MAC topic'ine gider, liste tenancy index'inden
+> (`refreshTenancy`). Yeniden flaşlama gerekmez. Dinamik bölge aboneliğini
+> destekleyen firmware'e yeni bölge ayrıca NVS listesi olarak gönderilir (zone
+> sync; çevrimdışıysa HELLO'da), cihaz eski bölgenin alt gruplarından
+> çıkarılır. Cihaz silinince istenen liste ∅ olur → bağlandığında `zone_clear`.
 > **MAC düzeltmesi** (`mac`, yalnızca yanlış girilmiş kod için): cihazın kimliği
 > MAC olduğundan bütün kayıtları yeni MAC'e taşınır (`lib/deviceRename.ts →
 > renameDeviceMac`, tek transaction). Taşınanlar: `fixtures`, `d4i_telemetry`,
@@ -778,10 +783,9 @@ DELETE /api/devices/:deviceId    → cihazı ve tüm kayıtlarını sil
 > kayıt kalmaz. Yeni MAC başka cihaz ya da gateway olarak kayıtlıysa 409
 > (sahip açıklanmaz). Audit: `device.mac_change`.
 >
-> **Cihaz başka MÜŞTERİNİN bölgesine taşınamaz** (admin için de): eski
-> `ZONE_SLUG`'ı dinlemeye devam edeceği için eski müşterinin bölge komutlarını
-> almayı sürdürürdü. Müşteri değişimi bölge seviyesinde yapılır (admin bölgeyi
-> taşır; slug değişmez, yeniden flaş gerekmez). Başka müşteride kayıtlı MAC
+> **Cihaz başka MÜŞTERİNİN bölgesine taşınamaz** (admin için de). Müşteri
+> değişimi bölge seviyesinde yapılır (admin bölgeyi taşır; slug değişmez)
+> ya da cihaz silinip yeni müşteride eklenir. Başka müşteride kayıtlı MAC
 > eklenmek istenirse 409 döner ve sahip açıklanmaz. Cihaz/bölge silinince
 > `fault_events` dahil tüm MAC kayıtları silinir (MAC başka müşteriye geçerse
 > eski geçmiş sızmasın).
@@ -1521,7 +1525,7 @@ MQTT_ZONE_SYNC=
 
 1. **HTTP sadece dashboard ↔ backend arasında** kullanılır. ESP32 HTTP kullanmaz.
 2. **ESP32 hiçbir zaman polling yapmaz.** Komutları MQTT subscribe ile alır.
-3. **Zone komutu = tek MQTT publish** → o zone'daki tüm cihazlar alır. Her cihaza ayrı istek gönderilmez.
+3. **Zone komutu = tek API isteği, cihaz başına MQTT publish.** Cihazlar bölge topic'ini dinlemez; `publishCommand("zone")` bölgedeki her cihazın `Meven:<MAC>/cmd`'sine aynı paketi basar. Cihaz listesi bellek içi tenancy index'inden gelir (DB yok, Kural #10); `commands`'a tek satır, tek requestId. Alt grup ve müşteri "Tüm Sistem"i de böyle.
 4. **Payload minimal tutulur.** LoRa geçişinde binary encode edilecek, semantik değişmeyecek.
 5. **Command tablosunda requestId ile idempotency** sağlanır; aynı komut iki kez uygulanmaz.
 6. **Cihaz durumu DB'de son snapshot olarak tutulur.** Dashboard her zaman DB'den okur, MQTT'den değil. Zone snapshot'ı `zones` tablosunda; komut publish'inde optimistic güncellenir, cihaz status'u gelince rafine edilir.
@@ -1537,14 +1541,14 @@ MQTT_ZONE_SYNC=
 10. **Publish önce, DB sonra.** Komut yolunda `publishCommand` (senkron, DB'ye dokunmaz) isteği alır almaz MQTT'ye yazar; `commands` INSERT'i, zone snapshot'ı ve SSE `recordCommand`'a taşınıp route'larda `after()` ile arka plana alınır. Sebep: publish DB'nin arkasındayken Neon round-trip'i (+ scale-to-zero uyanması) komutu saniyelerce geciktiriyordu. **Komut yoluna asla `await db...` eklemeyin** — snapshot/log işleri `recordCommand`'a girer. Ödün: zone/device bulunamasa da 202 döner (var olmayan topic'e publish zararsız, `recordCommand` warn'lar). Yetki kontrolü de DB'ye gitmez: tenancy index'i + JWT (`lib/auth/guard.ts`).
 11. **Her `/api/*` route'u guard ile başlar** (`authorize*`, `lib/auth/guard.ts`); yalnızca `/api/auth/login`, `/api/auth/logout`, `/api/auth/token` ve `/api/auth/refresh` hariç. `src/proxy.ts` iyimser kontroldür, tek başına güvenlik sınırı değildir. Yeni route eklerken guard'ı unutma.
 12. **Her sorgu müşteriye göre süzülür.** Liste sorguları `zones.customer_id` (ya da `tenancy` → `customer.macs`) ile kapsamlanır; kayıtsız MAC'lerin telemetrisi hiçbir müşteriye görünmez. Canlı olaylar `customerId` ile etiketlenir, SSE route'u buna göre süzer.
-13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i bölge topic'lerine fanout'tur.
+13. **`Meven:all/cmd` yalnızca admin'in global komutudur.** Müşteri "Tüm Sistem"i müşterinin cihazlarının MAC topic'lerine fanout'tur.
 14. **Bölge slug'ı rezerv listesine takılmaz ve asla yeniden kullanılmaz** (`isReservedZoneSlug`, `retired_zone_slugs`, `lib/zoneSlug.ts → allocateZoneSlug`).
 15. **Sahiplik değiştiren her CRUD `refreshTenancy()`'yi yanıt dönmeden bekler** (bölge/cihaz/müşteri/kullanıcı). Aksi halde sonraki istek eski sahipliği görür.
 16. **Mobil uygulamada kontrat kopyaları var.** Flutter uygulaması şu dosyaların Dart karşılıklarını taşır: `lib/effects.ts`, `lib/deviceErrors.ts`, `lib/faults.ts`, `lib/d4i.ts`, `app/_lib/deviceHealth.ts` (`isOnline` → `DeviceView.onlineWindowMs ?? 3 dk`), `app/_lib/alerts.ts`, `lib/auth/roles.ts`, `app/_lib/selection.ts` (toplu kontrol), `app/_lib/poles.ts` (`poleState`, `parseCoordinatePair`, `inTurkey`). Mobil zamanlama ekranı yapılırsa `lib/scheduleTime.ts` + `lib/sun.ts` de kopyalanır (önizleme; asıl hesap sunucuda). Bunlardan biri değişirse mobildeki `lib/contracts/` karşılığı da güncellenmeli. API yanıt şekli değişikliği de mobili kırar. Mobil müşteriye yönelik olduğu için katalogların **sade** metinlerini (`plain`, `plainLabel`) kullanmalı. Gateway alanları (`GatewayView.fields`, `typeLabel`) sunucuda role göre hazırlandığı için `lib/gateways.ts`'in kopyası gerekmez; mobil gateway durumunu gösterecekse yalnızca `gatewayState` (`GatewayView.onlineWindowMs ?? 2 dk` + LWT) kopyalanmalı.
 17. **OTA (`ota_check`) asla toplu gönderilmez.** Aynı anda indiren cihazlar Thread ağını tıkıyor ve indirmeler yarıda kalıyor (firmware ekibinin saha notu). Bakım komutları yalnızca `Meven:<MAC>/cmd`'ye gider; aynı bölgede art arda OTA `lib/otaGuard.ts` ile 409'a takılır. Toplu güncelleme gerekiyorsa cihaz cihaz, arada birkaç dakika.
 18. **Gateway mesajı paket sürüm baytıyla ayrılır.** Ağ geçitleri yalnızca binary basar, ilk bayt 0x03 (lamba 0x01). `decodeBinUplink` 0x03'ü `handleBrUplink`'e verir; kayıtlı gateway kimliğinden gelen 0x01 paketi atılır (cihaz yoluna girmez). Gateway'e lamba / zone komutu gitmez; yalnızca `report_now` ve `ota_check` (`publishGatewayCommand`).
 19. **Binary alan tablosu OTA'dan önce güncellenir.** `src/lib/binproto/fields.ts` (lamba, 0x01) ve `brFields.ts` (Border Router, 0x03) firmware'in `msg_fields.h` kopyalarıdır; iki tablo ayrıdır (aynı kod farklı anlam taşıyabilir); tanımsız alanlı paket atılır (cihaz panelde görünmez). Mevcut bir alanın kodu/boyu/anlamı değişmez. Bkz. "Binary protokol v1".
-20. **Cihazın dinlediği bölge topic'leri panelden yönetilir (yeni firmware).** Zone komutları yalnızca binary ve yalnızca `Meven:<MAC>/cmd`'ye gider; backend istenen durumu (bölge + alt gruplar) tutar, cihazı ona getirir (`lib/zoneSync`). Bölge/alt grup/cihaz silmek yalnızca DB işi değildir: üyelere `zone_remove`/`zone_clear` gider. Grup komutu yalnızca bütün üyeler senkronsa tek publish'tir; değilse üyelere cihaz komutu.
+20. **Cihazın NVS'indeki bölge listesi panelden yönetilir (yeni firmware).** Zone komutları yalnızca binary ve yalnızca `Meven:<MAC>/cmd`'ye gider; backend istenen durumu (bölge + alt gruplar) tutar, cihazı ona getirir (`lib/zoneSync`). Bölge/alt grup/cihaz silmek yalnızca DB işi değildir: üyelere `zone_remove`/`zone_clear` gider. Komut teslimi bu listeye bağlı değildir: grup komutu da üyelerin MAC topic'lerine gider.
 21. **Yalnızca binary protokol.** Cihazdan JSON kabul edilmez, cihaza JSON gönderilmez (komut, bakım, zone, gateway hepsi binary). `/data` ve `/health` aboneliği yalnızca eski firmware'i saymak içindir (`GET /api/admin/binproto`); oraya gelen mesaj işlenmez. JSON yolu geri eklenmez; binary'de karşılığı olmayan bir ihtiyaç çıkarsa önce firmware ekibiyle alan tablosu (`fields.ts`) genişletilir.
 
 ---

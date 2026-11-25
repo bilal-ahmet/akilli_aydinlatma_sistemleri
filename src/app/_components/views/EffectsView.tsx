@@ -133,7 +133,7 @@ function EffectCard({
  * penceresi), ortada efekt kataloğu, altta sabit başlat/durdur çubuğu.
  *
  * Komut planı `planTargets`: bütün cihazlar tamamen seçiliyse tek "Tüm Sistem"
- * isteği (sunucu bölge topic'lerine fanout eder), tamamen seçili bölgeye bölge
+ * isteği (sunucu müşterinin her cihazına ayrı gönderir), tamamen seçili bölgeye bölge
  * komutu, kısmi seçimde cihaz/lamba komutları. Çok lambalı efektte lamba
  * seçimi cihazın tamamına yükselir; lambası yetmeyen cihaz atlanır.
  */
@@ -156,7 +156,7 @@ export function EffectsView() {
     setSent(null);
   };
 
-  const plan = planTargets(selection, zoned, zones, selected, { groups: "synced" });
+  const plan = planTargets(selection, zoned, zones, selected, { groups: "any" });
   const stopPlan = planStop(selection, zoned, zones);
   const allChosen = zoned.length > 0 && listState(selection, zoned) === "all" && plan.skipped.length === 0;
   const nothing = isEmptyPlan(plan);

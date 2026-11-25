@@ -37,7 +37,6 @@ import type { ZoneOp } from "@/lib/zoneSync/plan";
 import { HELLO_TEXT } from "@/lib/binproto/toJson";
 import {
   cmdTopic,
-  zoneCmdTopic,
   parseJsonUplinkTopic,
   parseBinTopic,
   parseLwtTopic,
@@ -991,18 +990,19 @@ function toWireCmd(cmd: CommandInput): CommandInput {
  *
  * target:
  *  - "device" → Meven:<MAC>/cmd  (id = MAC). `channel` verilirse tek lamba, yoksa tüm cihaz.
- *  - "zone"     → Meven:<slug>/cmd (id = slug) — tek publish, fanout yok
- *  - "group"    → Meven:<grup slug'ı>/cmd (id = grup slug'ı) — alt grup, tek
- *                 publish. Yalnızca grubu NVS'ine almış (senkron) cihazlara
- *                 ulaşır; panel/zamanlayıcı bu yüzden tüm üyeler senkronsa
- *                 grup komutu, değilse cihaz komutları gönderir.
- *  - "customer" → müşterinin HER bölgesi için Meven:<slug>/cmd (id = müşteri
- *                 slug'ı, `zoneSlugs` = müşterinin bölgeleri). Müşterinin
- *                 "Tüm Sistem"i budur: firmware müşteri topic'i tanımadığı ve
- *                 Meven:all/cmd diğer müşterilerin cihazlarını da sürdüğü için
- *                 Kural #3'ün bilinçli istisnası (bölge sayısı kadar publish).
- *                 `zoneSlugs` tenancy index'inden gelir → DB beklenmez.
+ *  - "zone"     → bölgedeki HER cihazın Meven:<MAC>/cmd'si (id = bölge slug'ı)
+ *  - "group"    → alt grubun HER üyesinin Meven:<MAC>/cmd'si (id = grup slug'ı)
+ *  - "customer" → müşterinin HER cihazının Meven:<MAC>/cmd'si (id = müşteri
+ *                 slug'ı) — müşterinin "Tüm Sistem"i. Meven:all/cmd diğer
+ *                 müşterilerin cihazlarını da sürerdi.
  *  - "all"      → Meven:all/cmd (id = "all") — TÜM müşteriler; yalnızca admin.
+ *
+ * Cihazlar bölge / alt grup topic'lerini (Meven:<slug>/cmd) DİNLEMEZ
+ * (firmware kararı, 2026-11); yalnızca kendi MAC topic'ini ve Meven:all/cmd'yi.
+ * Bu yüzden toplu hedefler cihaz başına publish'e açılır. Hepsi aynı paketi
+ * (tek requestId / tek kısa id) alır; MAC listesi tenancy index'inden gelir →
+ * DB beklenmez (Kural #10). MAC topic'ine gelen komuta cihaz ack döner, yani
+ * bölge/grup/"Tüm Sistem" komutları da cevaplıdır (handleAck MAC'i topic'ten bilir).
  */
 // Publish anında (senkron, route handler'da ilk iş olarak) atanır — komutların
 // gönderilme sırasını, arka plandaki recordCommand'ların bitiş sırasından
@@ -1011,20 +1011,30 @@ let cmdSeq = 0;
 
 export type CommandTarget = "device" | "zone" | "group" | "customer" | "all";
 
+/**
+ * Toplu hedefin (bölge / alt grup / müşteri) kayıtlı cihazları — senkron,
+ * tenancy index'inden. Route'lar guard'da index'i zaten yüklemiştir; yoksa
+ * fırlar (route → 502) ki komut sessizce hiçbir cihaza gitmeden "202" dönmesin.
+ */
+function fanoutMacs(target: "zone" | "group" | "customer", id: string): string[] {
+  const idx = peekTenancy();
+  if (!idx) throw new Error("kiracı index'i yüklenmedi; toplu komutun cihazları çözülemiyor");
+  if (target === "zone") return idx.zoneMacs.get(id) ?? [];
+  if (target === "group") return idx.groupMacs.get(id) ?? [];
+  return idx.customersBySlug.get(id)?.macs ?? [];
+}
+
 export function publishCommand(
   target: CommandTarget,
   id: string,
   cmd: CommandInput,
-  zoneSlugs?: string[],
 ): { requestId: string; seq: number } {
   const topics: string[] =
     target === "device"
       ? [cmdTopic(id)]
-      : target === "zone" || target === "group"
-        ? [zoneCmdTopic(id)]
-        : target === "customer"
-          ? (zoneSlugs ?? []).map(zoneCmdTopic)
-          : [ALL_CMD];
+      : target === "all"
+        ? [ALL_CMD]
+        : fanoutMacs(target, id).map(cmdTopic);
 
   // Komut id'si publish'ten ÖNCE üretilir (= commands.request_id); kabloya
   // u16 kısa id gider, shortIds ack'te aynı UUID'ye geri çevirir.

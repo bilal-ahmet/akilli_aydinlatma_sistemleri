@@ -92,8 +92,8 @@ export function DeviceZoneSync({ device }: { device: DeviceView }) {
           <h3 className="text-base font-semibold text-text">Bölge bilgisi</h3>
           <p className="mt-1 text-sm text-muted">
             {technical
-              ? "Cihazın dinlediği bölge + alt grup topic'leri (NVS). Panelden yönetilir; değişiklikler Meven:<MAC>/cmd ile zone_add / zone_remove olarak gider. Doğrula: zone_list."
-              : "Cihazın hangi bölge ve alt grup komutlarını alacağı panelden gönderilir. Doğrula, cihazdaki kaydı okuyup gerekirse düzeltir."}
+              ? "Cihazın NVS'indeki bölge + alt grup listesi. Panelden yönetilir; değişiklikler Meven:<MAC>/cmd ile zone_add / zone_remove olarak gider. Doğrula: zone_list. Komutlar bu listeye bağlı değildir (cihaz başına MAC topic'ine gider)."
+              : "Cihazın bölge ve alt grup bilgisi panelden gönderilir. Doğrula, cihazdaki kaydı okuyup gerekirse düzeltir."}
           </p>
         </div>
         <button type="button" onClick={verify} disabled={busy} className="btn-line h-10 shrink-0 px-4 text-sm">

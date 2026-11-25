@@ -31,13 +31,14 @@ ESP32 ──binary──▶ Meven:<MAC>/bin ──▶ backend (+/bin aboneliği)
 
 ## Komutlar (sunucu → cihaz)
 
-Cihaz komutu (`Meven:<MAC>/cmd`, bakım ve zone dahil), bölge / alt grup /
-müşteri "Tüm Sistem"i (`Meven:<slug>/cmd`) ve `Meven:all/cmd` hepsi aynı
-binary paketi alır. Topic başına biçim seçimi ve `MQTT_BINARY_COMMANDS`
+Cihaz komutu (`Meven:<MAC>/cmd`, bakım ve zone dahil) ve `Meven:all/cmd`
+aynı binary paketi alır. Bölge / alt grup / müşteri "Tüm Sistem"i
+**cihaz başına `Meven:<MAC>/cmd`'ye** gider (aynı paket, aynı kısa id):
+cihazlar `Meven:<slug>/cmd` topic'lerini dinlemez (firmware kararı, 2026-11).
+Topic başına biçim seçimi ve `MQTT_BINARY_COMMANDS`
 kapatma anahtarı 20.11.2026'da kaldırıldı.
 
-- **Sınır:** o bölge slug'ıyla flaşlanmış eski (JSON) firmware'li bir cihaz
-  binary komutu anlamaz (`gecersiz json` döner, o da işlenmez).
+- **Sınır:** eski (JSON) firmware'li bir cihaz binary komutu anlamaz (`gecersiz json` döner, o da işlenmez).
 - `on`/`off` kabloda `dim 100/0`'dır. Tüm lambalar için kanal alanı yazılmaz
   (binary'de "broadcast"). Efekt durdurma kanalsız `dim` ile yapılır;
   `number 0` kullanılmaz.
@@ -50,11 +51,12 @@ kapatma anahtarı 20.11.2026'da kaldırıldı.
   (delivered/failed, rozet, arıza geçmişi, Bakım sekmesi). Eşlenemeyen ack
   (restart sonrası, süresi geçmiş, id'siz -15/-16/-17) bir komutu tahminle
   `failed` yapmaz; hata yine cihaz rozetine yazılır.
-- **Toplu komuta cevap yok** (firmware kararı): bölge ve
-  `all` topic'lerine gelen komuta cihaz başarı cevabı dönmez. `commands`
-  satırı cihazın sonraki telemetrisiyle `delivered` olur. Firmware ileride
-  yalnızca hata cevabını rastgele gecikmeyle gönderirse id ile bölge
-  komutuna bağlanır.
+- **Bölge / alt grup / "Tüm Sistem" komutu cevaplıdır:** MAC topic'inden
+  geldiği için her cihaz ack döner (aynı id). `ok` ilk gelende `commands`
+  satırı `delivered`, herhangi bir cihaz hata verirse `failed`; hata o
+  cihazın rozetine yazılır.
+- **`Meven:all/cmd`'ye cevap yok** (firmware kararı): `commands` satırı
+  cihazın sonraki telemetrisiyle `delivered` olur.
 
 ## Dinamik bölge aboneliği (zone komutları)
 

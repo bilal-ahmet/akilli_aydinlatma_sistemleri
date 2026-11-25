@@ -6,7 +6,8 @@ import { authorizeZone } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 
-// POST /api/zones/:zoneId/command  → Meven:<slug>/cmd'ye tek publish.
+// POST /api/zones/:zoneId/command  → bölgedeki her cihazın Meven:<MAC>/cmd'sine
+// ayrı publish (liste tenancy'den), tek komut kaydı.
 // Publish önce, DB sonra: komut hiçbir sorguyu beklemez (bkz. lib/mqtt.ts).
 // Yetki kontrolü tenancy index'inden okunur, DB'ye gitmez (Kural #10).
 export async function POST(

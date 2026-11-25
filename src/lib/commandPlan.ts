@@ -10,19 +10,17 @@ import {
 } from "@/lib/mqtt";
 import { getTenancy, type CustomerInfo } from "@/lib/tenancy";
 import type { ScheduleResult, ScheduleTarget } from "@/lib/scheduleTime";
-import { zoneSyncView } from "@/lib/zoneSync/engine";
 
 /**
  * Bir hedef planını sunucuda yürütür (zamanlanmış komutlar). Kurallar
  * istemcideki `LightingProvider` + `planTargets` / `planStop` ile aynıdır:
  *
- *  - `all` → müşterinin "Tüm Sistem"i (bölge topic'lerine fanout).
- *  - `zones` → tek bölge publish (Kural #3), `devices` → kanalsız, `lamps` →
- *    kanallı cihaz komutu.
- *  - `groups` (alt grup) → bütün üyeler grubu cihazına uygulamışsa (senkron)
- *    tek grup publish'i; değilse üyelere cihaz komutu (grup topic'i senkron
- *    olmayan üyeye ulaşmaz). Çok lambalı efektte lambası yetmeyen üye varsa
- *    da cihaz komutlarına düşülür (o üye atlanır).
+ *  - `all` → müşterinin "Tüm Sistem"i (müşterinin her cihazının MAC topic'i).
+ *  - `zones` → tek bölge komutu (Kural #3; bölgedeki her cihazın MAC topic'ine
+ *    publishCommand açar), `devices` → kanalsız, `lamps` → kanallı cihaz komutu.
+ *  - `groups` (alt grup) → tek grup komutu (üyelerin MAC topic'lerine). Çok
+ *    lambalı efektte lambası yetmeyen üye varsa cihaz komutlarına düşülür (o
+ *    üye atlanır).
  *  - Müşteriye ait olmayan bölge/MAC (silinmiş, taşınmış) atlanır.
  *  - Çok lambalı efekt lamba hedefini cihazın tamamına yükseltir; lambası
  *    `minLamps`'ten az olan cihaz atlanır.
@@ -53,7 +51,7 @@ export async function runPlan(
   let skipped = 0;
 
   async function send(type: CommandTarget, id: string, cmd: CommandInput) {
-    const { requestId, seq } = publishCommand(type, id, cmd, customer.zoneSlugs);
+    const { requestId, seq } = publishCommand(type, id, cmd);
     sent++;
     await recordCommand(type, id, requestId, seq, cmd, meta).catch((err) =>
       console.error("[schedule] komut kaydı başarısız:", err),
@@ -77,15 +75,9 @@ export async function runPlan(
       target.lamps.length - lampRefs.length;
   }
 
-  // Alt gruplar: tüm üyeler senkronsa grup topic'i, değilse üyelere cihaz komutu.
-  let directGroups: string[] = [];
+  // Alt gruplar: grup komutu üyelerin MAC topic'lerine gider (senkron şartı yok).
   const groupMembersOf = (slug: string) => idx.groupMacs.get(slug) ?? [];
-  for (const slug of ownedGroups) {
-    const members = groupMembersOf(slug);
-    if (members.length === 0) continue;
-    if (members.every((m) => zoneSyncView(m).status === "synced")) directGroups.push(slug);
-    else for (const m of members) if (!devices.includes(m)) devices.push(m);
-  }
+  let directGroups = ownedGroups.filter((slug) => groupMembersOf(slug).length > 0);
   const viaGroup = new Set(directGroups.flatMap(groupMembersOf));
 
   // ── Anlık durum (efekt, şiddet) ──

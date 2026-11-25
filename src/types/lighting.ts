@@ -352,10 +352,9 @@ export type DeviceCreate = z.infer<typeof deviceCreateSchema>;
  * kimliğidir: değişince kayıtları yeni MAC'e taşınır (bkz. PATCH route,
  * `renameDeviceMac`). İki noktalı/noktasız girilebilir.
  *
- * Bölge değişikliği: dinamik bölge aboneliğini destekleyen firmware'de yeni
- * bölge cihaza gönderilir (lib/zoneSync; çevrimdışıysa bağlandığında). Eski
- * firmware'de cihaz hangi topic'i dinleyeceğini ZONE_SLUG'tan bilir ve yeniden
- * flaşlanmadıkça yeni bölgenin komutlarını ALMAZ.
+ * Bölge değişikliği komutlar için hemen geçerlidir (bölge komutu cihaz başına
+ * MAC topic'ine gider). Dinamik bölge aboneliğini destekleyen firmware'e yeni
+ * bölge ayrıca NVS listesi olarak gönderilir (lib/zoneSync).
  */
 export const deviceUpdateSchema = z
   .object({

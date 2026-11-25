@@ -7,13 +7,11 @@ import { authorizeGroup } from "@/lib/auth/guard";
 export const runtime = "nodejs";
 
 /**
- * POST /api/zones/:zoneId/groups/:groupId/command → Meven:<grup>/cmd'ye tek
- * publish (bölge komutuyla aynı kurallar: publish önce, DB sonra; yetki
- * tenancy'den, DB'siz — Kural #10). `channel` yok sayılır: toplu komuttur.
- *
- * Grup topic'i yalnızca grubu cihazına uygulamış (senkron) üyelere ulaşır.
- * Panel bu yüzden tüm üyeler senkron değilse bu uç yerine cihaz komutları
- * gönderir (app/_lib/selection.ts planTargets); API istemcileri de buna dikkat etmeli.
+ * POST /api/zones/:zoneId/groups/:groupId/command → grubun her üyesinin
+ * Meven:<MAC>/cmd'sine ayrı publish, tek komut kaydı (bölge komutuyla aynı
+ * kurallar: publish önce, DB sonra; yetki ve üye listesi tenancy'den, DB'siz —
+ * Kural #10). `channel` yok sayılır: toplu komuttur. Cihazlar grup topic'ini
+ * dinlemediği için senkron durumu komutun ulaşmasını etkilemez.
  */
 export async function POST(
   req: Request,

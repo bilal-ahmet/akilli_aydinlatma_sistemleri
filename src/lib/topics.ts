@@ -1,15 +1,16 @@
 /**
  * MQTT topic şeması (ESP ekibinin kontratı):
- *   Meven:<MAC>/cmd   ← tekil komut (backend publish, cihaz subscribe)
- *   Meven:<slug>/cmd  ← bölge komutu (bölgedeki tüm cihazlar subscribe)
- *   Meven:all/cmd     ← toplu komut (tüm cihazlar subscribe)
+ *   Meven:<MAC>/cmd   ← cihaz komutu (backend publish, cihaz subscribe); bölge,
+ *                       alt grup ve müşteri "Tüm Sistem"i de cihaz başına buraya
+ *   Meven:all/cmd     ← admin'in global komutu (tüm cihazlar subscribe)
  *   Meven:<MAC>/bin   ← binary protokol: cihazın (0x01) ve ağ geçidinin (0x03) TÜM uplink'i
  *   Meven:<MAC>/data, /health ← eski (JSON) firmware; İŞLENMEZ, yalnızca admin kartında görünür
  *   Meven:<GW>/lwt    ← ağ geçidinin bağlantı durumu (retained {"online":…})
  *
- * Bölge topic'i sayesinde bölge komutu tek publish'tir: backend cihaz listesini
- * DB'den çözmez, publish hiçbir sorgu beklemez. Cihaz kendi bölge slug'ını
- * firmware'deki ZONE_SLUG'tan bilir.
+ * Cihazlar bölge / alt grup topic'lerini (Meven:<slug>/cmd) DİNLEMEZ
+ * (firmware kararı, 2026-11). Bölge komutu bölgedeki her cihazın MAC topic'ine
+ * ayrı publish'tir; cihaz listesi bellek içi tenancy index'inden gelir, publish
+ * hiçbir sorgu beklemez (lib/mqtt.ts → publishCommand).
  *
  * Not: MQTT '+' joker'i bir seviyenin tamamını kapsar; "Meven:" bir seviyenin
  * parçası olduğundan "Meven:+/bin" GEÇERSİZdir. Bu yüzden abonelik "+/bin"
@@ -18,7 +19,6 @@
 const PREFIX = "Meven";
 
 export const cmdTopic = (mac: string) => `${PREFIX}:${mac}/cmd`;
-export const zoneCmdTopic = (slug: string) => `${PREFIX}:${slug}/cmd`;
 export const ALL_CMD = `${PREFIX}:all/cmd`;
 // Eski (JSON) firmware'in uplink topic'leri. Backend JSON KABUL ETMEZ; bunlara
 // yalnızca firmware'i güncellenmemiş cihazı admin kartında göstermek için

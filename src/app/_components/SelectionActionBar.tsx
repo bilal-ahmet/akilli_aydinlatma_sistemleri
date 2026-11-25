@@ -81,8 +81,8 @@ export function SelectionActionBar({
   if (selection.size === 0 && notice !== null) setNotice(null);
   if (!canWrite || selection.size === 0) return null;
 
-  // Bir alt grubun bütün (senkron) üyeleri seçiliyse tek grup komutu gider.
-  const plan = planTargets(selection, devices, zones, undefined, { groups: "synced" });
+  // Bir alt grubun bütün üyeleri seçiliyse tek grup komutu gider.
+  const plan = planTargets(selection, devices, zones, undefined, { groups: "any" });
   const stopPlan = planStop(selection, devices, zones);
   const what = selectionText(count);
   const value = level?.sig === sig ? level.value : selectedBrightness(selection, devices);
@@ -106,7 +106,7 @@ export function SelectionActionBar({
 
   function pickEffect(number: number, text?: string) {
     const fx = effectByNumber(number);
-    const p = planTargets(selection, devices, zones, fx, { groups: "synced" });
+    const p = planTargets(selection, devices, zones, fx, { groups: "any" });
     setPickerOpen(false);
     if (isEmptyPlan(p)) {
       say(`Seçili cihazların hiçbirinde ${fx?.label ?? "bu efekt"} için yeterli armatür yok.`);

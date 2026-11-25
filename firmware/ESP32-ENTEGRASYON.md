@@ -23,30 +23,23 @@ Bu değer hem topic'lerde hem data payload'ındaki `deviceId` alanında kullanı
 | Topic | Yön | Açıklama |
 |---|---|---|
 | `Meven:<MAC>/cmd`  | **subscribe** | Bu cihaza özel komut |
-| `Meven:<slug>/cmd` | **subscribe** | Cihazın bölgesine toplu komut |
-| `Meven:all/cmd`    | **subscribe** | Tüm cihazlara toplu komut |
+| `Meven:all/cmd`    | **subscribe** | Tüm cihazlara toplu komut (admin'in global komutu) |
 | `Meven:<MAC>/data` | **publish**   | Bu cihazın durum/veri raporu + komut yanıtı |
 | `Meven:<MAC>/health` | **publish** | ~30 sn'de bir sağlık mesajı: firmware sürümü, OTA durumu (firmware 1.0.9+, §5.4) |
 
-Cihaz açılışta **üç** topic'e subscribe olur: `Meven:<MAC>/cmd`,
-`Meven:<ZONE_SLUG>/cmd` ve `Meven:all/cmd`.
+Cihaz açılışta **iki** topic'e subscribe olur: `Meven:<MAC>/cmd` ve
+`Meven:all/cmd`. **Bölge / alt grup topic'leri (`Meven:<slug>/cmd`) dinlenmez**
+(2026-11): backend bölge, alt grup ve müşteri "Tüm Sistem"i komutunu
+bölgedeki her cihazın `Meven:<MAC>/cmd`'sine ayrı gönderir.
 **QoS (2026-11-20):** komut topic'lerine subscribe → **2** · `/bin` publish → **2**
 (backend iki yönde de QoS 2 kullanır; etkin QoS iki tarafın küçüğüdür).
 
-### ZONE_SLUG provisioning (cihaz başına, zorunlu)
-`secrets.h` içine cihazın bulunduğu bölgenin slug'ı yazılır:
-```c
-#define ZONE_SLUG  "ataturk-bulvari"
-```
-Bu değer dashboard'daki bölge slug'ı (`zones.slug`) ile **birebir** aynı olmalı —
-`GET /api/zones` yanıtındaki `id` alanından okunabilir. Yanlış yazılırsa cihaz
-bölge komutlarını almaz (tekil ve toplu komutlar çalışmaya devam eder).
-Serial'da `[mqtt] subscribe: … , Meven:<slug>/cmd , …` satırıyla doğrula.
-
-> **Cihaz başka bir bölgeye taşınırsa yeniden flaşlanmalıdır.** Dashboard'dan
-> bölge değiştirmek (`PATCH /api/devices/:mac`) yalnızca kaydı taşır; cihaz
-> `ZONE_SLUG` güncellenene kadar eski bölgenin komutlarını dinlemeye devam eder.
-> Dashboard bu durumu bölge seçimi değiştiğinde uyarı olarak gösterir.
+### Bölge (eski `ZONE_SLUG`)
+Komut almak için cihazın bölgesini bilmesi **gerekmez**: bölge komutu MAC
+topic'inden gelir. Cihaz dashboard'dan başka bölgeye taşınınca yeni bölgenin
+komutlarını hemen alır; yeniden flaşlama gerekmez. Yeni firmware bölge + alt
+grup listesini yine NVS'te tutar (zone_add / zone_remove, bkz.
+`BINARY-ENTEGRASYON.md`), ama bu liste topic aboneliği değildir.
 
 ## 4) Komut payload (gelen, cmd)
 
@@ -67,7 +60,8 @@ Cihazdaki **tüm lambalar** — `channel` alanı hiç yok:
   uygulanır.**
 - `id`: komut kimliği (UUID, backend'de `commands.request_id`). Backend **her**
   komuta ekler; cihaz yanıtında aynen geri yollar (§5.1). Bölge / "Tüm Sistem"
-  komutunda tek id vardır; toplu komuta başarı cevabı dönülmez (§5.1).
+  komutunda bütün cihazlara aynı id gider; MAC topic'inden geldiği için her
+  cihaz cevap döner. Yalnızca `Meven:all/cmd`'ye cevap dönülmez (§5.1).
   ```json
   { "action": "dim", "value": 40, "channel": 1, "id": "51f2d445-ec29-42d7-a2a9-901682322c49" }
   ```
@@ -187,12 +181,12 @@ Aynı anda en fazla **4 kanalda** efekt çalışabilir.
 
 ### 5.1) Komut yanıtı (tekil komuttan sonra)
 
-> **Toplu komut (bölge topic'i, `Meven:all/cmd`) cevapsızdır** — yüzlerce
-> cihazın aynı anda cevabı Thread ağını tıkar. Backend toplu komutu cihazın
-> sonraki telemetrisiyle "teslim edildi" sayar. Önerimiz: toplu komutta
-> yalnızca **hata** cevabı, MAC'ten türetilmiş 0–10 sn rastgele gecikmeyle
-> (ör. yetersiz lambalı efekt kullanıcıya görünsün). Böyle bir cevap gelirse
-> backend onu id ile bölge komutuna bağlar.
+> **`Meven:all/cmd` cevapsızdır** — yüzlerce cihazın aynı anda cevabı Thread
+> ağını tıkar. Backend bu komutu cihazın sonraki telemetrisiyle "teslim
+> edildi" sayar. Bölge / alt grup / "Tüm Sistem" komutları ise cihaz başına
+> `Meven:<MAC>/cmd`'den geldiği için tekil komut gibi cevaplanır (aynı id;
+> backend cevabı MAC'ten ayırır). Bölgedeki cihaz sayısı kadar cevap Thread
+> ağına çıkar.
 
 Firmware 1.0.9+ komutun `action`'ını ve gönderilen `id`'yi aynen geri yollar:
 ```json
@@ -340,9 +334,10 @@ Okuma sırası tek yerde: `readMeasurement` → doğrulanmış → tahmini → h
 
 ## 6) Akış özeti
 - Dashboard tek cihaza komut → `Meven:<MAC>/cmd`'e publish.
-- Dashboard bölge komutu → `Meven:<slug>/cmd`'e **tek publish** (o bölgedeki her cihaz alır).
-- Müşteri panelindeki "Tüm Sistem" → o müşterinin **her bölge topic'ine** ayrı
-  publish (`Meven:<slug>/cmd`). Cihaz tarafında fark yok; bölge komutu gibi gelir.
+- Dashboard bölge / alt grup komutu → bölgedeki (gruptaki) **her cihazın
+  `Meven:<MAC>/cmd`'sine** ayrı publish (aynı paket, aynı id).
+- Müşteri panelindeki "Tüm Sistem" → o müşterinin **her cihazının**
+  `Meven:<MAC>/cmd`'sine ayrı publish. Cihaz tarafında fark yok; tekil komut gibi gelir.
 - Admin'in global acil komutu → `Meven:all/cmd`'e tek publish (TÜM müşterilerin
   her cihazı alır). Firmware bu topic'e abone kalmalı.
 - Cihaz komutu işler → `{"action","id","status":...}` yanıtını `Meven:<MAC>/data`'ya

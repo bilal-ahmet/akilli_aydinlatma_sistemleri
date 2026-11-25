@@ -41,17 +41,16 @@ const selectShape = {
  * tüm kayıtlar yeni MAC'e taşınır (`renameDeviceMac`). Yeni MAC başka bir
  * cihaz ya da gateway olarak kayıtlıysa 409 (başka müşterideyse sahip
  * açıklanmaz — oluşturma kuralıyla aynı). Komutlar bundan sonra
- * `Meven:<yeni MAC>/cmd`'ye gider; cihazın bölge topic'i değişmez.
+ * `Meven:<yeni MAC>/cmd`'ye gider.
  *
- * Bölge değişikliği DASHBOARD KAYDINI taşır; cihazın dinlediği bölge topic'i
- * (`Meven:<slug>/cmd`) firmware'deki ZONE_SLUG'tan gelir. Cihaz yeniden
- * flaşlanana kadar eski bölgenin toplu komutlarını almaya devam eder, yeni
- * bölgeninkileri almaz. Tekil (MAC) ve "tüm sistem" komutları etkilenmez.
+ * Bölge değişikliği komutlar için hemen geçerlidir: bölge / alt grup / "Tüm
+ * Sistem" komutları cihaz başına `Meven:<MAC>/cmd`'ye gider ve hedef liste
+ * tenancy index'inden gelir (yanıt dönmeden `refreshTenancy`). Cihazlar bölge
+ * topic'lerini dinlemez. Yeni firmware'in NVS'indeki bölge listesi ayrıca
+ * güncellenir (lib/zoneSync; çevrimdışıysa bağlandığında).
  *
- * Başka MÜŞTERİNİN bölgesine taşıma reddedilir (admin için de): cihaz eski
- * ZONE_SLUG'ı dinlemeye devam edeceği için eski müşterinin bölge komutlarını
- * almayı sürdürürdü. Müşteri değişimi bölge seviyesinde (admin, bölge taşıma)
- * ya da yeniden flaşlayıp sil/ekle ile yapılır.
+ * Başka MÜŞTERİNİN bölgesine taşıma reddedilir (admin için de); müşteri
+ * değişimi bölge seviyesinde (admin, bölge taşıma) ya da sil/ekle ile yapılır.
  *
  * `poleId`: cihazın takılı olduğu direk (aynı bölgede, boş olmalı); "" bağı
  * kaldırır. Bölge değişip direk verilmezse eski direğin bağı kalkar.
@@ -144,7 +143,7 @@ export async function PATCH(
     }
     if (ctx.customerId && zone.customerId !== ctx.customerId) {
       return fail(
-        "Cihaz başka bir müşterinin bölgesine taşınamaz (cihaz eski bölge topic'ini dinlemeye devam eder). Bölgeyi taşıyın ya da cihazı yeniden flaşlayıp sil/ekle yapın.",
+        "Cihaz başka bir müşterinin bölgesine taşınamaz. Bölgeyi taşıyın ya da cihazı silip yeni müşteride ekleyin.",
         422,
       );
     }

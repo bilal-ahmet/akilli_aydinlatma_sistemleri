@@ -8,12 +8,12 @@ import { planTargets, type Selection } from "@/app/_lib/selection";
 import { Modal } from "./Modal";
 
 /**
- * Alt gruplar (dinamik bölge aboneliği): bölgenin cihazlarından oluşan ek
- * topic'ler (`Meven:<bölge>-<ad>/cmd`). Cihaz üyesi olduğu grupları kendi
- * belleğinde tutar; üyelik değişince her cihaza ayrı komut gider ve cihaz
- * satırında "Bölge bilgisi gönderiliyor" görünür. Alt grup tek komutla
- * yönetilir — yalnızca bütün üyeleri grubu uygulamışsa; değilse panel
- * üyelere tek tek komut gönderir (selection.ts planTargets).
+ * Alt gruplar: bölgenin cihazlarından oluşan gruplar (slug `<bölge>-<ad>`).
+ * Grup komutu sunucuda her üyenin `Meven:<MAC>/cmd`'sine ayrı gider
+ * (lib/mqtt.ts publishCommand "group"); cihaz grup topic'ini dinlemez.
+ * Üyelik ayrıca cihazın NVS listesine zone_add / zone_remove ile yazılır
+ * (dinamik bölge aboneliği, lib/zoneSync) ve cihaz satırında "Bölge bilgisi
+ * gönderiliyor" görünür; komutun ulaşması buna bağlı değildir.
  */
 
 const btnSm =
@@ -72,7 +72,7 @@ export function ZoneGroupsCard({
 
   function power(g: ZoneGroupView, on: boolean) {
     // Plan: bütün üyeler grubu uygulamışsa tek grup komutu, değilse cihaz komutları.
-    setTargetsPower(planTargets(membersSel(g), devices, zones, undefined, { groups: "synced" }), on);
+    setTargetsPower(planTargets(membersSel(g), devices, zones, undefined, { groups: "any" }), on);
   }
 
   if (!canWrite && zoneGroups.length === 0) return null;
@@ -83,7 +83,7 @@ export function ZoneGroupsCard({
         <h2 className="text-base font-semibold text-text">Alt gruplar</h2>
         <p className="text-[12.5px] text-muted">
           {technical
-            ? "Bölgenin cihazlarından ek topic'ler. Üyelik Meven:<MAC>/cmd ile zone_add / zone_remove olarak gider; grup komutu yalnızca bütün üyeler senkronsa tek publish'tir."
+            ? "Bölgenin cihazlarından gruplar. Grup komutu her üyenin Meven:<MAC>/cmd'sine ayrı gider. Üyelik ayrıca cihaz NVS'ine zone_add / zone_remove olarak yazılır (senkron durumu komutun ulaşmasını etkilemez)."
             : "Bölgedeki cihazları hat ya da sokak gibi gruplara ayırın; grup tek komutla yönetilir. Cihaz eklemek için tablodan seçip alttaki “Alt grup” düğmesini kullanın."}
         </p>
       </div>
