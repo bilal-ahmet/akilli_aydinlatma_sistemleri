@@ -25,7 +25,9 @@
  * `health_interval_s`; binary 0xBA / 0xB9), sonrakilerde göndermez.
  *
  * `--partition <n>` / `--rloc <n>` (binary): health'teki Thread
- * partition ID ve RLOC16 (varsayılan 0x1A2B3C4D / 0x5C01). Ağ geçidi bağı
+ * partition ID ve RLOC16 (varsayılan 0x1A2B3C4D / 0x5C01). `--next-hop <n>` /
+ * `--cost <n>`: mesh rotası 0xCE/0xCF (varsayılan 0x0400 = mock:gateway / 1), `--rssi -83`:
+ * parent RSSI (zayıf link denemesi). Ağ geçidi bağı
  * partition eşleşmesiyle kurulur: `npm run mock:gateway <GW> --partition <n>`
  * ile aynı değeri verin (lib/gatewayLink.ts).
  *
@@ -74,7 +76,7 @@ import {
 
 const RAW_ARGS = process.argv.slice(2);
 /** Değer alan bayraklar — değerleri konumsal argüman sayılmaz. */
-const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones", "--partition", "--rloc"]);
+const VALUE_FLAGS = new Set(["--interval", "--health-interval", "--zones", "--partition", "--rloc", "--next-hop", "--cost", "--rssi"]);
 const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
 const BIN = !RAW_ARGS.includes("--json");
 function flagSeconds(name: string): number | undefined {
@@ -92,6 +94,17 @@ function flagNumber(name: string, fallback: number): number {
 }
 const THREAD_PARTITION = flagNumber("--partition", 0x1a2b3c4d);
 const THREAD_RLOC = flagNumber("--rloc", 0x5c01);
+/** Mesh rotası (0xCE/0xCF): BR'ye giden ilk sıçrama ve toplam yol maliyeti. */
+const ROUTE_NEXT_HOP = flagNumber("--next-hop", 0x0400); // mock:gateway varsayılan RLOC16
+const ROUTE_PATH_COST = flagNumber("--cost", 1);
+/** Parent RSSI (dBm, negatif verilir: --rssi -83). */
+const PARENT_RSSI = (() => {
+  const i = RAW_ARGS.indexOf("--rssi");
+  const v = i >= 0 ? Number(RAW_ARGS[i + 1]) : NaN;
+  return Number.isInteger(v) && v < 0 && v >= -128 ? v : -62;
+})();
+/** RLOC16'nın child id bitleri 0 → router. */
+const THREAD_IS_ROUTER = (THREAD_RLOC & 0x1ff) === 0;
 /** Aralıklar bildirilecek mi (yeni firmware gibi) — bayraklardan biri verildiyse. */
 const ANNOUNCE_INTERVALS = REPORT_INTERVAL_S !== undefined || HEALTH_INTERVAL_S !== undefined;
 const MAC = (ARGS[0] ?? "A842E3123456")
@@ -432,23 +445,28 @@ function healthBinFields(): BinFields {
     ["HEALTH_RESET_REASON", 1], // power_on
     ["HEALTH_MQTT_CONNECTED", 1],
     ["HEALTH_DROPPED_COMMANDS", 0],
-    ["THREAD_ROLE", 2], // child
+    ["THREAD_ROLE", THREAD_IS_ROUTER ? 3 : 2], // router | child
     ["THREAD_ATTACHED", 1],
-    ["THREAD_PARENT_RSSI_AVG", -62],
-    ["THREAD_PARENT_RSSI_LAST", -60],
+    ["THREAD_PARENT_RSSI_AVG", PARENT_RSSI],
+    ["THREAD_PARENT_RSSI_LAST", PARENT_RSSI + 2],
+    ["THREAD_PARENT_LINK_QUALITY_IN", PARENT_RSSI < -80 ? 1 : PARENT_RSSI < -70 ? 2 : 3],
+    ["THREAD_PARENT_LINK_QUALITY_OUT", PARENT_RSSI < -80 ? 2 : 3],
     ["THREAD_RLOC16", THREAD_RLOC],
     ["THREAD_PARTITION_ID", THREAD_PARTITION],
     ["THREAD_CHANNEL", 15],
     ["THREAD_PAN_ID", 0x1234],
+    ["THREAD_ROUTE_NEXT_HOP", ROUTE_NEXT_HOP],
+    ["THREAD_ROUTE_PATH_COST", ROUTE_PATH_COST],
     ["OTA_STATE", codeOf(OTA_STATES, ota.state)],
     ["OTA_LAST_RESULT", codeOf(OTA_RESULTS, ota.last_result)],
     ["OTA_BUSY", ota.busy ? 1 : 0],
     ["OTA_LAST_TARGET_VERSION", versionCode(ota.last_target_version)],
     ["OTA_MESSAGE", otaMessage[ota.state] ?? 0],
     ["OTA_DOWNLOAD_PERCENT", ota.state === "downloading" ? 50 : undefined],
-    ["NEIGHBOR_RLOC16", 0x5c00],
+    ["NEIGHBOR_RLOC16", ROUTE_NEXT_HOP],
     ["NEIGHBOR_IS_CHILD", 0],
-    ["NEIGHBOR_RSSI_AVG", -61],
+    ["NEIGHBOR_RSSI_AVG", PARENT_RSSI + 1],
+    ["NEIGHBOR_LINK_MARGIN", Math.max(0, PARENT_RSSI + 100)],
   ];
   if (!healthStaticSent) {
     healthStaticSent = true;

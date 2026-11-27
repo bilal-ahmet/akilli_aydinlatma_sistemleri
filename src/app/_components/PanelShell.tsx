@@ -93,6 +93,13 @@ function SidebarContent({
     { href: `${base}/zamanlamalar`, label: "Zamanlamalar" },
     { href: `${base}/senaryolar`, label: "Senaryolar" },
   ];
+  if (role === "admin") {
+    // Teknik ağ görünümü: müşteri kullanıcılarına gösterilmez (sayfa da 404).
+    nav.splice(nav.findIndex((n) => n.href === `${base}/ag-gecitleri`) + 1, 0, {
+      href: `${base}/ag`,
+      label: "Ağ haritası",
+    });
+  }
   if (role === "admin" || role === "manager") {
     nav.push({ href: `${base}/kullanicilar`, label: "Kullanıcılar" });
   }
@@ -109,7 +116,8 @@ function SidebarContent({
 
       <nav aria-label="Panel" className="flex flex-col gap-0.5">
         {nav.map((n) => {
-          const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
+          // "/ag" "/ag-gecitleri"nin öneki: yalnızca tam yol ya da alt yol eşleşir.
+          const active = n.exact ? pathname === n.href : pathname === n.href || pathname.startsWith(`${n.href}/`);
           return (
             <Link
               key={n.href}

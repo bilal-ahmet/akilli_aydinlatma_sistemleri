@@ -7,6 +7,8 @@ import type { MapPole, PoleMapProps } from "./PoleMap";
 import { POLE_COLOR, POLE_RED, poleHeadColors } from "@/app/_lib/poleColors";
 import { KOCAELI } from "@/lib/sun";
 import { useTheme } from "./ThemeProvider";
+import type { MeshLayer } from "@/app/_lib/meshOverlay";
+import { attachMeshLibre } from "@/app/_lib/meshOverlayLibre";
 
 /**
  * Direk haritası — MapLibre GL + OpenStreetMap sürümü. Küçük haritalarda her
@@ -318,6 +320,7 @@ export function PoleMapLibre({
   preview = null,
   view3d = false,
   rotateDrag = false,
+  mesh = null,
   className = "",
 }: PoleMapProps) {
   const { resolved } = useTheme();
@@ -549,6 +552,23 @@ export function PoleMapLibre({
     markerRef.current = marker;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editKey]);
+
+  // ── Ağ haritası katmanı ──
+  const meshLayer = useRef<MeshLayer | null>(null);
+  const hasMesh = mesh !== null;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !hasMesh) return;
+    const layer = attachMeshLibre(map);
+    meshLayer.current = layer;
+    return () => {
+      layer.destroy();
+      meshLayer.current = null;
+    };
+  }, [hasMesh, compact]);
+  useEffect(() => {
+    if (mesh) meshLayer.current?.update(mesh);
+  }, [mesh, hasMesh]);
 
   if (!isPreview) return <div ref={containerRef} className={`h-full w-full ${className}`} />;
   // Önizlemede atıf kutusu haritayı örtüyordu; yerine tek satırlık küçük atıf.

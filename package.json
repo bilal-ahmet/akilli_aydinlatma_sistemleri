@@ -25,7 +25,8 @@
     "check:binproto": "tsx scripts/check-binproto.ts",
     "check:zonesync": "tsx scripts/check-zonesync.ts",
     "check:reports": "tsx scripts/check-reports.ts",
-    "check:route": "tsx scripts/check-route.ts"
+    "check:route": "tsx scripts/check-route.ts",
+    "check:mesh": "tsx scripts/check-mesh.ts"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.3",

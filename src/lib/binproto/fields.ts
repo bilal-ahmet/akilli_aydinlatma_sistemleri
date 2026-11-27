@@ -7,7 +7,8 @@
  * kaynak: "MQTT Binary Protokolü v1" dokümanı, rev 1.0 (3 Kasım 2026),
  * `firmware/MQTT-BINARY-PROTOKOL.html`. Ek: dinamik bölge aboneliği (0xA9/0xAA,
  * action 6-9, sonuç -18…-21) — firmware ekibinin "Dinamik zone ve bölgesel OTA"
- * planı (Kasım 2026).
+ * planı (Kasım 2026). Ek: mesh rotası (0xCE route_next_hop u16, 0xCF route_path_cost u8),
+ * firmware ekibi, 27 Kasım 2026.
  *
  * ⚠ KURAL: firmware yeni bir alan eklediğinde ÖNCE bu tablo güncellenip
  * deploy edilir, SONRA cihazlara OTA yapılır. Tanımsız alan kodu taşıyan paket
@@ -182,6 +183,9 @@ export const FIELD_DEFS: readonly FieldDef[] = [
   u16(0xcb, "THREAD_PARENT_CHANGES"),
   u16(0xcc, "THREAD_PARTITION_ID_CHANGES"),
   u16(0xcd, "THREAD_ATTACH_ATTEMPTS"),
+  // Mesh rotası (Kasım 2026): BR'ye giden ilk sıçramanın RLOC16'sı ve toplam yol maliyeti.
+  u16(0xce, "THREAD_ROUTE_NEXT_HOP"),
+  u8(0xcf, "THREAD_ROUTE_PATH_COST"),
   u16(0xd0, "NEIGHBOR_RLOC16"),
   u8(0xd1, "NEIGHBOR_IS_CHILD"),
   i8(0xd2, "NEIGHBOR_RSSI_AVG"),

@@ -160,6 +160,9 @@ export interface GatewayView {
   zoneSlug: string | null;
   zoneName: string | null;
   location: string | null;
+  /** Haritadaki konum (WGS84); Ağ haritasında rotaların son halkası. */
+  lat: number | null;
+  lng: number | null;
   notes: string | null;
   firmwareVersion: string | null;
   lastSeen: string | null;

@@ -203,6 +203,8 @@ export function toGatewayView(
     zoneSlug: row.zoneSlug,
     zoneName: row.zoneName,
     location: row.location,
+    lat: row.lat,
+    lng: row.lng,
     notes: row.notes,
     firmwareVersion: row.firmwareVersion,
     lastSeen: row.lastSeen ? row.lastSeen.toISOString() : null,

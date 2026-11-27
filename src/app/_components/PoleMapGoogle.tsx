@@ -4,6 +4,8 @@ import { MarkerClusterer, SuperClusterAlgorithm, type Renderer } from "@googlema
 import { useEffect, useRef } from "react";
 import { restingGesture, type GoogleMapHandle } from "@/app/_lib/googleMap";
 import type { Poles3d } from "@/app/_lib/googlePoles3d";
+import type { MeshLayer } from "@/app/_lib/meshOverlay";
+import { attachMeshGoogle } from "@/app/_lib/meshOverlayGoogle";
 import { POLE_COLOR, POLE_RED } from "@/app/_lib/poleColors";
 import type { PoleState } from "@/app/_lib/poles";
 import type { MapPole, PoleMapProps } from "./PoleMap";
@@ -111,6 +113,7 @@ export function PoleMapGoogle({
   rotateDrag = false,
   preview = null,
   route = null,
+  mesh = null,
   className = "",
 }: PoleMapProps & { handle: GoogleMapHandle; dark: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -449,6 +452,22 @@ export function PoleMapGoogle({
       window.removeEventListener("pointercancel", up);
     };
   }, [view3d, rotateDrag, map, div, kind]);
+
+  // ── Ağ haritası katmanı (havuza dönen haritada iz bırakmaz) ──
+  const meshLayer = useRef<MeshLayer | null>(null);
+  const hasMesh = mesh !== null;
+  useEffect(() => {
+    if (!hasMesh) return;
+    const layer = attachMeshGoogle(map, div);
+    meshLayer.current = layer;
+    return () => {
+      layer.destroy();
+      meshLayer.current = null;
+    };
+  }, [hasMesh, map, div]);
+  useEffect(() => {
+    if (mesh) meshLayer.current?.update(mesh);
+  }, [mesh]);
 
   return <div ref={containerRef} className={`h-full w-full ${className}`} />;
 }

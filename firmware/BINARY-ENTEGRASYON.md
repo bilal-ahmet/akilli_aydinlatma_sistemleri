@@ -80,11 +80,25 @@ topic'lerini NVS'te tutar, backend `Meven:<MAC>/cmd`'ye binary komutla yönetir.
   başına tek uçuşta komut, HELLO'da doğrulama). Dokümandaki 9 örnek paket
   `npm run check:binproto`'da birebir sınanır. Ayrıntı: CLAUDE.md "Dinamik bölge aboneliği".
 
+## Mesh rotası (health, 0xCE/0xCF)
+
+| Kod | Ad | Boy | JSON |
+|---|---|---|---|
+| 0xCE | `THREAD_ROUTE_NEXT_HOP` | u16 | `thread.route_next_hop` — BR'ye giden ilk sıçramanın RLOC16'sı |
+| 0xCF | `THREAD_ROUTE_PATH_COST` | u8 | `thread.route_path_cost` — BR'ye toplam yol maliyeti |
+
+- Alanı göndermeyen (eski) firmware'de ikisi de `null`. Değerler ham yazılır;
+  "rota yok" sentinel'leri (next hop 0xFFFE/0xFFFF, maliyet 0xFF) yalnızca
+  `src/lib/mesh` topoloji kurucusunda yorumlanır.
+- Adlar firmware `msg_fields.h` ile teyit edilmeli (JSON aynası / Python köprüsü aynı adı kullanır).
+- Admin "Ağ haritası" rotaları bu iki alandan çizer (CLAUDE.md "Ağ haritası").
+- Mock: `npm run mock:device <MAC> 2 <bölge> --rloc 0x5C00 --next-hop 0x0400 --cost 2 [--rssi -83]`.
+
 ## Kod
 
 | Dosya | Görev |
 |---|---|
-| `src/lib/binproto/fields.ts` | Alan tablosu (140 alan) + enum'lar — `msg_fields.h`'nin kopyası |
+| `src/lib/binproto/fields.ts` | Alan tablosu (142 alan) + enum'lar — `msg_fields.h`'nin kopyası |
 | `src/lib/binproto/codec.ts` | CRC-16/CCITT-FALSE, `decodeFrame`, `encodeFrame` |
 | `src/lib/binproto/toJson.ts` | Python `to_legacy` portu (d4i, health, ack, commission…) |
 | `src/lib/binproto/espErr.ts` | OTA hata kodu → ESP-IDF adı |

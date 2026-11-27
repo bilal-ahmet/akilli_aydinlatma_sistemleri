@@ -380,7 +380,13 @@ export const gatewayCreateSchema = z.object({
   zoneSlug: z.string().trim().max(100).optional(),
   location: z.string().trim().max(200).optional(),
   notes: z.string().trim().max(1000).optional(),
-});
+  /** Haritadaki konum (WGS84); ikisi birlikte. */
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lng: z.number().min(-180).max(180).nullable().optional(),
+}).refine(
+  (d) => (d.lat === undefined) === (d.lng === undefined) && (d.lat === null) === (d.lng === null),
+  { message: "Enlem ve boylam birlikte girilmeli" },
+);
 export type GatewayCreate = z.infer<typeof gatewayCreateSchema>;
 
 /** Kimlik (GW_ID) değiştirilemez: topic'ler ve rapor geçmişi ona bağlı. */
@@ -391,10 +397,17 @@ export const gatewayUpdateSchema = z
     zoneSlug: z.string().trim().max(100).optional(),
     location: z.string().trim().max(200).optional(),
     notes: z.string().trim().max(1000).optional(),
+    /** Haritadaki konum (WGS84); ikisi birlikte, null = konumu sil. */
+    lat: z.number().min(-90).max(90).nullable().optional(),
+    lng: z.number().min(-180).max(180).nullable().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "En az bir alan güncellenmeli",
-  });
+  })
+  .refine(
+    (d) => (d.lat === undefined) === (d.lng === undefined) && (d.lat === null) === (d.lng === null),
+    { message: "Enlem ve boylam birlikte girilmeli" },
+  );
 export type GatewayUpdate = z.infer<typeof gatewayUpdateSchema>;
 
 // ── Direkler (dashboard / mobil → backend) ───────────────────

@@ -8,6 +8,8 @@ import { refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
 import { forgetGatewayState } from "@/lib/mqtt";
 import { listGateways, resolveGatewayZone } from "@/lib/gatewayStore";
+import { inTurkey } from "@/app/_lib/poles";
+import { forgetMeshCache } from "@/lib/mesh/query";
 
 export const runtime = "nodejs";
 
@@ -31,7 +33,7 @@ export async function GET(req: Request, { params }: Params) {
 }
 
 /**
- * PATCH /api/gateways/:gatewayId — tür, isim, konum, not, bölge etiketi.
+ * PATCH /api/gateways/:gatewayId — tür, isim, konum (metin + lat/lng), not, bölge etiketi.
  * Kimlik (GW_ID) ve müşteri değişmez: başka müşteriye geçecek gateway silinip
  * orada yeniden kaydedilir.
  */
@@ -51,6 +53,13 @@ export async function PATCH(req: Request, { params }: Params) {
   if (d.name !== undefined) patch.name = d.name || null;
   if (d.location !== undefined) patch.location = d.location || null;
   if (d.notes !== undefined) patch.notes = d.notes || null;
+  if (d.lat !== undefined && d.lng !== undefined) {
+    if (d.lat !== null && d.lng !== null && !inTurkey(d.lat, d.lng)) {
+      return fail("Konum hizmet alanının dışında", 422);
+    }
+    patch.lat = d.lat;
+    patch.lng = d.lng;
+  }
   if (d.zoneSlug !== undefined) {
     const zoneId = await resolveGatewayZone(ctx.customer.id, d.zoneSlug);
     if (zoneId === undefined) return fail("Bölge bulunamadı", 404);
@@ -59,6 +68,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
   try {
     await db.update(schema.gateways).set(patch).where(eq(schema.gateways.gatewayId, gatewayId));
+    forgetMeshCache(ctx.customer.id);
     await audit({
       req,
       user: ctx.user,
@@ -97,6 +107,7 @@ export async function DELETE(req: Request, { params }: Params) {
     });
     await refreshTenancy();
     forgetGatewayState(gatewayId);
+    forgetMeshCache(ctx.customer.id);
     await audit({
       req,
       user: ctx.user,

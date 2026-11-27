@@ -6,6 +6,7 @@ import { useLighting } from "@/app/_lib/lighting";
 import { useApi, useTechnical } from "@/app/_lib/panel";
 import { GATEWAY_TYPES, gatewayTypeLabel, type GatewayType } from "@/lib/gateways";
 import { formatMac } from "@/lib/mac";
+import { inTurkey, parseCoordinatePair } from "@/app/_lib/poles";
 import { Modal } from "./Modal";
 
 /**
@@ -37,17 +38,33 @@ export function GatewayDialog({
   const [zoneSlug, setZoneSlug] = useState(gateway?.zoneSlug ?? "");
   const [location, setLocation] = useState(gateway?.location ?? "");
   const [notes, setNotes] = useState(gateway?.notes ?? "");
+  const [coords, setCoords] = useState(
+    gateway?.lat != null && gateway?.lng != null ? `${gateway.lat}, ${gateway.lng}` : "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = !submitting && (gateway ? true : gatewayId.trim() !== "");
+  const parsedCoords = coords.trim() ? parseCoordinatePair(coords) : null;
+  const coordsInvalid = coords.trim() !== "" && parsedCoords === null;
+  const coordsOutside = parsedCoords !== null && !inTurkey(parsedCoords.lat, parsedCoords.lng);
+
+  const canSubmit =
+    !submitting && !coordsInvalid && !coordsOutside && (gateway ? true : gatewayId.trim() !== "");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
-    const body = { type, name, zoneSlug, location, notes };
+    const body = {
+      type,
+      name,
+      zoneSlug,
+      location,
+      notes,
+      lat: parsedCoords?.lat ?? null,
+      lng: parsedCoords?.lng ?? null,
+    };
     try {
       const res = await fetch(
         api(gateway ? `/api/gateways/${gateway.gatewayId}` : "/api/gateways"),
@@ -65,6 +82,8 @@ export function GatewayDialog({
                   zoneSlug: zoneSlug || undefined,
                   location: location.trim() || undefined,
                   notes: notes.trim() || undefined,
+                  lat: parsedCoords?.lat,
+                  lng: parsedCoords?.lng,
                 },
           ),
         },
@@ -199,6 +218,30 @@ export function GatewayDialog({
             onChange={(e) => setLocation(e.target.value)}
             placeholder="Örn. Trafo binası, 2. direk yanı"
           />
+        </div>
+
+        <div>
+          <label className="field-label" htmlFor="gw-coords">
+            Harita konumu <span className="font-normal text-muted">(enlem, boylam · isteğe bağlı)</span>
+          </label>
+          <input
+            id="gw-coords"
+            className="field font-mono"
+            value={coords}
+            onChange={(e) => setCoords(e.target.value)}
+            placeholder="40.7654, 29.9408"
+            spellCheck={false}
+            inputMode="decimal"
+          />
+          {coordsInvalid ? (
+            <p className="mt-2 text-[12.5px] text-danger">Koordinat okunamadı. Örnek: 40.7654, 29.9408</p>
+          ) : coordsOutside ? (
+            <p className="mt-2 text-[12.5px] text-danger">Konum hizmet alanının dışında.</p>
+          ) : technical ? (
+            <p className="mt-2 text-[12.5px] leading-normal text-muted">
+              Ağ haritasında Border Router bu noktada çizilir. Haritadan da yerleştirilebilir.
+            </p>
+          ) : null}
         </div>
 
         <div>

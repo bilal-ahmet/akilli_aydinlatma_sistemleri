@@ -15,6 +15,7 @@
  *   npm run mock:gateway                                   # A1B2C3D4E5F6
  *   npm run mock:gateway 404CCA544698 --partition 305419896 --interval 30
  *   npm run mock:gateway 404CCA544698 --rlocs 5C01,6001    # komşu lamba RLOC16'ları
+ *   npm run mock:gateway 404CCA544698 --rloc 4800          # BR'nin kendi RLOC16'sı (varsayılan 0400)
  *
  * Lamba bağı Thread partition eşleşmesiyle kurulur (lib/gatewayLink.ts):
  * `npm run mock:device <MAC> 2 --partition 305419896 --rloc 0x5C01`.
@@ -32,7 +33,7 @@ import { decodeFrame, encodeFrame, toHex, type FieldValue } from "@/lib/binproto
 import { BR_COMMAND_ACTIONS, BR_PROTOCOL_VERSION, type BrMessageTypeName } from "@/lib/binproto/brFields";
 
 const RAW_ARGS = process.argv.slice(2);
-const VALUE_FLAGS = new Set(["--partition", "--interval", "--rlocs"]);
+const VALUE_FLAGS = new Set(["--partition", "--interval", "--rlocs", "--rloc"]);
 const ARGS = RAW_ARGS.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has(RAW_ARGS[i - 1]));
 function flag(name: string): string | undefined {
   const i = RAW_ARGS.indexOf(name);
@@ -52,7 +53,11 @@ const NEIGHBOR_RLOCS = (flag("--rlocs") ?? "5C01,5C02,6000")
   .split(",")
   .map((s) => parseInt(s.replace(/^0x/i, ""), 16))
   .filter((n) => Number.isInteger(n) && n >= 0 && n <= 0xffff);
-const SELF_RLOC = 0x0400; // router 1 (leader)
+/** BR'nin kendi RLOC16'sı (lambaların 0xCE next hop'u bununla eşleşir). Varsayılan router 1 (leader). */
+const SELF_RLOC = (() => {
+  const v = parseInt((flag("--rloc") ?? "0400").replace(/^0x/i, ""), 16);
+  return Number.isInteger(v) && v >= 0 && v <= 0xffff ? v : 0x0400;
+})();
 
 const host = process.env.MQTT_HOST ?? "";
 const isLocal = host === "127.0.0.1" || host === "localhost" || host === "::1";

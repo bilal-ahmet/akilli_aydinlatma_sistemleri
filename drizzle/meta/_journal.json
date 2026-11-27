@@ -141,6 +141,13 @@
       "when": 1795173712481,
       "tag": "0019_places_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795787627489,
+      "tag": "0020_gateway_location",
+      "breakpoints": true
     }
   ]
 }

@@ -104,7 +104,7 @@ function withCrc(bytes: number[]): Uint8Array {
 }
 
 // ── Alan tablosu ─────────────────────────────────────────────
-check("alan tablosu 140 alan", FIELD_DEFS.length === 140, String(FIELD_DEFS.length));
+check("alan tablosu 142 alan (+0xCE/0xCF)", FIELD_DEFS.length === 142, String(FIELD_DEFS.length));
 check(
   "alan kodları benzersiz",
   new Set(FIELD_DEFS.map((f) => f.code)).size === FIELD_DEFS.length &&
@@ -567,6 +567,32 @@ check(
   second.idf_version === "v6.0" &&
     second.build_time === "16:25:51" &&
     (second.thread as Record<string, unknown>).network_name === "fener-1",
+);
+// Mesh rotası (0xCE/0xCF): yeni health çözülür, eski pakette null.
+const routed = jsonOf(
+  encodeFrame("HEALTH", [
+    ["THREAD_ROLE", 3],
+    ["THREAD_RLOC16", 0x1c00],
+    ["THREAD_ROUTE_NEXT_HOP", 0x4800],
+    ["THREAD_ROUTE_PATH_COST", 4],
+  ]),
+  {},
+);
+const routedThread = routed.thread as Record<string, unknown>;
+check(
+  "health 0xCE/0xCF: next hop 0x4800, yol maliyeti 4",
+  routedThread.route_next_hop === 0x4800 && routedThread.route_path_cost === 4,
+  JSON.stringify([routedThread.route_next_hop, routedThread.route_path_cost]),
+);
+check("0xCE/0xCF'li health şemadan geçer", deviceHealthSchema.safeParse(routed).success);
+const firstThread = first.thread as Record<string, unknown>;
+check(
+  "0xCE/0xCF'siz (eski) health'te null",
+  firstThread.route_next_hop === null && firstThread.route_path_cost === null,
+);
+check(
+  "alan tablosu: 0xCE u16, 0xCF u8",
+  FIELD_DEFS.some((f) => f.code === 0xce && f.size === 2) && FIELD_DEFS.some((f) => f.code === 0xcf && f.size === 1),
 );
 const hp = deviceHealthSchema.safeParse(first);
 check("health şeması: firmware + ota", hp.success && hp.data.firmware_version === "1.0.26" && hp.data.ota?.state === "downloading");

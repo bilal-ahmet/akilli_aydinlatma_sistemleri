@@ -600,6 +600,9 @@ export function healthJson(
       parent_changes: opt(fields, "THREAD_PARENT_CHANGES"),
       partition_id_changes: opt(fields, "THREAD_PARTITION_ID_CHANGES"),
       attach_attempts: opt(fields, "THREAD_ATTACH_ATTEMPTS"),
+      // Ham değer (eski firmware'de null). "Rota yok" sentinel'leri lib/mesh yorumlar.
+      route_next_hop: opt(fields, "THREAD_ROUTE_NEXT_HOP"),
+      route_path_cost: opt(fields, "THREAD_ROUTE_PATH_COST"),
       neighbors,
     },
     ota: {

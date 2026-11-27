@@ -8,6 +8,8 @@ import { getTenancy, refreshTenancy } from "@/lib/tenancy";
 import { audit } from "@/lib/audit";
 import { forgetDiscoveredGateway } from "@/lib/gatewayDiscovery";
 import { listGateways, resolveGatewayZone } from "@/lib/gatewayStore";
+import { inTurkey } from "@/app/_lib/poles";
+import { forgetMeshCache } from "@/lib/mesh/query";
 
 export const runtime = "nodejs";
 
@@ -38,7 +40,10 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return fail("Geçersiz ağ geçidi verisi", 422, parsed.error.flatten());
   }
-  const { type, name, zoneSlug, location, notes } = parsed.data;
+  const { type, name, zoneSlug, location, notes, lat, lng } = parsed.data;
+  if (lat != null && lng != null && !inTurkey(lat, lng)) {
+    return fail("Konum hizmet alanının dışında", 422);
+  }
 
   const gatewayId = normalizeMac(parsed.data.gatewayId);
   if (!gatewayId) {
@@ -104,10 +109,13 @@ export async function POST(req: Request) {
       type,
       name: name || null,
       location: location || null,
+      lat: lat ?? null,
+      lng: lng ?? null,
       notes: notes || null,
     });
     await refreshTenancy();
     forgetDiscoveredGateway(gatewayId);
+    forgetMeshCache(ctx.customer.id);
     await audit({
       req,
       user: ctx.user,

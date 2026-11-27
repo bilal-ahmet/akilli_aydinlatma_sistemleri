@@ -93,7 +93,8 @@ Müşteri paneli (tasarım: Claude Design "Fener Dashboard v2", kenar çubuklu):
 `/c/<slug>` (Genel Bakış) · `/c/<slug>/bolgeler[/<zone>]` (bölge listesi +
 detay) · `/c/<slug>/harita[?bolge=&direk=]` (direk haritası) · `/c/<slug>/cihazlar` ·
 `/c/<slug>/arizalar[?bolge=]` · `/c/<slug>/raporlar` · `/c/<slug>/efektler` · `/c/<slug>/zamanlamalar` ·
-`/c/<slug>/senaryolar` · `/c/<slug>/kullanicilar` (manager/admin).
+`/c/<slug>/senaryolar` · `/c/<slug>/kullanicilar` (manager/admin) · `/c/<slug>/ag`
+(Ağ haritası, yalnızca admin).
 
 **Senaryolar** (`views/ScenariosView.tsx`): sahada müşteriye anlatım için
 canlandırma (Normal gece, Kaza, Sis, Yağmur, Gece tasarrufu). **Yalnızca
@@ -343,6 +344,11 @@ edilen biçim budur**; JSON firmware desteği kaldırıldı (bkz. "JSON reddi").
   bekleyen komut" tahmini yapılmaz**; hata yine rozete ve arıza geçmişine
   yazılır. Python köprüsü canlı broker'da yalnızca `--watch` / `--compare`
   ile çalıştırılır.
+- **Mesh rotası** (health, Kasım 2026): `0xCE THREAD_ROUTE_NEXT_HOP` (u16, BR'ye
+  giden ilk sıçramanın RLOC16'sı) → `thread.route_next_hop`, `0xCF
+  THREAD_ROUTE_PATH_COST` (u8) → `thread.route_path_cost`. Eski firmware'de
+  null; ham değer yazılır, sentinel'leri `lib/mesh` yorumlar. Admin "Ağ
+  haritası" bunlardan çizilir.
 - **Bir-kezlik health alanları** (`idf_version`, derleme zamanı, Thread ağ adı)
   bağlantı başına bir kez gelir; cihaz başına bellekte tutulur. Önbellek boşsa
   `devices.health`'ten tohumlanır.
@@ -864,8 +870,8 @@ durumu da `activeFaultCodes`'tan karar verir — arıza geçmişiyle aynı liste
 ### Ağ geçitleri (gateway)
 
 ```
-GET/POST         /api/gateways?customer=<slug>   # liste / kayıt { gatewayId, type, name?, zoneSlug?, location?, notes? }
-GET/PATCH/DELETE /api/gateways/:gatewayId        # PATCH: type, name, zoneSlug ("" = bağı kaldır), location, notes
+GET/POST         /api/gateways?customer=<slug>   # liste / kayıt { gatewayId, type, name?, zoneSlug?, location?, notes?, lat?, lng? }
+GET/PATCH/DELETE /api/gateways/:gatewayId        # PATCH: type, name, zoneSlug ("" = bağı kaldır), location, notes, lat+lng (null = sil)
 POST             /api/gateways/:gatewayId/command # { action: report_now | ota_check } → 202 { requestId }
 GET              /api/admin/gateways/discovered  # (admin) yayın yapan kayıtsız GW_ID'ler, bellek içi, 24 sa
 ```
@@ -875,7 +881,59 @@ CRUD admin + manager, viewer okur. Kimlik (GW_ID) ve müşteri değiştirilemez.
 Audit: `gateway.create` / `gateway.update` / `gateway.delete` / `gateway.report_now` / `gateway.ota_check`. Panel:
 `/c/<slug>/ag-gecitleri` (`views/GatewaysView.tsx`, liste bu sayfaya özel;
 canlı durum SSE `kind:"gateway"` olayıyla). Donanımsız test:
-`npm run mock:gateway <GW_ID> --partition <n>` (binary 0x03).
+`npm run mock:gateway <GW_ID> --partition <n> [--rloc <hex>]` (binary 0x03).
+Harita konumu `lat`/`lng` (WGS84, ikisi birlikte, Türkiye kutusu dışı 422; formda
+koordinat alanı, Ağ haritasında "Haritada yerleştir"): Ağ haritasında rotaların
+son halkası. Metin `location` ayrıdır.
+
+### Ağ haritası (Thread mesh rotaları, YALNIZCA ADMIN)
+
+```
+GET /api/mesh?customer=<slug>     # rota ağacı + yük + öneriler + son 24 sa ağ olayları + KPI serileri
+GET /api/devices/:mac/mesh        # cihaz modalı "Ağ" sekmesi: BR'ye yol, komşular, 24 sa RSSI / yol maliyeti
+```
+
+Müşteri kullanıcılarına sayfa (`/c/<slug>/ag`), menü ve iki uç 404. Kaynak: lamba
+health'indeki `thread.route_next_hop` (0xCE) ve `thread.route_path_cost` (0xCF);
+yeni firmware alanı gerekmez, yük/mesafe/olay/öneri backend'de hesaplanır.
+
+- **Saf modüller** (`src/lib/mesh/`, test `npm run check:mesh`):
+  - `build.ts → buildMeshTopology`: next hop RLOC16'sı aynı partition'daki cihaz
+    ya da Thread BR (`gateways.health.thread.rloc16`, tür `thread_br`) ile
+    eşleşir (`toGatewayTopology` kuralı; çift RLOC16'da BR > çevrimiçi > en yeni
+    health). Eşleşmeyen → `rloc:<partition>:<hex>` "tanınmayan" düğüm. Durum:
+    `routed | partial | loop | no_route (0xFFFE/0xFFFF, maliyet 0xFF) | offline |
+    legacy (alan yok)`. Döngü bağları çizilmez. `linkCost = pathCost −
+    next hop pathCost` (BR = 0). `load` = alt ağaçtaki cihaz; trafik tahmini
+    `armatür × 60/rapor_s + 60/health_s` paket/dk (aralık yoksa 30 sn; d4i ≈170 B,
+    health ≈120 B). Mesafe direk/BR konumundan haversine. Eşikler tek yerde
+    (`THRESHOLDS`: darboğaz load ≥ 5, zayıf link ≥ +3 …).
+  - `suggest.ts`: 2. BR (darboğazın en büyük dalının ağırlık merkezi), ara router
+    (link ≥ +3 VE RSSI < −80 VE 24 sa parent değişimi ≥ 3), saha kontrolü
+    (link ≥ +2 VE RSSI 24 sa ortalamasından ≥ 5 dB düşük). Çerçeve hata oranı
+    lamba health'inde yok; yalnızca BR'ye doğrudan bağlı direkte BR komşu
+    tablosundan gösterilir.
+  - `events.ts`: ardışık health kayıtlarındaki değişim → olay (next hop, yol
+    maliyeti, parent sayacı artışı, RSSI ≥ 5 dB düşüş, partition). Sayaç
+    sıfırlanması olay değildir.
+- **Sorgu** (`query.ts`): `device_health_log` satırları uygulamaya çekilmez;
+  24 sa özet, `LAG()` değişim satırları (≤ 200) ve saatlik seriler SQL'de.
+  Müşteri başına 30 sn bellek önbelleği (`forgetMeshCache`, gateway CRUD'unda).
+  Yanıt şekli `view.ts` (istemci de import eder).
+- **Harita**: `PoleMapProps.mesh` (`_lib/meshOverlay.ts` sözleşmesi) iki
+  sağlayıcıda çizilir: Google `meshOverlayGoogle.ts` (Polyline + AdvancedMarker,
+  havuza dönerken `destroy`), MapLibre `meshOverlayLibre.ts` (GeoJSON katmanları
+  `style.load`'da yeniden kurulur, düğümler HTML Marker). Düğüm DOM'u iki
+  sağlayıcıda ortak. Kümeleme yok (çizgiler kümelenmiş direğe gitmesin).
+- **Sayfa** `views/MeshView.tsx` (tasarım: "Park Aydınlatma Ağı"): KPI şeridi,
+  harita (Link kalitesi / Yük renk modu, katmanlar: rotalar, trafik akışı,
+  öneriler, aydınlatma alanı), üzerine gelince ipucu, tıklayınca harita üstü kart
+  (`_lib/popoverPlace.ts`, yola en az çakışan yer; dar ekranda yok) + yan panel
+  (`mesh/MeshPanel.tsx`: özet / direk / BR / öneri / tanınmayan), son ağ olayları
+  tablosu, arama (direk no ya da `0x1c00`). 60 sn'de bir yenilenir.
+  "Cihaza git" mevcut cihaz modalını açar; modalda admin'e **Ağ** sekmesi
+  (`DeviceMesh.tsx`).
+- Mock: `npm run mock:device <MAC> 2 <bölge> --rloc 0x5C00 --next-hop 0x0400 --cost 2 [--rssi -83]`.
 
 ### Direkler ve harita
 
@@ -1228,6 +1286,7 @@ CREATE TABLE gateways (
   zone_id     UUID REFERENCES zones(id) ON DELETE SET NULL,  -- opsiyonel konum etiketi
   type        VARCHAR(30) NOT NULL,          -- thread_br | cellular | wifi | lorawan
   name VARCHAR(100), location VARCHAR(200), notes TEXT,
+  lat DOUBLE PRECISION, lng DOUBLE PRECISION,   -- harita konumu (0020_gateway_location)
   firmware_version VARCHAR(32),
   last_seen   TIMESTAMPTZ,
   online      BOOLEAN,                       -- false = LWT geldi
@@ -1237,7 +1296,8 @@ CREATE TABLE gateways (
 );
 ```
 
-> Migration `0009_gateways.sql` (+ `devices.gateway_id`). Mesaj başına satır
+> Migration `0009_gateways.sql` (+ `devices.gateway_id`), `0020_gateway_location.sql`
+> (`lat`, `lng`). Mesaj başına satır
 > açılmaz. Çevrimiçi: LWT gelmediyse ve son 2 dk'da haber varsa
 > (`gatewayState`).
 

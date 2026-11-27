@@ -11,6 +11,7 @@ import {
   type GoogleMapHandle,
   type MapKind,
 } from "@/app/_lib/googleMap";
+import type { MeshOverlay } from "@/app/_lib/meshOverlay";
 import { PoleMapLibre } from "./PoleMapLibre";
 import { useTheme } from "./ThemeProvider";
 
@@ -66,6 +67,12 @@ export interface PoleMapProps {
    * çerçevelenir.
    */
   route?: MapRoute | null;
+  /**
+   * Ağ haritası katmanı (Ağ haritası sayfası): direk/BR/öneri düğümleri, mesh
+   * rotaları, aydınlatma alanı. İki sağlayıcıda da çizilir
+   * (`_lib/meshOverlay*.ts`). Verilince `poles` genelde boş geçilir.
+   */
+  mesh?: MeshOverlay | null;
   /** Seçicinin karar verdiği sağlayıcı (rota çizilebilir mi?). */
   onProvider?: (provider: "google" | "osm") => void;
   className?: string;

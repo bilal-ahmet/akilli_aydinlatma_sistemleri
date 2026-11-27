@@ -307,6 +307,9 @@ export const gateways = pgTable(
     type: varchar("type", { length: 30 }).notNull(), // thread_br | cellular | wifi | lorawan
     name: varchar("name", { length: 100 }),
     location: varchar("location", { length: 200 }),
+    // Haritadaki konum (WGS84); Ağ haritasında rotaların son halkası. İkisi birlikte.
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
     notes: text("notes"),
     firmwareVersion: varchar("firmware_version", { length: 32 }),
     lastSeen: timestamp("last_seen", { withTimezone: true }),

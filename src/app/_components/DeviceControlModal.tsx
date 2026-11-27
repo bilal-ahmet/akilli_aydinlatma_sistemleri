@@ -18,6 +18,7 @@ import { D4iPanel } from "./D4iPanel";
 import { FaultHistory } from "./FaultHistory";
 import { DeviceMaintenance } from "./DeviceMaintenance";
 import { DeviceRecords } from "./DeviceRecords";
+import { DeviceMesh } from "./DeviceMesh";
 
 /** Slider sürüklenirken publish selini önler; bırakılınca komut bu kadar sonra gider. */
 const DIM_DEBOUNCE_MS = 150;
@@ -69,7 +70,7 @@ function fetchFaults(api: ApiFn, deviceId: string): Promise<FaultEvent[]> {
     .then((j) => (j.data ?? []) as FaultEvent[]);
 }
 
-type Tab = "control" | "telemetry" | "faults" | "maintenance" | "records";
+type Tab = "control" | "telemetry" | "faults" | "maintenance" | "network" | "records";
 
 const iconBtn =
   "shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-glow/15 hover:text-text";
@@ -589,6 +590,8 @@ export function DeviceControlModal({
     { id: "telemetry", label: technical ? "Telemetri" : "Ölçümler" },
     { id: "faults", label: "Arıza geçmişi" },
     ...(showMaintenance ? [{ id: "maintenance" as const, label: "Bakım" }] : []),
+    // Thread mesh rotası (0xCE/0xCF) — teknik, yalnızca admin.
+    ...(showRecords ? [{ id: "network" as const, label: "Ağ" }] : []),
     ...(showRecords ? [{ id: "records" as const, label: "Kayıtlar" }] : []),
   ];
 
@@ -650,7 +653,9 @@ export function DeviceControlModal({
           ))}
         </div>
 
-        {tab === "records" && showRecords ? (
+        {tab === "network" && showRecords ? (
+          <DeviceMesh deviceId={deviceId} />
+        ) : tab === "records" && showRecords ? (
           <DeviceRecords deviceId={deviceId} />
         ) : tab === "maintenance" ? (
           <DeviceMaintenance
