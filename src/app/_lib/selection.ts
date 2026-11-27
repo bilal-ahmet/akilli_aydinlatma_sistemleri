@@ -154,11 +154,35 @@ export function lampOn(l: Pick<LampView, "isOn" | "brightness" | "activeFx">): b
 
 /**
  * Cihazın ışık durumu. Lambalar `fixtures` snapshot'ından gelir: komutla
- * optimistic, cihaz raporuyla da gerçek değere güncellenir. Lamba kaydı yoksa
- * son telemetriye (`device_status`) düşülür.
+ * optimistic, cihaz raporuyla da gerçek değere güncellenir.
+ *
+ * Lamba kaydı yoksa (yeni cihaz henüz D4i raporu göndermedi) sırayla:
+ *  1. cihazın "Tüm cihaz" snapshot'ı (`masterOn/Brightness`): kanalsız cihaz,
+ *     bölge, alt grup ve "Tüm Sistem" komutları yazar. Şiddet bilinmeden
+ *     açılmışsa (`on`) %100 sayılır.
+ *  2. `zone` verilirse bölgenin son komutu (cihaz hiç komut almadı),
+ *  3. eski telemetri (`device_status`).
  */
-export function deviceState(d: DeviceView): LightState {
+export function deviceState(
+  d: DeviceView,
+  zone?: Pick<Zone, "isOn" | "brightness" | "activeFx"> | null,
+): LightState {
   if (d.lamps.length === 0) {
+    if (d.masterOn !== null) {
+      const brightness = d.masterBrightness ?? 100;
+      return {
+        isOn: d.activeFx != null || (d.masterOn && brightness > 0),
+        brightness: d.masterOn ? brightness : 0,
+        activeFx: d.activeFx,
+      };
+    }
+    if (zone) {
+      return {
+        isOn: zone.isOn && (zone.brightness > 0 || zone.activeFx != null),
+        brightness: zone.isOn ? zone.brightness : 0,
+        activeFx: zone.activeFx ?? null,
+      };
+    }
     return {
       isOn: d.relayStatus === "on" ? true : d.relayStatus === "off" ? false : null,
       brightness: d.brightness ?? 0,

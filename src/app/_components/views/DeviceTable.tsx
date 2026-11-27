@@ -11,7 +11,6 @@ import { effectByNumber } from "@/lib/effects";
 import { zoneSyncLabel } from "@/lib/zoneSync/plan";
 import { formatMac } from "@/lib/mac";
 import { deviceName } from "@/app/_lib/format";
-import { isLit } from "@/app/_lib/mockData";
 import {
   deviceSelState,
   deviceState,
@@ -118,12 +117,15 @@ export function DeviceTable({
     });
   }
 
-  /** Işık sütunu: lamba kaydı varsa lambalardan, yoksa bölgenin son komutundan. */
+  /**
+   * Işık sütunu: lamba kaydı varsa lambalardan, yoksa cihazın son komutundan,
+   * o da yoksa bölgenin son komutundan (`deviceState`; hızlı kontrolle aynı).
+   */
   function deviceLight(d: DeviceView) {
-    if (d.lamps.length > 0) return lightText(deviceState(d));
+    if (d.lamps.length > 0 || d.masterOn !== null) return lightText(deviceState(d));
     const zone = zones.find((z) => z.id === d.zoneSlug);
     if (!zone) return lightText({ isOn: null, brightness: 0, activeFx: null });
-    return lightText({ isOn: isLit(zone), brightness: zone.brightness, activeFx: zone.activeFx ?? null });
+    return lightText(deviceState(d, zone));
   }
 
   return (

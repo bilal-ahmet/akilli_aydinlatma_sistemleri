@@ -31,14 +31,15 @@ export function DeviceQuickControls({
   device: DeviceView;
   variant: "row" | "panel";
 }) {
-  const { setTargetsPower, setTargetsBrightness, applyEffect, stopEffect } = useLighting();
+  const { zones, setTargetsPower, setTargetsBrightness, applyEffect, stopEffect } = useLighting();
   const { canWrite } = usePanel();
   const technical = useTechnical();
   const [pickerOpen, setPickerOpen] = useState(false);
   if (!canWrite) return null;
 
   const target = { devices: [device.deviceId] };
-  const light = deviceState(device);
+  // Lambasız cihaz hiç komut almadıysa bölgenin durumu (tablodaki ışık sütunuyla aynı).
+  const light = deviceState(device, zones.find((z) => z.id === device.zoneSlug));
   const fx = effectByNumber(light.activeFx);
   const title = deviceName(device, technical);
   const level = light.isOn ? light.brightness : 0;

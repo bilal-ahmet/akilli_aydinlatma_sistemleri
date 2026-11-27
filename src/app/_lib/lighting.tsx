@@ -99,11 +99,18 @@ function deriveMaster(zones: Zone[]): number {
 /**
  * Cihazın lambalarına yama uygular (`channels` verilirse yalnızca onlara).
  * Cihaz-seviyesi `activeFx` lambalardan yeniden türetilir; lamba kaydı yoksa
- * (cihaz henüz raporlamadı) yalnızca cihazın kendi `activeFx`'i güncellenir.
+ * (cihaz henüz raporlamadı) cihazın "Tüm cihaz" snapshot'ı (`masterOn/
+ * Brightness`, sunucuda `patchDeviceMaster`) ve kendi `activeFx`'i güncellenir
+ * — `deviceState` lambasız cihazda bunları okur.
  */
 function patchDevice(d: DeviceView, patch: Partial<LampView>, channels?: Set<number>): DeviceView {
   if (d.lamps.length === 0) {
-    return patch.activeFx !== undefined && !channels ? { ...d, activeFx: patch.activeFx } : d;
+    if (channels) return d;
+    const next = { ...d };
+    if (patch.activeFx !== undefined) next.activeFx = patch.activeFx;
+    if (typeof patch.isOn === "boolean") next.masterOn = patch.isOn;
+    if (typeof patch.brightness === "number") next.masterBrightness = patch.brightness;
+    return next;
   }
   const lamps = d.lamps.map((l) => (!channels || channels.has(l.channel) ? { ...l, ...patch } : l));
   return { ...d, lamps, activeFx: lamps.find((l) => l.activeFx != null)?.activeFx ?? null };
